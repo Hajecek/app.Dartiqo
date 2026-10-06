@@ -1,0 +1,554 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 110;
+	objects = {
+
+/* Begin PBXContainerItemProxy section */
+		07D28FBC3075ACC10088185B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 07D28FA63075ACC00088185B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 07D28FAD3075ACC00088185B;
+			remoteInfo = Dartiqo;
+		};
+		07D28FC63075ACC10088185B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 07D28FA63075ACC00088185B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 07D28FAD3075ACC00088185B;
+			remoteInfo = Dartiqo;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		07D28FAE3075ACC00088185B /* Dartiqo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Dartiqo.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		07D28FBB3075ACC10088185B /* DartiqoTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DartiqoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		07D28FC53075ACC10088185B /* DartiqoUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DartiqoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		07D28FB03075ACC00088185B /* Dartiqo */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Dartiqo;
+			sourceTree = "<group>";
+		};
+		07D28FBE3075ACC10088185B /* DartiqoTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = DartiqoTests;
+			sourceTree = "<group>";
+		};
+		07D28FC83075ACC10088185B /* DartiqoUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = DartiqoUITests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		07D28FAB3075ACC00088185B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		07D28FB83075ACC10088185B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+		07D28FC23075ACC10088185B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		07D28FA53075ACC00088185B = {
+			isa = PBXGroup;
+			children = (
+				07D28FB03075ACC00088185B /* Dartiqo */,
+				07D28FBE3075ACC10088185B /* DartiqoTests */,
+				07D28FC83075ACC10088185B /* DartiqoUITests */,
+				07D28FAF3075ACC00088185B /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		07D28FAF3075ACC00088185B /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				07D28FAE3075ACC00088185B /* Dartiqo.app */,
+				07D28FBB3075ACC10088185B /* DartiqoTests.xctest */,
+				07D28FC53075ACC10088185B /* DartiqoUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		07D28FAD3075ACC00088185B /* Dartiqo */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 07D28FCD3075ACC10088185B /* Build configuration list for PBXNativeTarget "Dartiqo" */;
+			buildPhases = (
+				07D28FAA3075ACC00088185B /* Sources */,
+				07D28FAB3075ACC00088185B /* Frameworks */,
+				07D28FAC3075ACC00088185B /* Resources */,
+			);
+			buildRules = (
+			);
+			fileSystemSynchronizedGroups = (
+				07D28FB03075ACC00088185B /* Dartiqo */,
+			);
+			name = Dartiqo;
+			productName = Dartiqo;
+			productReference = 07D28FAE3075ACC00088185B /* Dartiqo.app */;
+			productType = "com.apple.product-type.application";
+		};
+		07D28FBA3075ACC10088185B /* DartiqoTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 07D28FD03075ACC10088185B /* Build configuration list for PBXNativeTarget "DartiqoTests" */;
+			buildPhases = (
+				07D28FB73075ACC10088185B /* Sources */,
+				07D28FB83075ACC10088185B /* Frameworks */,
+				07D28FB93075ACC10088185B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				07D28FBD3075ACC10088185B /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				07D28FBE3075ACC10088185B /* DartiqoTests */,
+			);
+			name = DartiqoTests;
+			productName = DartiqoTests;
+			productReference = 07D28FBB3075ACC10088185B /* DartiqoTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		07D28FC43075ACC10088185B /* DartiqoUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 07D28FD33075ACC10088185B /* Build configuration list for PBXNativeTarget "DartiqoUITests" */;
+			buildPhases = (
+				07D28FC13075ACC10088185B /* Sources */,
+				07D28FC23075ACC10088185B /* Frameworks */,
+				07D28FC33075ACC10088185B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				07D28FC73075ACC10088185B /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				07D28FC83075ACC10088185B /* DartiqoUITests */,
+			);
+			name = DartiqoUITests;
+			productName = DartiqoUITests;
+			productReference = 07D28FC53075ACC10088185B /* DartiqoUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		07D28FA63075ACC00088185B /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					07D28FAD3075ACC00088185B = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					07D28FBA3075ACC10088185B = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 07D28FAD3075ACC00088185B;
+					};
+					07D28FC43075ACC10088185B = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 07D28FAD3075ACC00088185B;
+					};
+				};
+			};
+			buildConfigurationList = 07D28FA93075ACC00088185B /* Build configuration list for PBXProject "Dartiqo" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = 07D28FA53075ACC00088185B;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 07D28FAF3075ACC00088185B /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				07D28FAD3075ACC00088185B /* Dartiqo */,
+				07D28FBA3075ACC10088185B /* DartiqoTests */,
+				07D28FC43075ACC10088185B /* DartiqoUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		07D28FAC3075ACC00088185B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		07D28FB93075ACC10088185B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		07D28FC33075ACC10088185B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		07D28FAA3075ACC00088185B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+		07D28FB73075ACC10088185B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+		07D28FC13075ACC10088185B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		07D28FBD3075ACC10088185B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 07D28FAD3075ACC00088185B /* Dartiqo */;
+			targetProxy = 07D28FBC3075ACC10088185B /* PBXContainerItemProxy */;
+		};
+		07D28FC73075ACC10088185B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 07D28FAD3075ACC00088185B /* Dartiqo */;
+			targetProxy = 07D28FC63075ACC10088185B /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		07D28FCB3075ACC10088185B /* Debug configuration for PBXProject "Dartiqo" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = W6R3HZD7R4;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		07D28FCC3075ACC10088185B /* Release configuration for PBXProject "Dartiqo" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = W6R3HZD7R4;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		07D28FCE3075ACC10088185B /* Debug configuration for PBXNativeTarget "Dartiqo" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = W6R3HZD7R4;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hajecek.dartiqo.Dartiqo;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		07D28FCF3075ACC10088185B /* Release configuration for PBXNativeTarget "Dartiqo" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = W6R3HZD7R4;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hajecek.dartiqo.Dartiqo;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		07D28FD13075ACC10088185B /* Debug configuration for PBXNativeTarget "DartiqoTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = W6R3HZD7R4;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hajecek.dartiqo.DartiqoTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Dartiqo.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Dartiqo";
+			};
+			name = Debug;
+		};
+		07D28FD23075ACC10088185B /* Release configuration for PBXNativeTarget "DartiqoTests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = W6R3HZD7R4;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hajecek.dartiqo.DartiqoTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Dartiqo.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Dartiqo";
+			};
+			name = Release;
+		};
+		07D28FD43075ACC10088185B /* Debug configuration for PBXNativeTarget "DartiqoUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = W6R3HZD7R4;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hajecek.dartiqo.DartiqoUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Dartiqo;
+			};
+			name = Debug;
+		};
+		07D28FD53075ACC10088185B /* Release configuration for PBXNativeTarget "DartiqoUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = W6R3HZD7R4;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hajecek.dartiqo.DartiqoUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Dartiqo;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		07D28FA93075ACC00088185B /* Build configuration list for PBXProject "Dartiqo" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				07D28FCB3075ACC10088185B /* Debug configuration for PBXProject "Dartiqo" */,
+				07D28FCC3075ACC10088185B /* Release configuration for PBXProject "Dartiqo" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		07D28FCD3075ACC10088185B /* Build configuration list for PBXNativeTarget "Dartiqo" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				07D28FCE3075ACC10088185B /* Debug configuration for PBXNativeTarget "Dartiqo" */,
+				07D28FCF3075ACC10088185B /* Release configuration for PBXNativeTarget "Dartiqo" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		07D28FD03075ACC10088185B /* Build configuration list for PBXNativeTarget "DartiqoTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				07D28FD13075ACC10088185B /* Debug configuration for PBXNativeTarget "DartiqoTests" */,
+				07D28FD23075ACC10088185B /* Release configuration for PBXNativeTarget "DartiqoTests" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		07D28FD33075ACC10088185B /* Build configuration list for PBXNativeTarget "DartiqoUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				07D28FD43075ACC10088185B /* Debug configuration for PBXNativeTarget "DartiqoUITests" */,
+				07D28FD53075ACC10088185B /* Release configuration for PBXNativeTarget "DartiqoUITests" */,
+			);
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 07D28FA63075ACC00088185B /* Project object */;
+	validationLevel = 1;
+}
