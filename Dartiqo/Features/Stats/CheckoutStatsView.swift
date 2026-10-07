@@ -9,6 +9,21 @@ struct CheckoutStatsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             header
+            if let best = stats.bestDouble {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        extreme(best, title: "Nejlepší double", symbol: "arrow.up.circle.fill", color: Theme.positive)
+                        if let worst = stats.worstDouble {
+                            extreme(worst, title: "Nejslabší double", symbol: "arrow.down.circle.fill", color: .red)
+                        }
+                    }
+                    Text(stats.isComparisonReliable
+                         ? "Porovnávají se doubly s aspoň \(CheckoutStats.comparableAttempts) pokusy."
+                         : "Zatím málo pokusů, srovnání se zpřesní s dalšími hrami.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
             HStack(spacing: 8) {
                 cell("\(stats.checkouts.count)", "Zavření")
                 cell(stats.highest == 0 ? "—" : "\(stats.highest)", "Nejvyšší")
@@ -29,11 +44,6 @@ struct CheckoutStatsView: View {
                         ForEach(stats.ranges, id: \.title) { cell("\($0.count)", $0.title) }
                     }
                 }
-            }
-            if let best = stats.favourite {
-                Label("Nejspolehlivější: \(best.label) · \(best.hits) z \(best.attempts) (\(Int(best.percentage.rounded())) %)", systemImage: "star.fill")
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(tint)
             }
             if stats.unknownAttempts {
                 Text("Část návštěv byla zapsaná součtem. U nich nejsou známé jednotlivé šipky, takže se nepočítají do pokusů na double.")
@@ -67,16 +77,50 @@ struct CheckoutStatsView: View {
         .accessibilityElement(children: .combine)
     }
 
+    private func extreme(_ stat: DoubleStat, title: String, symbol: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(title, systemImage: symbol)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(color)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(stat.label)
+                    .font(.system(.title, design: .rounded).weight(.heavy))
+                Spacer(minLength: 4)
+                Text("\(Int(stat.percentage.rounded())) %")
+                    .font(.system(.title3, design: .rounded).weight(.bold))
+                    .monospacedDigit()
+                    .foregroundStyle(color)
+            }
+            Text("\(stat.hits) z \(stat.attempts) pokusů")
+                .font(.caption)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(color.opacity(0.35), lineWidth: 1))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func rowColor(_ stat: DoubleStat) -> Color {
+        if stat.segment == stats.bestDouble?.segment { return Theme.positive }
+        if stat.segment == stats.worstDouble?.segment { return .red }
+        return tint
+    }
+
     private func row(_ stat: DoubleStat) -> some View {
-        HStack(spacing: 10) {
+        let color = rowColor(stat)
+        return HStack(spacing: 10) {
             Text(stat.label)
                 .font(.headline)
+                .foregroundStyle(color == tint ? Color.primary : color)
                 .frame(width: 48, alignment: .leading)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.primary.opacity(0.1))
                     Capsule()
-                        .fill(tint)
+                        .fill(color)
                         .frame(width: stat.hits == 0 ? 0 : max(6, geo.size.width * stat.percentage / 100))
                 }
             }

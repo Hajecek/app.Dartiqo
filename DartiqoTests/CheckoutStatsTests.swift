@@ -6,11 +6,28 @@ final class CheckoutStatsTests: XCTestCase {
         Match(config: GameConfig(mode: .x01, startingScore: start, outRule: out, legsToWin: legs), players: [Player(name: "A")])
     }
 
+    func testBestAndWorstDoubleIgnoreTooFewAttempts() {
+        var stats = CheckoutStats()
+        stats.doubles[20] = DoubleStat(segment: 20, attempts: 10, hits: 3)
+        stats.doubles[16] = DoubleStat(segment: 16, attempts: 4, hits: 2)
+        stats.doubles[8] = DoubleStat(segment: 8, attempts: 5, hits: 0)
+        stats.doubles[1] = DoubleStat(segment: 1, attempts: 1, hits: 1)
+        XCTAssertTrue(stats.isComparisonReliable)
+        XCTAssertEqual(stats.bestDouble?.segment, 16)
+        XCTAssertEqual(stats.worstDouble?.segment, 8)
+
+        var few = CheckoutStats()
+        few.doubles[20] = DoubleStat(segment: 20, attempts: 2, hits: 1)
+        XCTAssertFalse(few.isComparisonReliable)
+        XCTAssertEqual(few.bestDouble?.segment, 20)
+        XCTAssertNil(few.worstDouble)
+    }
+
     func testCountsDartsAtDoubleAndHits() throws {
         var game = match()
         // 101 → 41 → 40, poslední šipka S20 je pokus na D20.
         try game.submit([Dart(20, 3), Dart(1), Dart(20)])
-        // 20: D10 netrefí (S10 → 10), pak D5 trefí.
+        // Zbývá 20, D10 zavírá.
         try game.submit([Dart(10, 2)], allowPartial: true)
 
         let stats = CheckoutStats.make(from: game, player: 0)
@@ -26,11 +43,11 @@ final class CheckoutStatsTests: XCTestCase {
 
     func testBustStopsCountingAndFiftyIsBull() throws {
         var game = match()
-        try game.submit([Dart(17, 3), Dart(0), Dart(0)])   // 101 → 50
-        try game.submit([Dart(20, 3)], allowPartial: true)  // pokus na bull, přehoz
+        try game.submit([Dart(17, 3), Dart(0), Dart(0)])   // 101 → 50, dvě šipky vedle jsou pokusy na bull
+        try game.submit([Dart(20, 3)], allowPartial: true)  // třetí pokus na bull, přehoz
         let stats = CheckoutStats.make(from: game, player: 0)
-        XCTAssertEqual(stats.doubles[25]?.attempts, 1)
-        XCTAssertEqual(stats.attempts, 1)
+        XCTAssertEqual(stats.doubles[25]?.attempts, 3)
+        XCTAssertEqual(stats.attempts, 3)
         XCTAssertEqual(stats.hits, 0)
         XCTAssertTrue(stats.checkouts.isEmpty)
     }

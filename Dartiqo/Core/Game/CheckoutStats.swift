@@ -40,6 +40,26 @@ public struct CheckoutStats: Equatable {
             lhs.hits == rhs.hits ? lhs.percentage < rhs.percentage : lhs.hits < rhs.hits
         }
     }
+    /// Minimální počet pokusů, aby šlo double férově porovnat s ostatními.
+    public static let comparableAttempts = 3
+    /// Doubly pro srovnání; dokud žádný nemá dost pokusů, berou se všechny házené.
+    public var comparableDoubles: [DoubleStat] {
+        let enough = doubles.values.filter { $0.attempts >= Self.comparableAttempts }
+        return enough.isEmpty ? doubles.values.filter { $0.attempts > 0 } : enough
+    }
+    public var isComparisonReliable: Bool { doubles.values.contains { $0.attempts >= Self.comparableAttempts } }
+    public var bestDouble: DoubleStat? {
+        comparableDoubles.max { lhs, rhs in
+            lhs.percentage == rhs.percentage ? lhs.attempts < rhs.attempts : lhs.percentage < rhs.percentage
+        }
+    }
+    /// Nejslabší double; při shodě procent vyhrává ten s víc pokusy. `nil`, pokud je jen jeden kandidát.
+    public var worstDouble: DoubleStat? {
+        let best = bestDouble?.segment
+        return comparableDoubles.filter { $0.segment != best }.min { lhs, rhs in
+            lhs.percentage == rhs.percentage ? lhs.attempts > rhs.attempts : lhs.percentage < rhs.percentage
+        }
+    }
     /// Kolik zavření spadá do pásem 2–40, 41–100 a 101–170.
     public var ranges: [(title: String, count: Int)] {
         [("2–40", checkouts.filter { $0 <= 40 }.count),

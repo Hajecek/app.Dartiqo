@@ -9,6 +9,30 @@ final class GameEngineTests: XCTestCase {
         var m = game(); try m.submit([Dart(20,3),Dart(20,3),Dart(20,3)])
         XCTAssertEqual(m.states[0].remaining,321); XCTAssertEqual(m.active,1); XCTAssertEqual(m.average(for:0),180)
     }
+    func testRewindRestoresStateBeforeChosenVisit() throws {
+        var m = game(legs: 2)
+        try m.submit([Dart(20,3),Dart(20,3),Dart(20,3)])
+        try m.submit([Dart(20),Dart(20),Dart(20)])
+        let target = m.visits[1].id
+        try m.submit([Dart(19,3),Dart(19,3),Dart(19,3)])
+        XCTAssertTrue(m.rewind(before: target))
+        XCTAssertEqual(m.visits.count, 1)
+        XCTAssertEqual(m.active, 1)
+        XCTAssertEqual(m.states[0].remaining, 321)
+        XCTAssertEqual(m.states[1].remaining, 501)
+        XCTAssertFalse(m.rewind(before: UUID()))
+    }
+    func testRewindCrossesLegBoundary() throws {
+        var m = game(legs: 2); m.states[0].remaining = 40
+        try m.submit([Dart(20,2)])
+        let winning = m.visits[0].id
+        m.nextLeg()
+        try m.submit([Dart(20),Dart(20),Dart(20)])
+        XCTAssertTrue(m.rewind(before: winning))
+        XCTAssertEqual(m.leg, 1); XCTAssertNil(m.legWinner)
+        XCTAssertEqual(m.states[0].remaining, 40); XCTAssertEqual(m.states[0].legs, 0)
+        XCTAssertEqual(m.active, 0); XCTAssertTrue(m.visits.isEmpty)
+    }
     func testBustRestoresEntireVisitAndCountsUsedDarts() throws {
         var m = game(); m.states[0].remaining = 50
         try m.submit([Dart(20),Dart(20,2)])
@@ -115,6 +139,44 @@ final class GameEngineTests: XCTestCase {
         XCTAssertEqual(Checkout.route(for:36),[Dart(18,2)])
         XCTAssertEqual(Checkout.route(for:3),[Dart(1),Dart(1,2)])
     }
+    func testSetupLeavesAFinishWhenCheckoutIsImpossible() {
+        for rule in OutRule.allCases {
+            for darts in 1...3 {
+                for score in 2...170 where Checkout.route(for: score, rule: rule, darts: darts) == nil {
+                    guard let setup = Checkout.setup(for: score, rule: rule, darts: darts) else {
+                        XCTFail("Chybí sehrávka pro \(score) / \(darts) / \(rule.rawValue)")
+                        continue
+                    }
+                    XCTAssertFalse(setup.darts.isEmpty)
+                    XCTAssertLessThanOrEqual(setup.darts.count, darts)
+                    XCTAssertTrue(setup.darts.allSatisfy(\.isValid))
+                    var left = score
+                    let floor = rule == .straight ? 1 : 2
+                    for dart in setup.darts {
+                        let next = left - dart.score
+                        XCTAssertGreaterThanOrEqual(next, floor, "Sehrávka \(setup.darts.map(\.label)) z \(score) bustuje")
+                        left = next
+                    }
+                    XCTAssertEqual(left, setup.leaves)
+                    XCTAssertNotNil(Checkout.route(for: left, rule: rule, darts: 3))
+                    XCTAssertNil(Checkout.route(for: score, rule: rule, darts: darts))
+                }
+            }
+        }
+        for score in [169, 168, 166, 165, 163, 162, 159] {
+            let setup = Checkout.setup(for: score, darts: 3)
+            XCTAssertEqual(setup?.leaves, 40, "\(score) má sehrát na D20")
+            XCTAssertEqual(setup?.leaveLabel, "D20")
+            XCTAssertEqual(setup?.darts.first, Dart(20, 3))
+        }
+        let ontoForty = Checkout.setup(for: 100, darts: 1)
+        XCTAssertEqual(ontoForty?.darts, [Dart(20, 3)])
+        XCTAssertEqual(ontoForty?.leaveLabel, "D20")
+        let ontoBull = Checkout.setup(for: 170, darts: 2)
+        XCTAssertEqual(ontoBull?.darts, [Dart(20, 3), Dart(20, 3)])
+        XCTAssertEqual(ontoBull?.leaveLabel, "Bull")
+        XCTAssertNil(Checkout.setup(for: 40, darts: 1))
+    }
     func testBotDartsAreLegalAndStrengthIncreases() {
         var averages: [Double] = []
         for level in [1,5,10] {
@@ -215,6 +277,7 @@ final class GameEngineTests: XCTestCase {
         let json = #"{"mode":"x01","startingScore":501,"outRule":"double","doubleIn":false,"legsToWin":2}"#
         let config = try JSONDecoder().decode(GameConfig.self,from:Data(json.utf8))
         XCTAssertNil(config.options); XCTAssertEqual(config.settings.countUpRounds,10)
+        XCTAssertEqual(config.setsToWin,1); XCTAssertEqual(config.format,.firstTo)
     }
     func testLegacyVisitsDecodeWithoutEntryFlag() throws {
         var m = game(); try m.submit([Dart(20),Dart(20),Dart(20)])
@@ -281,6 +344,36 @@ final class GameEngineTests: XCTestCase {
         XCTAssertEqual(BoardGeometry.hit(x:2,y:0),.miss)
         XCTAssertEqual(BoardGeometry.hit(x:Double.nan,y:0),.miss)
     }
+    func testCustomScoreStaysSaneAndBestOfIsMajority() {
+        var config = GameConfig(startingScore: 420)
+        config.apply(format: .bestOf, setsShown: 3, legsShown: 5)
+        let match = Match(config: config, players: [Player(name: "A"), Player(name: "B")])
+        XCTAssertTrue(match.isSane)
+        XCTAssertEqual(config.legsToWin, 3)
+        XCTAssertEqual(config.setsToWin, 2)
+        XCTAssertEqual(config.shownLegs, 5)
+        XCTAssertEqual(config.shownSets, 3)
+        XCTAssertEqual(config.lengthLine, "Best of 3 sety · Best of 5 legů v setu")
+    }
+
+    func testSetClosesBeforeTheMatchDoes() throws {
+        var match = Match(config: GameConfig(legsToWin: 1, setsToWin: 2), players: [Player(name: "A"), Player(name: "B")])
+        match.states[0].remaining = 40
+        try match.submit([Dart(20, 2)])
+        XCTAssertEqual(match.legWinner, 0)
+        XCTAssertEqual(match.states[0].sets, 1)
+        XCTAssertFalse(match.finished)
+        match.nextLeg()
+        XCTAssertEqual(match.states[0].legs, 0)
+        XCTAssertEqual(match.states[0].sets, 1)
+        XCTAssertEqual(match.states[0].remaining, 501)
+        match.states[0].remaining = 40
+        try match.submit([Dart(20, 2)])
+        XCTAssertTrue(match.finished)
+        XCTAssertEqual(match.winner, 0)
+        XCTAssertEqual(match.states[0].sets, 2)
+    }
+
     func testBoardMarkersRoundTrip() {
         for dart in Dart.targets {
             if let point = BoardGeometry.marker(for:dart) {

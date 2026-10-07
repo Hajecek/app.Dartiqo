@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 struct RootView: View {
     @EnvironmentObject private var store: AppStore
@@ -14,16 +15,33 @@ struct RootView: View {
 }
 
 struct MainTabView: View {
+    @StateObject private var setupChrome = MatchSetupChrome()
+
     var body: some View {
         TabView {
             NavigationStack { HomeView() }
                 .tabItem { Label("Domů", systemImage: "house.fill") }
             NavigationStack { PlayView() }
                 .tabItem { Label("Hrát", systemImage: "target") }
-            NavigationStack { StatsView() }
-                .tabItem { Label("Statistiky", systemImage: "chart.xyaxis.line") }
+            NavigationStack { HistoryView() }
+                .tabItem { Label("Moje hry", systemImage: "clock.arrow.circlepath") }
             NavigationStack { ProfileView() }
                 .tabItem { Label("Profil", systemImage: "person.crop.circle") }
+            NavigationStack { SettingsView() }
+                .tabItem { Label("Nastavení", systemImage: "gearshape") }
+        }
+        .environmentObject(setupChrome)
+        .tabViewBottomAccessory(isEnabled: setupChrome.title != nil) {
+            SetupAccessoryButton()
+                .environmentObject(setupChrome)
         }
     }
+}
+
+/// Akce nového zápasu, kterou spodní menu ukáže jen dokud je průvodce otevřený.
+@MainActor final class MatchSetupChrome: ObservableObject {
+    @Published var title: String?
+    @Published var enabled = false
+    @Published var token = 0
+    var owner: UUID?
 }
