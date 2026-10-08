@@ -31,6 +31,7 @@ struct MainTabView: View {
                 .tabItem { Label("Nastavení", systemImage: "gearshape") }
         }
         .environmentObject(setupChrome)
+        .tabBarMinimizeBehavior(setupChrome.title != nil ? .onScrollDown : .automatic)
         .tabViewBottomAccessory(isEnabled: setupChrome.title != nil) {
             SetupAccessoryButton()
                 .environmentObject(setupChrome)
