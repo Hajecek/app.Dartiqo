@@ -49,6 +49,14 @@ enum Theme {
     static let ink = Color.black
 
     static let action = accent
+    /// Barva hráče podle pořadí v zápase. Všechny jsou světlé, text na nich je černý.
+    static let playerColors: [Color] = [
+        brand,
+        Color(red: 0.35, green: 0.78, blue: 1),
+        Color(red: 1, green: 0.55, blue: 0.25),
+        Color(red: 0.95, green: 0.45, blue: 0.85)
+    ]
+    static func playerColor(_ index: Int) -> Color { playerColors[((index % playerColors.count) + playerColors.count) % playerColors.count] }
     static let mint = positive
     static let volt = positive
 
@@ -124,11 +132,17 @@ struct Avatar: View {
     var bot = false
     var size: CGFloat = 44
     var photo: Data?
+    /// Obrázek z assetů, třeba portrét bota.
+    var asset: String?
     var body: some View {
         ZStack {
             Circle()
                 .fill(bot ? Theme.positive.opacity(0.18) : Theme.accent.opacity(0.16))
-            if let photo, let image = UIImage(data: photo) {
+            if let asset {
+                Image(asset)
+                    .resizable()
+                    .scaledToFill()
+            } else if let photo, let image = UIImage(data: photo) {
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()

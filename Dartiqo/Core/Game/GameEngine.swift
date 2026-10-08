@@ -26,7 +26,8 @@ extension Match {
                     states[index].opened = true
                 }
                 let next = states[index].remaining - dart.score
-                if next < 0 || (next == 1 && config.outRule != .straight) || (next == 0 && !config.outRule.allows(dart)) {
+                let rule = config.outRule(for: index)
+                if next < 0 || (next == 1 && rule != .straight) || (next == 0 && !rule.allows(dart)) {
                     states[index] = before; credited = 0; bust = true
                 } else {
                     states[index].remaining = next; credited += dart.score; won = next == 0
@@ -75,8 +76,8 @@ extension Match {
         guard legWinner != nil, !finished else { return }
         // Keep last visit snapshot so undo at the start of a leg restores its winning visit.
         let setClosed = config.setsToWin > 1 && states.contains { $0.legs >= config.legsToWin }
-        states = states.map { state in
-            var fresh = PlayerState(config: config)
+        states = states.enumerated().map { player, state in
+            var fresh = PlayerState(config: config, player: player)
             fresh.sets = state.sets
             fresh.legs = setClosed ? 0 : state.legs
             return fresh
@@ -104,7 +105,8 @@ extension Match {
     /// Undo bot replies together with the human visit they answered.
     public mutating func undoHumanTurn() {
         guard !undoStack.isEmpty else { return }
-        repeat { undo() } while currentPlayer.botLevel != nil && !undoStack.isEmpty
+        let hasHuman = players.contains { $0.botLevel == nil }
+        repeat { undo() } while hasHuman && currentPlayer.botLevel != nil && !undoStack.isEmpty
     }
 }
 

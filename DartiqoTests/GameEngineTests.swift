@@ -60,6 +60,33 @@ final class GameEngineTests: XCTestCase {
         var n = game(out:.straight); n.states[0].remaining = 1
         try n.submit([Dart(1)]); XCTAssertTrue(n.finished)
     }
+    func testHandicapStartAndRulesPerPlayer() throws {
+        var config = GameConfig(mode: .x01, outRule: .double, legsToWin: 2)
+        config.handicaps = [Handicap(startingScore: 301, outRule: .straight), Handicap(doubleIn: true)]
+        var m = Match(config: config, players: [Player(name: "A"), Player(name: "B")])
+        XCTAssertEqual(m.states[0].remaining, 301); XCTAssertTrue(m.states[0].opened)
+        XCTAssertEqual(m.states[1].remaining, 501); XCTAssertFalse(m.states[1].opened)
+        XCTAssertTrue(m.config.hasHandicap)
+        try m.submit([Dart(20), Dart(20), Dart(20)])
+        try m.submit([Dart(20), Dart(20), Dart(20)])
+        XCTAssertEqual(m.states[1].remaining, 501)
+        m.states[0].remaining = 1
+        try m.submit([Dart(1)])
+        XCTAssertEqual(m.legWinner, 0)
+        m.nextLeg()
+        XCTAssertEqual(m.states[0].remaining, 301); XCTAssertEqual(m.states[1].remaining, 501)
+        XCTAssertFalse(m.states[1].opened)
+    }
+    func testHandicapDecodesMissingFieldAndRoundTrips() throws {
+        var config = GameConfig(mode: .x01)
+        XCTAssertFalse(config.hasHandicap)
+        config.handicaps = [Handicap(), Handicap(startingScore: 701)]
+        let data = try JSONEncoder().encode(config)
+        let decoded = try JSONDecoder().decode(GameConfig.self, from: data)
+        XCTAssertEqual(decoded.startingScore(for: 1), 701)
+        XCTAssertEqual(decoded.startingScore(for: 0), decoded.startingScore)
+        XCTAssertEqual(decoded.outRule(for: 5), decoded.outRule)
+    }
     func testDoubleInAndBustResetOpening() throws {
         var m = game(doubleIn:true)
         try m.submit([Dart(20,3),Dart(20,2),Dart(20)])
@@ -367,6 +394,8 @@ final class GameEngineTests: XCTestCase {
         XCTAssertEqual(match.states[0].legs, 0)
         XCTAssertEqual(match.states[0].sets, 1)
         XCTAssertEqual(match.states[0].remaining, 501)
+        XCTAssertEqual(match.active, 1)
+        try match.submit([Dart(1), Dart(1), Dart(1)])
         match.states[0].remaining = 40
         try match.submit([Dart(20, 2)])
         XCTAssertTrue(match.finished)

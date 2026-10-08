@@ -16,10 +16,24 @@ private enum MatchColors {
     static let setupTip = Color(red: 0.42, green: 0.24, blue: 0.02)
 }
 private enum ScoringSurface: String, CaseIterable, Identifiable {
-    case grid, board, total
+    case grid, board, total, camera
     var id: String { rawValue }
-    var title: String { self == .grid ? "Čísla" : self == .board ? "Terč" : "Součet" }
-    var icon: String { self == .grid ? "square.grid.3x3.fill" : self == .board ? "target" : "number" }
+    var title: String {
+        switch self {
+        case .grid: return "Čísla"
+        case .board: return "Terč"
+        case .total: return "Součet"
+        case .camera: return "Kamera"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .grid: return "square.grid.3x3.fill"
+        case .board: return "target"
+        case .total: return "number"
+        case .camera: return "camera.fill"
+        }
+    }
 }
 private struct LegCeremony: Equatable, Identifiable {
     var id = UUID()
@@ -199,6 +213,19 @@ struct MatchView: View {
                             totalInput(game)
                         } else if surface == .board {
                             boardInput(game)
+                        } else if surface == .camera {
+                            CameraScoreView(
+                                calibration: store.boardCalibration,
+                                labels: game.currentDarts.map(\.label),
+                                dartCount: game.currentDarts.count
+                            ) { dart in
+                                let visits = store.activeMatch?.visits.count ?? 0
+                                let pending = store.activeMatch?.currentDarts.count ?? 0
+                                hit(dart)
+                                let afterVisits = store.activeMatch?.visits.count ?? 0
+                                let afterPending = store.activeMatch?.currentDarts.count ?? 0
+                                return afterVisits > visits || afterPending > pending
+                            }
                         } else {
                             dartGrid
                         }
@@ -230,6 +257,8 @@ struct MatchView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 4)
                 .opacity(0.96)
+        case .camera:
+            visitSummaryCard(title: "Kamera", value: "\(holdDarts.reduce(0) { $0 + $1.score })")
         }
     }
 
@@ -286,6 +315,13 @@ struct MatchView: View {
                         .accessibilityLabel("\(state.sets) setů")
                 }
                 Text("\(state.legs)").font(AppFont.body(14, weight: .bold)).foregroundStyle(.white).frame(minWidth: 24, minHeight: 24).background(MatchColors.ink, in: RoundedRectangle(cornerRadius: 7)).accessibilityLabel("\(state.legs) vyhraných legů")
+            }
+            if game.config.hasHandicap {
+                Text(game.config.ruleLine(for: index))
+                    .font(AppFont.caption(11, weight: .bold))
+                    .opacity(0.65)
+                    .lineLimit(1)
+                    .accessibilityLabel("Handicap \(game.config.ruleLine(for: index))")
             }
             Text(value)
                 .font(AppFont.display(72, weight: .bold))
@@ -510,10 +546,11 @@ struct MatchView: View {
             return CheckoutGuide(note: "double in")
         }
         guard dartsLeft > 0 else { return CheckoutGuide() }
-        if let route = Checkout.route(for: state.remaining, rule: game.config.outRule, darts: dartsLeft) {
+        let rule = game.config.outRule(for: game.active)
+        if let route = Checkout.route(for: state.remaining, rule: rule, darts: dartsLeft) {
             return CheckoutGuide(route: route)
         }
-        if state.remaining <= 170, let setup = Checkout.setup(for: state.remaining, rule: game.config.outRule, darts: dartsLeft) {
+        if state.remaining <= 170, let setup = Checkout.setup(for: state.remaining, rule: rule, darts: dartsLeft) {
             return CheckoutGuide(route: setup.darts, setupLeave: setup.leaveLabel)
         }
         return CheckoutGuide()
@@ -537,7 +574,7 @@ struct MatchView: View {
             }.padding(.vertical,1).background(.white.opacity(0.13))
         }
     }
-    private func canUseTotal(_ game: Match) -> Bool { game.config.mode == .x01 && !game.config.doubleIn }
+    private func canUseTotal(_ game: Match) -> Bool { game.config.mode == .x01 && !game.config.anyDoubleIn(players: game.players.count) }
     private func changeSurface(_ value: ScoringSurface) {
         guard var game = store.activeMatch else { return }
         if value == .total && !game.currentDarts.isEmpty { error = "Součet lze zapnout na začátku kola. Dokonči nebo vrať rozehrané šipky."; return }

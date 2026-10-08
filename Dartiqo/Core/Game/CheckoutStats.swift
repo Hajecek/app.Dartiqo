@@ -89,8 +89,9 @@ public struct CheckoutStats: Equatable {
 
     public static func make(from match: Match, player: Int, leg: Int? = nil) -> CheckoutStats {
         var stats = CheckoutStats()
-        guard match.config.mode == .x01, match.config.outRule != .straight else { return stats }
-        let start = match.config.startingScore
+        let rule = match.config.outRule(for: player)
+        guard match.config.mode == .x01, rule != .straight else { return stats }
+        let start = match.config.startingScore(for: player)
         var remaining: [Int: Int] = [:]
         var opened: [Int: Bool] = [:]
 
@@ -109,7 +110,7 @@ public struct CheckoutStats: Equatable {
             }
 
             var left = before
-            var isOpen = opened[visit.leg] ?? !match.config.doubleIn
+            var isOpen = opened[visit.leg] ?? !match.config.doubleIn(for: player)
             for dart in visit.darts {
                 if !isOpen {
                     guard dart.multiplier == 2 else { continue }
@@ -121,10 +122,10 @@ public struct CheckoutStats: Equatable {
                     stat.attempts += 1
                     stats.attempts += 1
                     if dart.segment == target && dart.multiplier == 2 { stat.hits += 1 }
-                    if next == 0 && match.config.outRule.allows(dart) { stats.hits += 1 }
+                    if next == 0 && rule.allows(dart) { stats.hits += 1 }
                     stats.doubles[target] = stat
                 }
-                if next < 0 || next == 1 || (next == 0 && !match.config.outRule.allows(dart)) { break }
+                if next < 0 || next == 1 || (next == 0 && !rule.allows(dart)) { break }
                 left = next
                 if left == 0 { break }
             }

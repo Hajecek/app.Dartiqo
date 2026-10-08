@@ -26,12 +26,20 @@ public struct SeatDraft: Codable, Identifiable, Equatable {
     public var name: String
     public var isBot: Bool
     public var level: Int
-    public init(name: String, isBot: Bool = false, level: Int = 3) { self.name = name; self.isBot = isBot; self.level = level }
+    public var handicap: Handicap?
+    /// Přítel nebo profil z tohoto telefonu. Zápas se pak započítá pod stejné ID.
+    public var friendID: UUID?
+    public init(name: String, isBot: Bool = false, level: Int = 3, friendID: UUID? = nil) {
+        self.name = name; self.isBot = isBot; self.level = level; self.friendID = friendID
+    }
 }
 public struct SetupDraft: Codable, Equatable {
     public var config = GameConfig()
     public var seats = [SeatDraft(name: "Já"), SeatDraft(name: "Bot", isBot: true)]
     public var starter = 0 // -1 means random; otherwise explicit roster position
+    /// `true` znamená, že první místo nepatří vlastníkovi profilu.
+    public var withoutMe: Bool?
+    public var includesMe: Bool { withoutMe != true }
     public init(mode: GameMode = .x01) { config.mode = mode; config.options = MatchOptions() }
 }
 public struct GamePreset: Codable, Identifiable {
@@ -56,15 +64,16 @@ public enum ScoreEntryError: Error, LocalizedError {
 extension Match {
     /// Sum entry stores inferred darts only for rule validation, visibly marked in history.
     public mutating func submitTotal(_ score: Int, checkoutDarts: Int = 3) throws {
-        guard config.mode == .x01, !config.doubleIn else { throw ScoreEntryError.unsupported }
+        guard config.mode == .x01, currentState.opened else { throw ScoreEntryError.unsupported }
         guard !finished else { throw GameError.finished }
         guard legWinner == nil else { throw GameError.legEnded }
         guard (0...180).contains(score) else { throw ScoreEntryError.impossible }
         let remaining = currentState.remaining
-        if score > remaining || (remaining - score == 1 && config.outRule != .straight) { throw ScoreEntryError.useBust }
+        let rule = config.outRule(for: active)
+        if score > remaining || (remaining - score == 1 && rule != .straight) { throw ScoreEntryError.useBust }
         var darts: [Dart]
         if score == remaining {
-            guard (1...3).contains(checkoutDarts), let route = Checkout.route(for: score, rule: config.outRule, darts: checkoutDarts) else { throw ScoreEntryError.finish }
+            guard (1...3).contains(checkoutDarts), let route = Checkout.route(for: score, rule: rule, darts: checkoutDarts) else { throw ScoreEntryError.finish }
             darts = Array(repeating: .miss, count: checkoutDarts - route.count) + route
         } else {
             guard let route = Self.scoringRoute(score) else { throw ScoreEntryError.impossible }
@@ -75,7 +84,7 @@ extension Match {
     }
     public mutating func recordBust(darts: Int) throws {
         guard currentDarts.isEmpty else { throw GameError.unfinishedVisit }
-        guard config.mode == .x01, !config.doubleIn else { throw ScoreEntryError.unsupported }
+        guard config.mode == .x01, currentState.opened else { throw ScoreEntryError.unsupported }
         guard !finished else { throw GameError.finished }
         guard legWinner == nil else { throw GameError.legEnded }
         guard (1...3).contains(darts) else { throw GameError.invalidDarts }
@@ -87,9 +96,10 @@ extension Match {
     }
     private func canBust(remaining: Int, darts: Int) -> Bool {
         if remaining > darts * 60 + 1 { return false }
+        let rule = config.outRule(for: active)
         for dart in Dart.targets + [.miss] {
             let next = remaining - dart.score
-            let bust = next < 0 || (next == 1 && config.outRule != .straight) || (next == 0 && !config.outRule.allows(dart))
+            let bust = next < 0 || (next == 1 && rule != .straight) || (next == 0 && !rule.allows(dart))
             if bust { if darts == 1 { return true }; continue }
             if next > 0 && darts > 1 && canBust(remaining: next, darts: darts - 1) { return true }
         }

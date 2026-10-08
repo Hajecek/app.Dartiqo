@@ -77,7 +77,7 @@ struct VisitLog: View {
 
     private var openVisitRow: some View {
         HStack(spacing: 12) {
-            Avatar(name: game.currentPlayer.name, bot: game.currentPlayer.botLevel != nil, size: 36)
+            Avatar(name: game.currentPlayer.name, bot: game.currentPlayer.botLevel != nil, size: 36, asset: game.currentPlayer.botLevel.map { BotLevel.get($0).photo })
             VStack(alignment: .leading, spacing: 6) {
                 Text("\(game.currentPlayer.name) · rozehrané").font(.subheadline.weight(.semibold))
                 DartChips(darts: game.currentDarts)
@@ -103,7 +103,7 @@ private struct VisitRow: View {
     var body: some View {
         let player = game.players[visit.player]
         HStack(spacing: 12) {
-            Avatar(name: player.name, bot: player.botLevel != nil, size: 36)
+            Avatar(name: player.name, bot: player.botLevel != nil, size: 36, asset: player.botLevel.map { BotLevel.get($0).photo })
             VStack(alignment: .leading, spacing: 6) {
                 Text("\(player.name) · kolo \(round)")
                     .font(.subheadline.weight(.semibold))
@@ -264,7 +264,7 @@ struct VisitDetailView: View {
 
     private var header: some View {
         VStack(spacing: 10) {
-            Avatar(name: player.name, bot: player.botLevel != nil, size: 56)
+            Avatar(name: player.name, bot: player.botLevel != nil, size: 56, asset: player.botLevel.map { BotLevel.get($0).photo })
             Text(player.name).font(.headline)
             VisitScore(visit: visit, size: 56)
             if visit.checkout {

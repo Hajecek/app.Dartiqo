@@ -41,24 +41,32 @@ struct SetupView: View {
     @State private var draft: SetupDraft
     @State private var step = 0
     @State private var live = false
+    @State private var launchIntro = true
     @State private var replace = false
     @State private var savePreset = false
     @State private var presetName = "Moje 501"
     @State private var scoreText = "501"
     @State private var scoreExact = false
+    @State private var openRule: RuleKey? = .start
+    @State private var showFriends = false
+    @FocusState private var focusedGuest: UUID?
+    private enum RuleKey: Hashable { case start, finish, mode, length, handicap, flow }
     @State private var opening: Opening?
     @State private var pickedStarter: Int?
     @State private var bullWinner: Int?
     @State private var showBullOff = false
+    @State private var bullLaunched = false
     @State private var chromeID = UUID()
     @EnvironmentObject private var setupChrome: MatchSetupChrome
     private let presetScores = [101, 301, 501, 701, 1001]
     private var options: Binding<MatchOptions> { Binding(get: { draft.config.settings }, set: { draft.config.options = $0 }) }
     init(mode: GameMode, preset: SetupDraft? = nil) { _draft = State(initialValue: preset ?? SetupDraft(mode: mode)) }
-    private var canContinue: Bool { !draft.seats.dropFirst().contains { !$0.isBot && $0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } }
+    private var canContinue: Bool {
+        !draft.seats.isEmpty && !draft.seats.indices.contains { !isMe($0) && !draft.seats[$0].isBot && draft.seats[$0].name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
     private var showsOpening: Bool { draft.seats.count > 1 }
-    private var stepCount: Int { showsOpening ? 4 : 3 }
-    private var stepTitles: [String] { showsOpening ? ["Hra", "Hráči", "Pravidla", "Start"] : ["Hra", "Hráči", "Pravidla"] }
+    private var stepCount: Int { showsOpening ? 5 : 4 }
+    private var stepTitles: [String] { showsOpening ? ["Hra", "Hráči", "Pravidla", "Souhrn", "Start"] : ["Hra", "Hráči", "Pravidla", "Souhrn"] }
     private var isLastStep: Bool { step >= stepCount - 1 }
     private var canPlay: Bool {
         guard canContinue else { return false }
@@ -71,6 +79,7 @@ struct SetupView: View {
         }
     }
     private var motion: Animation? { reduceMotion ? nil : .smooth(duration: 0.38) }
+    private var sectionMotion: Animation { reduceMotion ? .easeInOut(duration: 0.2) : .spring(response: 0.46, dampingFraction: 0.88) }
     private var usingExactScore: Bool { scoreExact || !presetScores.contains(draft.config.startingScore) }
 
     var body: some View {
@@ -90,6 +99,7 @@ struct SetupView: View {
                         if step == 0 { gameStep }
                         else if step == 1 { rosterStep }
                         else if step == 2 { rulesStep }
+                        else if step == 3 { summaryStep }
                         else { openingStep }
                     }
                     .id(step)
@@ -101,6 +111,13 @@ struct SetupView: View {
             }
             .onChange(of: step) { _, _ in
                 proxy.scrollTo("setup-top", anchor: .top)
+            }
+            .onChange(of: openRule) { _, key in
+                guard let key, step == 2 else { return }
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 120_000_000)
+                    withAnimation(sectionMotion) { proxy.scrollTo(key, anchor: .top) }
+                }
             }
         }
         .animation(motion, value: step)
@@ -115,7 +132,6 @@ struct SetupView: View {
                     Button { setStep(step - 1) } label: {
                         Image(systemName: "chevron.left")
                     }
-                    .buttonStyle(.glass)
                     .accessibilityLabel("Předchozí krok")
                 }
             }
@@ -143,28 +159,51 @@ struct SetupView: View {
             advance()
         }
         .onChange(of: showsOpening) { _, shown in
-            if !shown, step > 2 { setStep(2) }
+            if !shown, step > 3 { setStep(3) }
         }
         .onChange(of: showBullOff) { _, shown in
-            if !shown { pushChrome() }
+            if !shown {
+                bullLaunched = false
+                pushChrome()
+            }
         }
         .confirmationDialog("Máš rozehraný zápas", isPresented: $replace, titleVisibility: .visible) {
-            Button("Pokračovat v rozehraném") { live = true }
+            Button("Pokračovat v rozehraném") { launchIntro = false; live = true }
             Button("Zahodit rozehraný a spustit nový", role: .destructive) { start() }
             Button("Zrušit", role: .cancel) {}
         }
-        .fullScreenCover(isPresented: $live) { NavigationStack { MatchView() }.environmentObject(store) }
+        .fullScreenCover(isPresented: $live) { MatchLaunchView(intro: launchIntro).environmentObject(store) }
         .fullScreenCover(isPresented: $showBullOff) {
-            BullOffView(names: draft.seats.indices.map(seatName), bots: draft.seats.indices.map { index in
-                index == 0 ? nil : (draft.seats[index].isBot ? draft.seats[index].level : nil)
-            }) { winner in
-                bullWinner = winner
-                opening = .bull
-                showBullOff = false
-            } onCancel: {
-                showBullOff = false
-                if bullWinner == nil { opening = nil }
+            ZStack {
+                if bullLaunched {
+                    MatchLaunchView(intro: true)
+                        .transition(.opacity)
+                } else {
+                    BullOffView(names: draft.seats.indices.map(seatName), bots: draft.seats.indices.map { index in
+                        isMe(index) ? nil : (draft.seats[index].isBot ? draft.seats[index].level : nil)
+                    }) { winner in
+                        bullWinner = winner
+                        opening = .bull
+                        commitScoreFromField()
+                        if let active = store.activeMatch, !active.finished {
+                            showBullOff = false
+                            Task { @MainActor in
+                                try? await Task.sleep(nanoseconds: 450_000_000)
+                                replace = true
+                            }
+                        } else if makeMatch() {
+                            withAnimation(.easeInOut(duration: 0.35)) { bullLaunched = true }
+                        } else {
+                            showBullOff = false
+                        }
+                    } onCancel: {
+                        showBullOff = false
+                        if bullWinner == nil { opening = nil }
+                    }
+                    .transition(.opacity)
+                }
             }
+            .environmentObject(store)
         }
     }
 
@@ -173,6 +212,7 @@ struct SetupView: View {
         case 0: return "Jaká hra?"
         case 1: return "Kdo hraje?"
         case 2: return "Jak se hraje?"
+        case 3: return "Všechno sedí?"
         default: return "Kdo začíná?"
         }
     }
@@ -180,8 +220,9 @@ struct SetupView: View {
     private var subtitle: String {
         switch step {
         case 0: return "Vyber režim. Ostatní doladíš v dalším kroku."
-        case 1: return "Ty a až tři soupeři. Kamarád, nebo bot."
-        case 2: return "Jedna věc po druhé. Dole uvidíš, co z toho vznikne."
+        case 1: return "Ty a až tři soupeři. Pozvi přátele, přidej hosta, nebo bota."
+        case 2: return "Klepni na sekci a nastav ji. Ostatní zůstanou sbalené."
+        case 3: return "Kdo hraje a podle jakých pravidel. Klepnutím na řádek ho změníš."
         default: return "Rozhodni, kdo hází první leg."
         }
     }
@@ -247,87 +288,596 @@ struct SetupView: View {
             }
         }
     }
-    private var rosterKind: Int? {
-        if draft.seats.count == 1 { return 2 }
-        guard draft.seats.count == 2 else { return nil }
-        return draft.seats[1].isBot ? 0 : 1
+    private enum Lineup: CaseIterable, Identifiable {
+        case meBot, meFriend, botBot, friendFriend, solo
+        var id: Self { self }
+        var title: String {
+            switch self {
+            case .meBot: return "Ty vs Bot"
+            case .meFriend: return "Ty vs Kamarád"
+            case .botBot: return "Bot vs Bot"
+            case .friendFriend: return "Kamarád vs Kamarád"
+            case .solo: return "Sólo"
+            }
+        }
+        var icon: String {
+            switch self {
+            case .meBot: return "cpu"
+            case .meFriend: return "person.2.fill"
+            case .botBot: return "cpu.fill"
+            case .friendFriend: return "person.3.fill"
+            case .solo: return "figure.archery"
+            }
+        }
+    }
+
+    private var currentLineup: Lineup? {
+        let others = draft.seats.indices.filter { !isMe($0) }.map { draft.seats[$0] }
+        switch (draft.includesMe, others.count) {
+        case (true, 0): return .solo
+        case (true, 1): return others[0].isBot ? .meBot : .meFriend
+        case (false, 2):
+            if others.allSatisfy(\.isBot) { return .botBot }
+            if others.allSatisfy({ !$0.isBot }) { return .friendFriend }
+            return nil
+        default: return nil
+        }
+    }
+
+    private func applyLineup(_ lineup: Lineup) {
+        hideKeyboard()
+        withAnimation(motion) {
+            switch lineup {
+            case .meBot: draft.seats = [SeatDraft(name: "Já"), SeatDraft(name: "Bot", isBot: true)]
+            case .meFriend: draft.seats = [SeatDraft(name: "Já"), SeatDraft(name: "")]
+            case .botBot: draft.seats = [SeatDraft(name: "Bot", isBot: true, level: 3), SeatDraft(name: "Bot", isBot: true, level: 6)]
+            case .friendFriend: draft.seats = [SeatDraft(name: ""), SeatDraft(name: "")]
+            case .solo: draft.seats = [SeatDraft(name: "Já")]
+            }
+            draft.withoutMe = (lineup == .botBot || lineup == .friendFriend) ? true : nil
+            draft.starter = 0
+        }
+        if lineup == .meFriend || lineup == .friendFriend { focusedGuest = draft.seats.first { !$0.isBot && $0.name.isEmpty }?.id }
+    }
+
+    private func setPlaysMyself(_ on: Bool) {
+        guard on != draft.includesMe else { return }
+        hideKeyboard()
+        withAnimation(motion) {
+            if on {
+                guard draft.seats.count < 4 else { return }
+                draft.seats.insert(SeatDraft(name: "Já"), at: 0)
+                draft.withoutMe = nil
+            } else {
+                if !draft.seats.isEmpty { draft.seats.removeFirst() }
+                draft.withoutMe = true
+            }
+            draft.starter = 0
+        }
     }
 
     private var rosterStep: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(spacing: 8) {
-                quickRoster("S botem", icon: "cpu", kind: 0)
-                quickRoster("Kamarádi", icon: "person.2", kind: 1)
-                quickRoster("Sólo", icon: "person", kind: 2)
+        let others = draft.seats.indices.filter { !isMe($0) }
+        return VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 10) {
+                Eyebrow(text: "Rychlá sestava")
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(Lineup.allCases) { lineup in
+                            let selected = currentLineup == lineup
+                            Button { applyLineup(lineup) } label: {
+                                Label(lineup.title, systemImage: lineup.icon)
+                                    .font(.subheadline.weight(.semibold))
+                                    .padding(.horizontal, 14)
+                                    .frame(minHeight: 40)
+                                    .foregroundStyle(selected ? Color.black : Color.primary)
+                                    .background(selected ? Theme.brand : Color.primary.opacity(0.06), in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(selected ? .isSelected : [])
+                        }
+                    }
+                }
+                .scrollClipDisabled()
+                .sensoryFeedback(.selection, trigger: currentLineup)
             }
-            HStack { Avatar(name: store.profile?.name ?? "Já"); VStack(alignment: .leading, spacing: 5) { Text(store.profile?.name ?? "Já").font(.headline); Text("Tvůj profil · statistiky se ukládají").font(.caption).foregroundStyle(.secondary) }; Spacer(); Text("TY").font(.caption.bold()).foregroundStyle(Theme.action) }.surface()
-            ForEach(Array(draft.seats.indices.dropFirst()), id: \.self) { i in seatCard(i) }
+
+            meCard
+
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Eyebrow(text: draft.includesMe ? "Soupeři" : "Hráči")
+                    Spacer()
+                    Text("\(draft.seats.count) ze 4 míst")
+                        .font(.caption.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .contentTransition(.numericText())
+                }
+                if others.isEmpty {
+                    HStack(spacing: 12) {
+                        Image(systemName: draft.includesMe ? "figure.archery" : "person.crop.circle.badge.questionmark")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(draft.includesMe ? "Sólo trénink" : "Zatím nikdo nehraje").font(.headline)
+                            Text(draft.includesMe ? "Hraješ sám. Přidej soupeře níž." : "Přidej aspoň jednoho hráče nebo bota.").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+                    .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 20, style: .continuous).stroke(Theme.stroke, style: StrokeStyle(lineWidth: 1, dash: [5, 4])))
+                }
+                ForEach(others, id: \.self) { index in
+                    Group {
+                        if draft.seats[index].isBot { botCard(index) } else { friendCard(index) }
+                    }
+                    .transition(.asymmetric(insertion: .scale(scale: 0.96).combined(with: .opacity), removal: .opacity))
+                }
+            }
+
             if draft.seats.count < 4 {
-                Button { withAnimation(motion) { draft.seats.append(SeatDraft(name: "Hráč \(draft.seats.count + 1)")) } } label: { Label("Přidat hráče nebo bota", systemImage: "plus.circle").font(.headline).frame(maxWidth: .infinity).padding(18).background(Theme.action.opacity(0.07), in: RoundedRectangle(cornerRadius: 20)).overlay(RoundedRectangle(cornerRadius: 20).stroke(Theme.action.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [5,4]))) }.foregroundStyle(Theme.action)
+                VStack(alignment: .leading, spacing: 10) {
+                    Eyebrow(text: "Přidat hráče")
+                    VStack(spacing: 0) {
+                        addRow("Pozvat z přátel", detail: "Uložení přátelé, profily na telefonu a kontakty", icon: "person.2.fill") { showFriends = true }
+                        Divider().padding(.leading, 66)
+                        addRow("Host", detail: "Jen napíšeš jméno. Po hře se uloží mezi přátele", icon: "person.fill.badge.plus") { addGuest() }
+                        Divider().padding(.leading, 66)
+                        addRow("Bot", detail: "Počítačový soupeř s úrovní 1 až 10", icon: "cpu.fill") { addBot() }
+                    }
+                    .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Theme.stroke, lineWidth: 1))
+                }
+                .transition(.opacity)
             }
-            Text("Všichni lidští hráči zapisují na tomto telefonu.").font(.caption).foregroundStyle(.secondary)
+
+            Label(draft.includesMe ? "Všichni hrajete na tomhle telefonu a zapisujete se střídavě." : "Zápas běží na tomhle telefonu. Do tvých statistik se nepočítá.", systemImage: "iphone")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .contentTransition(.opacity)
+        }
+        .sheet(isPresented: $showFriends) {
+            FriendPickerSheet(
+                taken: Set(draft.seats.compactMap(\.friendID) + [store.profile?.id].compactMap { $0 }),
+                slots: 4 - draft.seats.count
+            ) { picked in
+                withAnimation(motion) {
+                    for friend in picked where draft.seats.count < 4 {
+                        draft.seats.append(SeatDraft(name: friend.name, friendID: friend.id))
+                    }
+                    draft.starter = 0
+                }
+            }
+            .environmentObject(store)
         }
     }
 
-    private func quickRoster(_ title: String, icon: String, kind: Int) -> some View {
-        let selected = rosterKind == kind
-        return Button {
-            withAnimation(motion) {
-                draft.seats = [SeatDraft(name: "Já")]
-                if kind != 2 { draft.seats.append(SeatDraft(name: kind == 0 ? "Bot" : "Kamarád", isBot: kind == 0)) }
-                draft.starter = 0
+    private var meCard: some View {
+        let playing = draft.includesMe
+        let blocked = !playing && draft.seats.count >= 4
+        return HStack(spacing: 14) {
+            Avatar(name: store.profile?.name ?? "Já", size: 52, photo: store.profile?.photoJPEG)
+                .saturation(playing ? 1 : 0)
+                .opacity(playing ? 1 : 0.5)
+                .playerRing(playing ? seatColor(0) : nil)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(store.profile?.name ?? "Já").font(.title3.bold()).lineLimit(1)
+                    Text("TY")
+                        .font(.caption2.weight(.heavy))
+                        .foregroundStyle(Theme.onAccent)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Theme.accentFill, in: Capsule())
+                }
+                Text(playing ? "Hraješ · statistiky se ukládají" : blocked ? "Místa jsou plná. Uvolni jedno." : "Nehraješ · jen spouštíš zápas")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .contentTransition(.opacity)
             }
-        } label: {
-            Label(title, systemImage: icon)
-                .font(.caption.bold())
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 15)
-                .foregroundStyle(selected ? Theme.onAccent : .primary)
-                .background(selected ? Theme.accentFill : Theme.card, in: RoundedRectangle(cornerRadius: 14))
+            Spacer(minLength: 8)
+            Toggle("Hraju taky", isOn: Binding(get: { playing }, set: { setPlaysMyself($0) }))
+                .labelsHidden()
+                .tint(Theme.action)
+                .disabled(blocked)
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 14)
+        .padding(.vertical, 12)
+        .playerCard(playing ? seatColor(0) : nil)
+    }
+
+    /// Barva místa v sestavě. Sólo hra barvy nepotřebuje.
+    private func seatColor(_ index: Int) -> Color? {
+        draft.seats.count > 1 ? Theme.playerColor(index) : nil
+    }
+
+    private func botPersona(_ index: Int) -> String {
+        let seat = draft.seats[index]
+        let persona = BotLevel.get(seat.level).persona
+        let same = draft.seats[..<index].filter { $0.isBot && $0.level == seat.level }.count
+        return same == 0 ? persona : "\(persona) \(same + 1)"
+    }
+
+    private func addRow(_ title: String, detail: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: icon)
+                    .font(.headline)
+                    .foregroundStyle(Theme.action)
+                    .frame(width: 38, height: 38)
+                    .background(Theme.action.opacity(0.12), in: Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.headline)
+                    Text(detail).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "plus.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(Theme.action)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityAddTraits(selected ? .isSelected : [])
     }
-    private func seatCard(_ i: Int) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Avatar(name: draft.seats[i].name, bot: draft.seats[i].isBot)
-                Picker("Typ hráče", selection: $draft.seats[i].isBot) { Text("Kamarád").tag(false); Text("Bot").tag(true) }.pickerStyle(.segmented)
-                Button { draft.seats.remove(at: i); draft.starter = 0 } label: { Image(systemName: "minus.circle").frame(width: 44, height: 44) }.foregroundStyle(.secondary).accessibilityLabel("Odebrat hráče \(i + 1)")
+
+    private func isMe(_ index: Int) -> Bool { draft.includesMe && index == 0 }
+
+    private func addGuest() {
+        withAnimation(motion) {
+            draft.seats.append(SeatDraft(name: ""))
+            draft.starter = 0
+        }
+        focusedGuest = draft.seats.last?.id
+    }
+
+    private func addBot() {
+        withAnimation(motion) {
+            draft.seats.append(SeatDraft(name: "Bot", isBot: true))
+            draft.starter = 0
+        }
+    }
+
+    private func removeSeat(_ index: Int) {
+        guard draft.seats.indices.contains(index), !isMe(index) else { return }
+        withAnimation(motion) {
+            _ = draft.seats.remove(at: index)
+            draft.starter = 0
+        }
+    }
+
+    private func removeButton(_ index: Int) -> some View {
+        Button { removeSeat(index) } label: {
+            Image(systemName: "xmark")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.secondary)
+                .frame(width: 32, height: 32)
+                .background(Color.primary.opacity(0.07), in: Circle())
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Odebrat \(seatName(index))")
+    }
+
+    private func friendCard(_ index: Int) -> some View {
+        let seat = draft.seats[index]
+        let linked = seat.friendID != nil
+        let housemate = store.housemates.first { $0.id == seat.friendID }
+        return HStack(spacing: 12) {
+            Avatar(name: seat.name.isEmpty ? "?" : seat.name, size: 44, photo: housemate?.photoJPEG)
+                .playerRing(seatColor(index))
+            VStack(alignment: .leading, spacing: 3) {
+                if linked {
+                    Text(seat.name).font(.headline).lineLimit(1)
+                } else {
+                    TextField("Jméno kamaráda", text: $draft.seats[index].name)
+                        .font(.headline)
+                        .textInputAutocapitalization(.words)
+                        .autocorrectionDisabled()
+                        .focused($focusedGuest, equals: seat.id)
+                        .submitLabel(.done)
+                }
+                Label(housemate != nil ? "Profil na tomto telefonu" : linked ? "Přítel" : "Host · uloží se mezi přátele", systemImage: housemate != nil ? "person.crop.circle.fill" : linked ? "heart.fill" : "person")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .labelStyle(.titleAndIcon)
             }
-            if draft.seats[i].isBot {
-                HStack { VStack(alignment: .leading, spacing: 4) { Text(BotLevel.get(draft.seats[i].level).name).font(.title3.bold()); Text("Přesnější skórování i zavírání s vyšší úrovní").font(.caption).foregroundStyle(.secondary) }; Spacer(); Text("\(draft.seats[i].level)").font(.system(size: 32, weight: .bold, design: .rounded)).foregroundStyle(Theme.action) }
-                Slider(value: Binding(get: { Double(draft.seats[i].level) }, set: { draft.seats[i].level = Int($0) }), in: 1...10, step: 1).tint(Theme.action).accessibilityLabel("Úroveň bota \(i + 1)")
-                HStack { Text("ZAČÁTEČNÍK"); Spacer(); Text("LEGENDA") }.font(.system(size: 9, weight: .bold, design: .monospaced)).foregroundStyle(.secondary)
-            } else { TextField("Jméno kamaráda", text: $draft.seats[i].name).textFieldStyle(.roundedBorder).autocorrectionDisabled() }
-        }.surface()
+            Spacer(minLength: 4)
+            removeButton(index)
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 6)
+        .padding(.vertical, 10)
+        .playerCard(seatColor(index))
+    }
+
+    private func botCard(_ index: Int) -> some View {
+        let level = draft.seats[index].level
+        let info = BotLevel.get(level)
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Avatar(name: info.persona, bot: true, size: 52, asset: info.photo)
+                    .id(info.photo)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+                    .playerRing(seatColor(index))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(botPersona(index)).font(.headline).contentTransition(.opacity)
+                    Label("„\(info.nickname)“ · \(info.name)", systemImage: "cpu")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .contentTransition(.opacity)
+                }
+                Spacer(minLength: 4)
+                Text("\(level)")
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.action)
+                    .contentTransition(.numericText(value: Double(level)))
+                removeButton(index)
+            }
+            Slider(value: Binding(get: { Double(draft.seats[index].level) }, set: { value in
+                withAnimation(motion) { draft.seats[index].level = Int(value) }
+            }), in: 1...10, step: 1)
+                .tint(seatColor(index) ?? Theme.action)
+                .accessibilityLabel("Úroveň bota")
+                .accessibilityValue("\(level), \(info.persona) \(info.nickname), \(info.name)")
+            HStack { Text("ZAČÁTEČNÍK"); Spacer(); Text("LEGENDA") }
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.leading, 14)
+        .padding(.trailing, 6)
+        .padding(.vertical, 12)
+        .playerCard(seatColor(index))
+        .sensoryFeedback(.selection, trigger: level)
     }
     private var rulesStep: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            if draft.config.mode == .x01 { scoreGroup }
-            if draft.config.mode == .x01 { finishGroup }
-            if draft.config.mode == .cricket { cricketGroup }
-            if draft.config.mode == .countUp { countUpGroup }
-            if draft.config.mode == .aroundClock { clockGroup }
-            if draft.config.mode == .x01 || draft.config.mode == .cricket { lengthGroup }
-            flowGroup
-            VStack(alignment: .leading, spacing: 14) {
-                Eyebrow(text: "Připraveno ke hře")
-                Text((0..<draft.seats.count).map(seatName).joined(separator: "  ·  ")).font(.headline)
-                Text(draft.config.summary).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                Toggle("Uložit jako předvolbu", isOn: $savePreset).tint(Theme.action)
-                if savePreset { TextField("Název předvolby", text: $presetName).textFieldStyle(.roundedBorder) }
+        VStack(alignment: .leading, spacing: 12) {
+            if draft.config.mode == .x01 {
+                ruleSection(.start, "Start", icon: "flag.fill", value: "\(draft.config.startingScore) bodů") { scoreGroup }
+                ruleSection(.finish, "Zavření a otevření", icon: "checkmark.seal.fill", value: finishSummary) { finishGroup }
+            }
+            if draft.config.mode == .cricket {
+                ruleSection(.mode, "Cricket", icon: "line.3.horizontal.decrease.circle.fill", value: draft.config.settings.cricketNoScore ? "Bez bodů" : "S body") { cricketGroup }
+            }
+            if draft.config.mode == .countUp {
+                ruleSection(.mode, "Délka", icon: "chart.bar.fill", value: "\(draft.config.settings.countUpRounds) kol") { countUpGroup }
+            }
+            if draft.config.mode == .aroundClock {
+                ruleSection(.mode, "Zásah", icon: "clock.fill", value: draft.config.settings.clockStyle.title) { clockGroup }
+            }
+            if draft.config.mode == .x01 || draft.config.mode == .cricket {
+                ruleSection(.length, "Délka zápasu", icon: "trophy.fill", value: draft.config.lengthLine) { lengthGroup }
+            }
+            if draft.config.mode == .x01 && draft.seats.count > 1 {
+                ruleSection(.handicap, "Handicap", icon: "scalemass.fill", value: handicapSummary) { handicapGroup }
+            }
+            ruleSection(.flow, "Během hry", icon: "slider.horizontal.3", value: flowSummary) { flowGroup }
+        }
+    }
+
+    // MARK: Souhrn
+
+    private var summaryStep: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 10) {
+                Eyebrow(text: "Hrají")
+                VStack(spacing: 0) {
+                    ForEach(draft.seats.indices, id: \.self) { index in
+                        if index > 0 { Divider().padding(.leading, 64) }
+                        summaryPlayer(index)
+                    }
+                }
+                .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Theme.stroke, lineWidth: 1))
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                Eyebrow(text: draft.config.mode.shortTitle)
+                VStack(spacing: 0) {
+                    let rows = summaryRows
+                    ForEach(rows.indices, id: \.self) { index in
+                        if index > 0 { Divider().padding(.leading, 64) }
+                        summaryRow(rows[index])
+                    }
+                }
+                .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Theme.stroke, lineWidth: 1))
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle("Uložit jako předvolbu", isOn: $savePreset.animation(motion)).tint(Theme.action)
+                if savePreset {
+                    TextField("Název předvolby", text: $presetName)
+                        .textFieldStyle(.roundedBorder)
+                        .transition(.opacity)
+                }
             }
             .surface()
         }
     }
 
+    private struct SummaryRow {
+        var key: RuleKey
+        var icon: String
+        var title: String
+        var value: String
+    }
+
+    private var summaryRows: [SummaryRow] {
+        var rows: [SummaryRow] = []
+        switch draft.config.mode {
+        case .x01:
+            rows.append(SummaryRow(key: .start, icon: "flag.fill", title: "Start", value: "\(draft.config.startingScore) bodů"))
+            rows.append(SummaryRow(key: .finish, icon: "checkmark.seal.fill", title: "Zavření", value: draft.config.outRule.title))
+            rows.append(SummaryRow(key: .finish, icon: "door.left.hand.open", title: "Otevření", value: draft.config.doubleIn ? "Double in" : "Hned"))
+        case .cricket:
+            rows.append(SummaryRow(key: .mode, icon: "line.3.horizontal.decrease.circle.fill", title: "Cricket", value: draft.config.settings.cricketNoScore ? "Bez bodů" : "S body"))
+        case .countUp:
+            rows.append(SummaryRow(key: .mode, icon: "chart.bar.fill", title: "Délka", value: "\(draft.config.settings.countUpRounds) kol"))
+        case .aroundClock:
+            rows.append(SummaryRow(key: .mode, icon: "clock.fill", title: "Zásah", value: draft.config.settings.clockStyle.title))
+        }
+        if draft.config.mode == .x01 || draft.config.mode == .cricket {
+            rows.append(SummaryRow(key: .length, icon: "trophy.fill", title: "Délka zápasu", value: draft.config.lengthLine))
+        }
+        if draft.config.mode == .x01 && draft.seats.count > 1 {
+            rows.append(SummaryRow(key: .handicap, icon: "scalemass.fill", title: "Handicap", value: seatsHaveHandicap ? handicapSummary : "Vypnuto"))
+        }
+        rows.append(SummaryRow(key: .flow, icon: "slider.horizontal.3", title: "Během hry", value: flowSummary))
+        return rows
+    }
+
+    private func summaryRow(_ row: SummaryRow) -> some View {
+        Button { jumpToRule(row.key) } label: {
+            HStack(spacing: 14) {
+                Image(systemName: row.icon)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.action)
+                    .frame(width: 36, height: 36)
+                    .background(Theme.action.opacity(0.12), in: Circle())
+                Text(row.title).font(.subheadline.weight(.semibold))
+                Spacer(minLength: 8)
+                Text(row.value)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.trailing)
+                    .lineLimit(2)
+                Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Upravit")
+    }
+
+    private func summaryPlayer(_ index: Int) -> some View {
+        let seat = draft.seats[index]
+        let custom = draft.config.mode == .x01 && !(seat.handicap?.isEmpty ?? true)
+        return Button { setStep(1) } label: {
+            HStack(spacing: 14) {
+                Avatar(
+                    name: seatName(index),
+                    bot: seat.isBot && !isMe(index),
+                    size: 36,
+                    photo: isMe(index) ? store.profile?.photoJPEG : store.housemates.first { $0.id == seat.friendID }?.photoJPEG,
+                    asset: seat.isBot && !isMe(index) ? BotLevel.get(seat.level).photo : nil
+                )
+                .playerRing(seatColor(index))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(seatName(index)).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    Text(isMe(index) ? "Ty" : seat.isBot ? "Bot · úroveň \(seat.level)" : seat.friendID != nil ? "Přítel" : "Host")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                if draft.config.mode == .x01 {
+                    Text(seatRuleLine(index))
+                        .font(.caption.weight(.bold).monospacedDigit())
+                        .foregroundStyle(custom ? Theme.onAccent : Color.secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(custom ? Theme.accentFill : Color.primary.opacity(0.06), in: Capsule())
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Upravit hráče")
+    }
+
+    private func jumpToRule(_ key: RuleKey) {
+        openRule = key
+        setStep(2)
+    }
+
+    private func ruleSection<Content: View>(_ key: RuleKey, _ title: String, icon: String, value: String, @ViewBuilder content: () -> Content) -> some View {
+        let open = openRule == key
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                commitScoreFromField()
+                hideKeyboard()
+                withAnimation(sectionMotion) { openRule = open ? nil : key }
+            } label: {
+                HStack(spacing: 14) {
+                    Image(systemName: icon)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(open ? Theme.onAccent : Theme.action)
+                        .frame(width: 38, height: 38)
+                        .background(open ? Theme.accentFill : Theme.action.opacity(0.12), in: Circle())
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title).font(.headline)
+                        Text(value)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .contentTransition(.opacity)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.down")
+                        .font(.footnote.weight(.bold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(open ? 180 : 0))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(value)
+            .accessibilityHint(open ? "Sbalí nastavení" : "Rozbalí nastavení")
+            .padding(16)
+            content()
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+                .padding(.top, 2)
+                .opacity(open ? 1 : 0)
+                .blur(radius: open || reduceMotion ? 0 : 4)
+                .offset(y: open ? 0 : -8)
+                .frame(height: open ? nil : 0, alignment: .top)
+                .clipped()
+                .allowsHitTesting(open)
+                .accessibilityHidden(!open)
+        }
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(open ? Theme.action.opacity(0.45) : Theme.stroke, lineWidth: open ? 1.5 : 1))
+        .shadow(color: .black.opacity(open ? 0.08 : 0), radius: 14, y: 6)
+        .id(key)
+    }
+
+    private func hideKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
+    private var finishSummary: String {
+        draft.config.doubleIn ? "\(draft.config.outRule.title) · Double in" : draft.config.outRule.title
+    }
+
+    private var flowSummary: String {
+        var parts: [String] = []
+        if draft.config.mode == .x01 && !draftAnyDoubleIn { parts.append(draft.config.settings.entry == .total ? "Součet kola" : "Každá šipka") }
+        if draft.config.mode == .x01 && draft.config.settings.checkoutHints { parts.append("nápověda") }
+        if draft.config.settings.keepAwake { parts.append("displej svítí") }
+        return parts.isEmpty ? "Výchozí" : parts.joined(separator: " · ")
+    }
+
     private var scoreGroup: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Start").font(.headline)
-            OptionSwitcher(
-                options: presetScores.map { ($0, "\($0)") } + [(-1, "Přesně")],
-                selection: usingExactScore ? -1 : draft.config.startingScore
+            Text("\(draft.config.startingScore)")
+                .font(.system(size: 56, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .contentTransition(.numericText(value: Double(draft.config.startingScore)))
+                .frame(maxWidth: .infinity)
+                .accessibilityLabel("Start \(draft.config.startingScore) bodů")
+            RuleTiles(
+                options: presetScores.map { (id: $0, title: "\($0)", detail: nil) } + [(id: -1, title: "Vlastní", detail: nil)],
+                selection: usingExactScore ? -1 : draft.config.startingScore,
+                columns: 3
             ) { id in
                 withAnimation(motion) {
                     if id == -1 {
@@ -358,90 +908,231 @@ struct SetupView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .surface()
     }
 
     private var finishGroup: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Zavření").font(.headline)
-            OptionSwitcher(options: OutRule.allCases.map { ($0, $0.shortTitle) }, selection: draft.config.outRule) { rule in
-                withAnimation(motion) { draft.config.outRule = rule }
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Poslední šipka").font(.subheadline.weight(.semibold))
+                RuleTiles(
+                    options: OutRule.allCases.map { (id: $0, title: $0.shortTitle, detail: outHint($0)) },
+                    selection: draft.config.outRule,
+                    columns: 3,
+                    alignment: .leading
+                ) { rule in
+                    withAnimation(motion) { draft.config.outRule = rule }
+                }
             }
-            Text(draft.config.outRule.detail).font(.caption).foregroundStyle(.secondary)
-            Toggle("Otevřít doublem", isOn: $draft.config.doubleIn).tint(Theme.action)
+            VStack(alignment: .leading, spacing: 10) {
+                Text("První body").font(.subheadline.weight(.semibold))
+                RuleTiles(
+                    options: [
+                        (id: false, title: "Hned", detail: "Počítá se každý zásah"),
+                        (id: true, title: "Double in", detail: "Body až od prvního doublu")
+                    ],
+                    selection: draft.config.doubleIn,
+                    columns: 2,
+                    alignment: .leading
+                ) { value in
+                    withAnimation(motion) { draft.config.doubleIn = value }
+                }
+            }
         }
-        .surface()
+    }
+
+    private func outHint(_ rule: OutRule) -> String {
+        switch rule {
+        case .double: return "Double nebo bull"
+        case .straight: return "Jakýkoli zásah"
+        case .master: return "Double i triple"
+        }
     }
 
     private var cricketGroup: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Cricket").font(.headline)
-            Toggle("Bez bodů", isOn: options.cricketNoScore).tint(Theme.action)
-            Text(draft.config.settings.cricketNoScore ? "Vyhrává, kdo první zavře 15–20 a bull." : "Zavři všechna čísla a měj aspoň tolik bodů jako soupeři.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        RuleTiles(
+            options: [
+                (id: false, title: "S body", detail: "Zavři čísla a měj víc bodů"),
+                (id: true, title: "Bez bodů", detail: "Vyhrává, kdo první zavře")
+            ],
+            selection: draft.config.settings.cricketNoScore,
+            columns: 2,
+            alignment: .leading
+        ) { value in
+            withAnimation(motion) { options.wrappedValue.cricketNoScore = value }
         }
-        .surface()
     }
 
     private var countUpGroup: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Délka").font(.headline)
-            OptionSwitcher(options: roundChoices.map { ($0, "\($0)") }, selection: draft.config.settings.countUpRounds) { rounds in
-                options.wrappedValue.countUpRounds = rounds
+        VStack(alignment: .leading, spacing: 12) {
+            RuleTiles(options: roundChoices.map { (id: $0, title: "\($0)", detail: nil) }, selection: draft.config.settings.countUpRounds, columns: 3) { rounds in
+                withAnimation(motion) { options.wrappedValue.countUpRounds = rounds }
             }
             Text("\(draft.config.settings.countUpRounds * 3) šipek na hráče.").font(.caption).foregroundStyle(.secondary)
         }
-        .surface()
     }
 
     private var clockGroup: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Zásah").font(.headline)
-            OptionSwitcher(options: ClockStyle.allCases.map { ($0, $0.title) }, selection: draft.config.settings.clockStyle) { style in
-                options.wrappedValue.clockStyle = style
+            RuleTiles(options: ClockStyle.allCases.map { (id: $0, title: $0.title, detail: nil) }, selection: draft.config.settings.clockStyle, columns: 3) { style in
+                withAnimation(motion) { options.wrappedValue.clockStyle = style }
             }
             Text("Postupně 1–20 a nakonec bull. U doublů a triplů se bull bere jen jako 50.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .surface()
     }
 
     private var lengthGroup: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Délka").font(.headline)
-            OptionSwitcher(options: MatchFormat.allCases.map { ($0, $0.title) }, selection: draft.config.format) { format in
+        let bestOf = draft.config.format == .bestOf
+        let stepSize = bestOf ? 2 : 1
+        let legLimit = bestOf ? 15 : 11
+        return VStack(alignment: .leading, spacing: 16) {
+            RuleTiles(
+                options: [
+                    (id: MatchFormat.firstTo, title: "First to", detail: "Kdo první získá počet"),
+                    (id: MatchFormat.bestOf, title: "Best of", detail: "Většina z počtu")
+                ],
+                selection: draft.config.format,
+                columns: 2,
+                alignment: .leading
+            ) { format in
                 withAnimation(motion) {
                     draft.config.apply(format: format, setsShown: draft.config.shownSets, legsShown: draft.config.shownLegs)
                 }
             }
-            Text("Sety").font(.subheadline.weight(.semibold))
-            OptionSwitcher(options: setChoices.map { ($0, "\($0)") }, selection: draft.config.shownSets) { value in
+            CountStepper(
+                title: "Sety",
+                value: draft.config.shownSets,
+                caption: draft.config.playsSets ? "Zápas se dělí na sety" : "Bez setů, hraje se na legy",
+                canDecrease: draft.config.shownSets > 1,
+                canIncrease: draft.config.shownSets + stepSize <= 11
+            ) { delta in
                 withAnimation(motion) {
-                    draft.config.apply(format: draft.config.format, setsShown: value, legsShown: draft.config.shownLegs)
+                    draft.config.apply(format: draft.config.format, setsShown: draft.config.shownSets + delta * stepSize, legsShown: draft.config.shownLegs)
                 }
             }
-            Text(draft.config.playsSets ? "Zápas se dělí na sety." : "Jeden set. Hraje se jen na legy.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text("Legy").font(.subheadline.weight(.semibold))
-            OptionSwitcher(options: legChoices.map { ($0, "\($0)") }, selection: draft.config.shownLegs) { value in
+            CountStepper(
+                title: draft.config.playsSets ? "Legy v setu" : "Legy",
+                value: draft.config.shownLegs,
+                caption: bestOf ? "Bere \(draft.config.legsToWin)" : "Na \(draft.config.legsToWin) výher",
+                canDecrease: draft.config.shownLegs > 1,
+                canIncrease: draft.config.shownLegs + stepSize <= legLimit
+            ) { delta in
                 withAnimation(motion) {
-                    draft.config.apply(format: draft.config.format, setsShown: draft.config.shownSets, legsShown: value)
+                    draft.config.apply(format: draft.config.format, setsShown: draft.config.shownSets, legsShown: draft.config.shownLegs + delta * stepSize)
                 }
             }
             Text(draft.config.lengthDetail)
-                .font(.subheadline)
+                .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
                 .contentTransition(.opacity)
         }
-        .surface()
     }
 
-    private var setChoices: [Int] { draft.config.format == .bestOf ? Array(stride(from: 1, through: 11, by: 2)) : Array(1...11) }
-    private var legChoices: [Int] { draft.config.format == .bestOf ? Array(stride(from: 1, through: 15, by: 2)) : Array(1...11) }
+    // MARK: Handicap
+
+    private var seatsHaveHandicap: Bool { draft.seats.contains { !($0.handicap?.isEmpty ?? true) } }
+
+    private var draftAnyDoubleIn: Bool {
+        guard draft.config.mode == .x01 else { return false }
+        return draft.seats.contains { $0.handicap?.doubleIn ?? draft.config.doubleIn }
+    }
+
+    private var handicapSummary: String {
+        let count = draft.seats.filter { !($0.handicap?.isEmpty ?? true) }.count
+        switch count {
+        case 0: return "Vypnuto · všichni stejně"
+        case 1: return "1 hráč má jiná pravidla"
+        default: return "\(count) hráči mají jiná pravidla"
+        }
+    }
+
+    private func seatRuleLine(_ index: Int) -> String {
+        let handicap = draft.seats[index].handicap
+        var parts = ["\(handicap?.startingScore ?? draft.config.startingScore)", (handicap?.outRule ?? draft.config.outRule).shortTitle]
+        if handicap?.doubleIn ?? draft.config.doubleIn { parts.append("Double in") }
+        return parts.joined(separator: " · ")
+    }
+
+    private func editHandicap(_ index: Int, _ change: (inout Handicap) -> Void) {
+        guard draft.seats.indices.contains(index) else { return }
+        var handicap = draft.seats[index].handicap ?? Handicap()
+        change(&handicap)
+        withAnimation(motion) { draft.seats[index].handicap = handicap.isEmpty ? nil : handicap }
+    }
+
+    private var handicapGroup: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Každý hráč může mít jiný start, jiné zavření nebo otevření. Co nezměníš, platí jako ve hře.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(draft.seats.indices, id: \.self) { index in
+                handicapCard(index)
+            }
+            Button {
+                hideKeyboard()
+                withAnimation(motion) {
+                    for index in draft.seats.indices { draft.seats[index].handicap = nil }
+                }
+            } label: {
+                Label("Všem stejná pravidla", systemImage: "equal.circle.fill")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 50)
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
+            .tint(Theme.action)
+            .disabled(!seatsHaveHandicap)
+            .accessibilityHint("Zruší handicap všech hráčů")
+        }
+    }
+
+    private func handicapCard(_ index: Int) -> some View {
+        let handicap = draft.seats[index].handicap
+        let start = handicap?.startingScore
+        let startSelection = start.map { presetScores.contains($0) ? $0 : -2 } ?? -1
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text(seatName(index)).font(.headline).lineLimit(1)
+                Spacer()
+                Text(seatRuleLine(index))
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(handicap == nil ? Color.secondary : Theme.onAccent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(handicap == nil ? Color.primary.opacity(0.06) : Theme.accentFill, in: Capsule())
+            }
+            Text("Start").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            OptionSwitcher(
+                options: [(id: -1, title: "Jako hra")] + presetScores.map { (id: $0, title: "\($0)") },
+                selection: startSelection
+            ) { id in
+                editHandicap(index) { $0.startingScore = id == -1 ? nil : id }
+            }
+            ScoreEntryField(value: start, placeholder: draft.config.startingScore) { value in
+                editHandicap(index) { $0.startingScore = value == draft.config.startingScore ? nil : value }
+            }
+            Text("Zavření").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            OptionSwitcher(
+                options: [(id: OutRule?.none, title: "Jako hra")] + OutRule.allCases.map { (id: OutRule?.some($0), title: $0.shortTitle) },
+                selection: handicap?.outRule
+            ) { rule in
+                editHandicap(index) { $0.outRule = rule == draft.config.outRule ? nil : rule }
+            }
+            Text("Otevření").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            OptionSwitcher(
+                options: [(id: Bool?.none, title: "Jako hra"), (id: Bool?.some(false), title: "Hned"), (id: Bool?.some(true), title: "Double in")],
+                selection: handicap?.doubleIn
+            ) { value in
+                editHandicap(index) { $0.doubleIn = value == draft.config.doubleIn ? nil : value }
+            }
+        }
+        .padding(14)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
     private var roundChoices: [Int] {
         var values = [5, 10, 15, 20, 30]
         let current = draft.config.settings.countUpRounds
@@ -487,8 +1178,7 @@ struct SetupView: View {
 
     private var flowGroup: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Během hry").font(.headline)
-            if draft.config.mode == .x01 && !draft.config.doubleIn {
+            if draft.config.mode == .x01 && !draftAnyDoubleIn {
                 Picker("Zápis skóre", selection: options.entry) {
                     ForEach(EntryStyle.allCases) { Text($0.title).tag($0) }
                 }
@@ -512,7 +1202,6 @@ struct SetupView: View {
             if draft.config.mode == .x01 { Toggle("Nápověda zavření", isOn: options.checkoutHints).tint(Theme.action) }
             Toggle("Nezhasínat displej", isOn: options.keepAwake).tint(Theme.action)
         }
-        .surface()
     }
 
     private func commitScore(_ value: Int) {
@@ -538,25 +1227,46 @@ struct SetupView: View {
         commitScoreFromField()
         withAnimation(motion) { step = value }
     }
-    private func seatName(_ i: Int) -> String { i == 0 ? store.profile?.name ?? "Já" : draft.seats[i].isBot ? "Bot \(i) · L\(draft.seats[i].level)" : draft.seats[i].name }
+    private func seatName(_ i: Int) -> String {
+        if isMe(i) { return store.profile?.name ?? "Já" }
+        let seat = draft.seats[i]
+        return seat.isBot ? botPersona(i) : seat.name
+    }
     private func start() {
-        guard let profile = store.profile, canContinue else { return }
-        var players = [Player(id: profile.id, name: profile.name)]
-        for i in draft.seats.indices.dropFirst() {
-            let seat = draft.seats[i]
-            players.append(Player(name: seat.isBot ? "Bot \(i) · L\(seat.level)" : String(seat.name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24)), botLevel: seat.isBot ? seat.level : nil))
+        guard makeMatch() else { return }
+        launchIntro = true; live = true
+    }
+
+    private func makeMatch() -> Bool {
+        guard let profile = store.profile, canContinue else { return false }
+        for i in draft.seats.indices where !isMe(i) && !draft.seats[i].isBot && draft.seats[i].friendID == nil {
+            draft.seats[i].friendID = store.addFriend(draft.seats[i].name)?.id
         }
+        var players: [Player] = []
+        for i in draft.seats.indices {
+            let seat = draft.seats[i]
+            if isMe(i) {
+                players.append(Player(id: profile.id, name: profile.name))
+            } else {
+                let name = seat.isBot ? seatName(i) : String(seat.name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24))
+                players.append(Player(id: seat.isBot ? UUID() : seat.friendID ?? UUID(), name: name, botLevel: seat.isBot ? seat.level : nil))
+            }
+        }
+        guard !players.isEmpty else { return false }
+        store.notePlayed(with: draft.seats.compactMap(\.friendID))
         if [.aroundClock, .countUp].contains(draft.config.mode) {
             draft.config.legsToWin = 1
             draft.config.setsToWin = 1
         }
         draft.config.startingScore = min(GameConfig.maximumScore, max(GameConfig.minimumScore, draft.config.startingScore))
+        draft.config.handicaps = draft.config.mode == .x01 && seatsHaveHandicap ? draft.seats.map { $0.handicap ?? Handicap() } : nil
         let first = openingPlayer(count: players.count)
         draft.starter = opening == .random ? -1 : first
         store.remember(draft)
         if savePreset { store.addPreset(name: presetName, setup: draft); savePreset = false }
         store.activeMatch = Match(config: draft.config, players: players, firstPlayer: first)
-        store.feedback(); live = true
+        store.feedback()
+        return true
     }
 
     private func openingPlayer(count: Int) -> Int {
@@ -587,6 +1297,177 @@ struct ChoicePill: View {
     var title: String; var selected: Bool; var action: () -> Void
     var body: some View {
         Button(action: action) { Text(title).font(.system(.subheadline, design: .rounded, weight: .bold)).frame(maxWidth: .infinity).frame(minHeight: 44).foregroundStyle(selected ? Theme.onAccent : .primary).background(selected ? Theme.accentFill : Theme.background, in: RoundedRectangle(cornerRadius: 12, style: .continuous)) }.buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+private extension View {
+    /// Kroužek v barvě hráče kolem avataru.
+    func playerRing(_ color: Color?) -> some View {
+        padding(color == nil ? 0 : 3)
+            .overlay {
+                if let color { Circle().strokeBorder(color, lineWidth: 3) }
+            }
+    }
+
+    /// Karta hráče s nádechem a rámečkem v jeho barvě.
+    func playerCard(_ color: Color?) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+        return background {
+            ZStack(alignment: .leading) {
+                Theme.card
+                if let color { color.opacity(0.10) }
+            }
+        }
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(color?.opacity(0.55) ?? Theme.stroke, lineWidth: color == nil ? 1 : 1.5))
+        .animation(.easeInOut(duration: 0.25), value: color)
+    }
+}
+
+/// Mřížka velkých voleb s volitelným popiskem.
+struct RuleTiles<ID: Hashable>: View {
+    var options: [(id: ID, title: String, detail: String?)]
+    var selection: ID
+    var columns: Int
+    var alignment: HorizontalAlignment = .center
+    var onSelect: (ID) -> Void
+
+    var body: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: columns), spacing: 8) {
+            ForEach(options, id: \.id) { option in
+                let selected = option.id == selection
+                Button { onSelect(option.id) } label: {
+                    VStack(alignment: alignment, spacing: 3) {
+                        Text(option.title)
+                            .font(.system(.headline, design: .rounded, weight: .bold))
+                            .monospacedDigit()
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                        if let detail = option.detail {
+                            Text(detail)
+                                .font(.caption2)
+                                .foregroundStyle(selected ? Color.black.opacity(0.7) : Color.secondary)
+                                .multilineTextAlignment(alignment == .center ? .center : .leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, minHeight: option.detail == nil ? 50 : 66, alignment: Alignment(horizontal: alignment, vertical: .center))
+                    .foregroundStyle(selected ? Color.black : Color.primary)
+                    .background(selected ? Theme.brand : Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+            }
+        }
+        .sensoryFeedback(.selection, trigger: selection)
+    }
+}
+
+/// Libovolné startovní skóre. Prázdné pole znamená stejně jako hra.
+struct ScoreEntryField: View {
+    var value: Int?
+    var placeholder: Int
+    var onCommit: (Int?) -> Void
+    @State private var text = ""
+    @FocusState private var focused: Bool
+    private var range: ClosedRange<Int> { GameConfig.minimumScore...GameConfig.maximumScore }
+    private var invalid: Bool { Int(text).map { !range.contains($0) } ?? false }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Vlastní číslo").font(.subheadline.weight(.semibold))
+                    Text(invalid ? "Jen \(range.lowerBound) až \(range.upperBound)" : "Napiš jakýkoli start")
+                        .font(.caption)
+                        .foregroundStyle(invalid ? Color.red : Color.secondary)
+                        .contentTransition(.opacity)
+                }
+                Spacer(minLength: 8)
+                TextField("\(placeholder)", text: $text)
+                    .keyboardType(.numberPad)
+                    .multilineTextAlignment(.center)
+                    .font(.system(.title3, design: .rounded, weight: .bold))
+                    .monospacedDigit()
+                    .focused($focused)
+                    .frame(width: 104, height: 46)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+                    .overlay(Capsule().stroke(invalid ? Color.red : (focused ? Theme.action : Color.clear), lineWidth: 1.5))
+                    .accessibilityLabel("Vlastní start")
+            }
+        }
+        .onAppear { text = value.map(String.init) ?? "" }
+        .onChange(of: value) { _, new in
+            if !focused { text = new.map(String.init) ?? "" }
+        }
+        .onChange(of: focused) { _, isFocused in
+            if !isFocused { text = value.map(String.init) ?? "" }
+        }
+        .onChange(of: text) { _, raw in
+            let digits = String(raw.filter(\.isNumber).prefix(4))
+            if digits != raw { text = digits; return }
+            guard focused else { return }
+            if digits.isEmpty { onCommit(nil) }
+            else if let number = Int(digits), range.contains(number) { onCommit(number) }
+        }
+    }
+}
+
+/// Velké číslo s tlačítky minus a plus.
+struct CountStepper: View {
+    var title: String
+    var value: Int
+    var caption: String
+    var canDecrease: Bool
+    var canIncrease: Bool
+    var onStep: (Int) -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.subheadline.weight(.semibold))
+                Text(caption).font(.caption).foregroundStyle(.secondary).contentTransition(.opacity)
+            }
+            Spacer(minLength: 8)
+            HStack(spacing: 0) {
+                stepButton("minus", enabled: canDecrease, label: "Méně") { onStep(-1) }
+                Text("\(value)")
+                    .font(.system(.title2, design: .rounded, weight: .bold))
+                    .monospacedDigit()
+                    .frame(minWidth: 52)
+                    .contentTransition(.numericText(value: Double(value)))
+                stepButton("plus", enabled: canIncrease, label: "Více") { onStep(1) }
+            }
+            .padding(3)
+            .background(Color.primary.opacity(0.06), in: Capsule())
+        }
+        .sensoryFeedback(.selection, trigger: value)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(title)
+        .accessibilityValue("\(value)")
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: if canIncrease { onStep(1) }
+            case .decrement: if canDecrease { onStep(-1) }
+            @unknown default: break
+            }
+        }
+    }
+
+    private func stepButton(_ symbol: String, enabled: Bool, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.subheadline.weight(.bold))
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(enabled ? Color.primary : Color.secondary.opacity(0.4))
+        .disabled(!enabled)
+        .accessibilityLabel(label)
     }
 }
 
@@ -641,22 +1522,26 @@ struct OptionSwitcher<ID: Hashable>: View {
 
 struct SetupAccessoryButton: View {
     @EnvironmentObject private var chrome: MatchSetupChrome
-    @Environment(\.tabViewBottomAccessoryPlacement) private var placement
 
     var body: some View {
         Button {
             guard chrome.enabled else { return }
             chrome.token += 1
         } label: {
-            Text(chrome.title ?? "Pokračovat")
-                .font(.headline.weight(.semibold))
-                .foregroundStyle(.black)
-                .lineLimit(1)
-                .frame(maxWidth: placement == .inline ? nil : .infinity)
-                .padding(.vertical, placement == .inline ? 0 : 4)
+            HStack(spacing: 8) {
+                Text(chrome.title ?? "Pokračovat")
+                    .font(.headline.weight(.semibold))
+                    .lineLimit(1)
+                Image(systemName: chrome.title == "Hrát" ? "play.fill" : "arrow.right")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(chrome.enabled ? Theme.action : Color.secondary)
+                    .contentTransition(.symbolEffect(.replace))
+            }
+            .foregroundStyle(chrome.enabled ? Color.primary : Color.secondary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
         }
-        .buttonStyle(.glassProminent)
-        .tint(Theme.brand)
+        .buttonStyle(.plain)
         .disabled(!chrome.enabled)
     }
 }
@@ -665,6 +1550,46 @@ private struct BullShot: Identifiable {
     let id = UUID()
     let player: Int
     let dart: Dart
+}
+
+/// Body a přímky leží mimo `scaleEffect`, aby při přiblížení zůstaly stejně velké.
+private struct BullPins: View, Animatable {
+    struct Pin {
+        var x: Double
+        var y: Double
+        var color: Color
+        var closest: Bool
+    }
+
+    var zoom: CGFloat
+    var pins: [Pin]
+
+    var animatableData: CGFloat {
+        get { zoom }
+        set { zoom = newValue }
+    }
+
+    var body: some View {
+        Canvas { context, size in
+            let radius = min(size.width, size.height) * 0.43 * zoom
+            let center = CGPoint(x: size.width / 2, y: size.height / 2)
+            for pin in pins {
+                let end = CGPoint(x: center.x + pin.x * radius, y: center.y + pin.y * radius)
+                var line = Path()
+                line.move(to: center)
+                line.addLine(to: end)
+                context.stroke(line, with: .color(.black.opacity(0.55)), style: StrokeStyle(lineWidth: pin.closest ? 5 : 4, lineCap: .round))
+                context.stroke(line, with: .color(pin.color), style: StrokeStyle(lineWidth: pin.closest ? 3 : 2, lineCap: .round))
+                let dot = CGRect(x: end.x - 7, y: end.y - 7, width: 14, height: 14)
+                context.fill(Path(ellipseIn: dot), with: .color(pin.color))
+                context.stroke(Path(ellipseIn: dot), with: .color(.black.opacity(0.7)), lineWidth: 1.5)
+            }
+            if !pins.isEmpty {
+                let hub = CGRect(x: center.x - 3, y: center.y - 3, width: 6, height: 6)
+                context.fill(Path(ellipseIn: hub), with: .color(.white))
+            }
+        }
+    }
 }
 
 /// Rozhoz na střed. Červený střed je výš než zelený. Stejný výsledek se hází znovu v opačném pořadí.
@@ -678,6 +1603,8 @@ private struct BullOffView: View {
     @State private var shots: [BullShot] = []
     @State private var winner: Int?
     @State private var note: String?
+    /// 1, dokud nehodí všichni. Pak se plynule přiblíží na rozdíl hodů.
+    @State private var shownZoom: CGFloat = 1
 
     init(names: [String], bots: [Int?], onFinish: @escaping (Int) -> Void, onCancel: @escaping () -> Void) {
         self.names = names
@@ -693,27 +1620,61 @@ private struct BullOffView: View {
     }
     private var current: Int? { winner == nil ? pending.first : nil }
 
-    private var barTitle: String {
-        if let winner { return "Začíná \(name(winner))" }
+    private var headline: String {
+        if let winner { return "Blíž je \(name(winner))" }
         if let current { return "Hází \(name(current))" }
         return "Rozhoz na střed"
     }
 
-    private var barSubtitle: String {
-        note ?? "Přímka je v procentech poloměru. Červený bere před zeleným."
+    private var subline: String {
+        if let note { return note }
+        if winner != nil { return "Začíná \(name(winner ?? 0)). Terč je přiblížený na rozdíl hodů." }
+        if shots.isEmpty { return "Klepni tam, kam šipka dopadla. Přímka je v procentech poloměru." }
+        return "Červený střed bere před zeleným."
+    }
+
+    /// Přiblížení až ve chvíli, kdy hodili všichni. Do té doby zůstává celý terč.
+    private var targetZoom: CGFloat {
+        guard pending.isEmpty, !shots.isEmpty else { return 1 }
+        let farthest = shots.compactMap { shot -> Double? in
+            guard let x = shot.dart.x, let y = shot.dart.y else { return nil }
+            return hypot(x, y)
+        }.max() ?? 1
+        guard farthest > 0.02 else { return 1 }
+        return CGFloat(min(6, max(1, 0.78 / farthest)))
+    }
+
+    private var rankedShots: [(player: Int, dart: Dart, rank: Int)] {
+        shots.map { (player: $0.player, dart: $0.dart, rank: rank($0.dart)) }
+            .sorted { $0.rank < $1.rank }
     }
 
     var body: some View {
         NavigationStack {
-            TouchDartboard(marks: shots.map(\.dart), interactive: humanTurn) { dart in
-                guard let current, humanTurn else { return }
-                record(dart, player: current)
+            VStack(spacing: 14) {
+                header
+                TouchDartboard(marks: [], interactive: humanTurn) { dart in
+                    guard let current, humanTurn else { return }
+                    record(dart, player: current)
+                }
+                .scaleEffect(shownZoom, anchor: .center)
+                .overlay {
+                    BullPins(
+                        zoom: shownZoom,
+                        pins: shots.compactMap { shot in
+                            guard let x = shot.dart.x, let y = shot.dart.y, x.isFinite, y.isFinite else { return nil }
+                            return BullPins.Pin(x: x, y: y, color: color(shot.player), closest: rankedShots.count > 1 && rank(shot.dart) == rankedShots.first?.rank)
+                        }
+                    )
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
             }
-            .overlay { measureLines }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
             .background(Color.black.ignoresSafeArea())
-            .navigationTitle(barTitle)
-            .navigationSubtitle(barSubtitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -721,19 +1682,22 @@ private struct BullOffView: View {
                 }
                 ToolbarItem(placement: .bottomBar) {
                     Button("Znovu", action: reset)
-                        .buttonStyle(.glass)
                 }
                 ToolbarSpacer(.flexible, placement: .bottomBar)
                 ToolbarItem(placement: .bottomBar) {
                     Button("Hrát") { if let winner { onFinish(winner) } }
-                        .buttonStyle(.glassProminent)
+                        .buttonStyle(.borderedProminent)
                         .tint(Theme.brand)
+                        .foregroundStyle(.black)
                         .disabled(winner == nil)
                 }
             }
             .toolbarColorScheme(.dark, for: .navigationBar)
         }
         .preferredColorScheme(.dark)
+        .onChange(of: targetZoom) { _, new in
+            withAnimation(.smooth(duration: 1.05)) { shownZoom = new }
+        }
         .task(id: current) {
             guard let current, bots.indices.contains(current), let level = bots[current], winner == nil else { return }
             try? await Task.sleep(nanoseconds: 700_000_000)
@@ -742,52 +1706,47 @@ private struct BullOffView: View {
         }
     }
 
-    /// Stejný střed a poloměr jako `TouchDartboard`, aby přímka seděla na zásah.
-    private var measureLines: some View {
-        GeometryReader { geo in
-            let radius = min(geo.size.width, geo.size.height) * 0.43
-            let center = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
-            ZStack {
-                Canvas { context, _ in
-                    for shot in shots {
-                        guard let end = point(for: shot.dart, center: center, radius: radius) else { continue }
-                        var path = Path()
-                        path.move(to: center)
-                        path.addLine(to: end)
-                        context.stroke(path, with: .color(.white), style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                    }
-                }
-                ForEach(shots) { shot in
-                    if let end = point(for: shot.dart, center: center, radius: radius) {
-                        Text(measureText(shot.dart))
-                            .font(.caption.weight(.bold))
-                            .monospacedDigit()
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(.black.opacity(0.78), in: Capsule())
-                            .position(labelPosition(from: center, to: end))
-                            .accessibilityLabel("\(name(shot.player)), \(measureText(shot.dart))")
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(headline)
+                .font(.title.bold())
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(subline)
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.72))
+                .fixedSize(horizontal: false, vertical: true)
+            if !rankedShots.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(rankedShots, id: \.player) { item in
+                        let closest = item.rank == rankedShots.first?.rank
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 6) {
+                                Circle().fill(color(item.player)).frame(width: 10, height: 10)
+                                Text(name(item.player))
+                                    .font(.subheadline.weight(.bold))
+                                    .lineLimit(1)
+                            }
+                            Text(measureText(item.dart))
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(.white.opacity(0.8))
+                            if rankedShots.count > 1 {
+                                Text(closest && rankedShots.allSatisfy { $0.rank == item.rank } ? "stejně" : (closest ? "blíž" : "dál"))
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(closest ? Color(red: 0.30, green: 0.90, blue: 0.55) : .white.opacity(0.55))
+                            }
+                        }
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(.white.opacity(closest ? 0.14 : 0.06), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     }
                 }
             }
-            .allowsHitTesting(false)
         }
     }
 
-    private func point(for dart: Dart, center: CGPoint, radius: CGFloat) -> CGPoint? {
-        guard let x = dart.x, let y = dart.y, x.isFinite, y.isFinite else { return nil }
-        return CGPoint(x: center.x + x * radius, y: center.y + y * radius)
-    }
-
-    private func labelPosition(from center: CGPoint, to end: CGPoint) -> CGPoint {
-        let dx = end.x - center.x
-        let dy = end.y - center.y
-        let length = max(hypot(dx, dy), 1)
-        let mid = CGPoint(x: (center.x + end.x) / 2, y: (center.y + end.y) / 2)
-        let along = min(18, length * 0.35)
-        return CGPoint(x: mid.x - dy / length * along, y: mid.y + dx / length * along)
-    }
+    private func color(_ player: Int) -> Color { Theme.playerColor(player) }
 
     private func reset() {
         order = Array(names.indices)

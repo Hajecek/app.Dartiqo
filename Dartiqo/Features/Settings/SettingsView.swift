@@ -56,7 +56,7 @@ struct SettingsView: View {
                 if store.boardCalibration != nil {
                     Button("Vymazat kalibraci", role: .destructive) { store.clearBoardCalibration() }
                 }
-            } header: { Text("Autoscore") } footer: { Text("4 kroky: namiř kameru → kruh na obvod → otoč na 20 → ověř klepnutím. Telefon po uložení nepřemisťuj.") }
+            } header: { Text("Autoscore") } footer: { Text("Kamera sama najde okraj terče, přečte čísla a uloží mapu. V zápase pak v způsobu zápisu zvol Kamera.") }
             Section {
                 Toggle("Chránit profil odemknutím zařízení", isOn: Binding(get: { store.data.biometricLock }, set: { value in if value { Task { await store.authenticate(enabling: true) } } else { store.data.biometricLock = false; store.save() } })).tint(Theme.mint)
                 if let error = store.authError { Text(error).font(.caption).foregroundStyle(.secondary) }
@@ -105,10 +105,8 @@ struct RulesView: View {
             Section("Boti a statistiky") { Text("Bot míří na skutečné segmenty a chybuje do singlů, sousedních polí nebo mimo terč. Úroveň zvyšuje přesnost; nejde o garantovaný průměr. Průměr X01 v této aplikaci používá skutečně zapsaný počet šipek, včetně šipek před otevřením a při přehozu.") }
             Section("Kalibrace terče") {
                 Text("Nastavení → Autoscore → Kalibrace terče.")
-                Text("1) Celý terč ve snímku, 20 nahoře.")
-                Text("2) Střed do bull, bílý kruh na vnější double.")
-                Text("3) Otoč žluté pole, až sedí na 20.")
-                Text("4) Klepnutím ověř pole a ulož. Telefon nepřemisťuj.")
+                Text("Namiř kameru tak, aby byl celý terč ve snímku. Kruh zezelená, jakmile pozná okraj. Čísla na terči sama určí segmenty a otočení.")
+                Text("V zápasu zvol způsob zápisu Kamera. Ukáže se živý obraz a nová šipka se zapíše, jakmile zůstane v terči. Šipku mimo terč doplň tlačítkem Mimo. Telefon po kalibraci nepřemisťuj.")
             }
         }.navigationTitle("Jak hrát").navigationBarTitleDisplayMode(.inline)
     }

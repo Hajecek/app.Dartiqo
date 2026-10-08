@@ -4,12 +4,22 @@ public struct BotLevel: Identifiable {
     public let id: Int
     public let name: String
     public let precision: Double
+    /// Jméno postavy, se kterou hráč hraje. Vyšší úrovně jen připomínají známé hráče.
+    public let persona: String
+    public let nickname: String
+    /// Portrét v assetech.
+    public var photo: String { "BotLevel\(id)" }
     public static let all: [BotLevel] = [
-        .init(id: 1, name: "První šipky", precision: 0.035), .init(id: 2, name: "Začátečník", precision: 0.07),
-        .init(id: 3, name: "Hospodský hráč", precision: 0.12), .init(id: 4, name: "Pravidelný hráč", precision: 0.18),
-        .init(id: 5, name: "Klubový hráč", precision: 0.25), .init(id: 6, name: "Ligový hráč", precision: 0.32),
-        .init(id: 7, name: "Expert", precision: 0.39), .init(id: 8, name: "Mistr", precision: 0.46),
-        .init(id: 9, name: "Profesionál", precision: 0.53), .init(id: 10, name: "Legenda", precision: 0.60)
+        .init(id: 1, name: "První šipky", precision: 0.035, persona: "Pepa Mráz", nickname: "Kapsa"),
+        .init(id: 2, name: "Začátečník", precision: 0.07, persona: "Jana Malá", nickname: "Jednička"),
+        .init(id: 3, name: "Hospodský hráč", precision: 0.12, persona: "Franta Beran", nickname: "Pivko"),
+        .init(id: 4, name: "Pravidelný hráč", precision: 0.18, persona: "Lucie Dvořáková", nickname: "Double"),
+        .init(id: 5, name: "Klubový hráč", precision: 0.25, persona: "Honza Kos", nickname: "Plamen"),
+        .init(id: 6, name: "Ligový hráč", precision: 0.32, persona: "Peter Wrighton", nickname: "Snakebyte"),
+        .init(id: 7, name: "Expert", precision: 0.39, persona: "Gerwin Pryce", nickname: "Ice-Man"),
+        .init(id: 8, name: "Mistr", precision: 0.46, persona: "Gary Andersen", nickname: "Flying Skot"),
+        .init(id: 9, name: "Profesionál", precision: 0.53, persona: "Luke Litler", nickname: "Nukeboy"),
+        .init(id: 10, name: "Legenda", precision: 0.60, persona: "Phil Tayler", nickname: "Powerhouse")
     ]
     public static func get(_ level: Int) -> BotLevel { all[min(9, max(0, level - 1))] }
 }
@@ -20,7 +30,7 @@ public enum Bot {
         switch game.config.mode {
         case .x01:
             if !state.opened { return Dart(20, 2) }
-            if let route = Checkout.route(for: state.remaining, rule: game.config.outRule, darts: dartsLeft) { return route[0] }
+            if let route = Checkout.route(for: state.remaining, rule: game.config.outRule(for: game.active), darts: dartsLeft) { return route[0] }
             if state.remaining > 60 { return Dart(20,3) }
             // Leave a familiar double; never deliberately strand one.
             let safe = state.remaining - 32

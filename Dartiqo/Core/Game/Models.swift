@@ -35,6 +35,16 @@ public enum OutRule: String, CaseIterable, Codable, Identifiable {
         dart.score > 0 && (self == .straight || dart.multiplier == 2 || (self == .master && dart.multiplier == 3))
     }
 }
+/// Úprava pravidel pro jednoho hráče. `nil` znamená stejně jako hra.
+public struct Handicap: Codable, Equatable {
+    public var startingScore: Int?
+    public var outRule: OutRule?
+    public var doubleIn: Bool?
+    public init(startingScore: Int? = nil, outRule: OutRule? = nil, doubleIn: Bool? = nil) {
+        self.startingScore = startingScore; self.outRule = outRule; self.doubleIn = doubleIn
+    }
+    public var isEmpty: Bool { startingScore == nil && outRule == nil && doubleIn == nil }
+}
 /// Best of hraje na většinu z daného počtu. First to končí, jakmile někdo počet získá.
 public enum MatchFormat: String, Codable, CaseIterable, Identifiable {
     case firstTo, bestOf
@@ -96,13 +106,31 @@ public struct GameConfig: Codable, Equatable {
     public var setsToWin: Int
     public var format: MatchFormat
     public var options: MatchOptions?
+    /// Podle pořadí hráčů v zápase. Platí jen pro X01.
+    public var handicaps: [Handicap]?
     public var settings: MatchOptions { options ?? MatchOptions() }
+
+    private func handicap(_ player: Int) -> Handicap? {
+        guard mode == .x01, let handicaps, handicaps.indices.contains(player) else { return nil }
+        return handicaps[player]
+    }
+    public func startingScore(for player: Int) -> Int { handicap(player)?.startingScore ?? startingScore }
+    public func outRule(for player: Int) -> OutRule { handicap(player)?.outRule ?? outRule }
+    public func doubleIn(for player: Int) -> Bool { handicap(player)?.doubleIn ?? doubleIn }
+    public var hasHandicap: Bool { mode == .x01 && (handicaps ?? []).contains { !$0.isEmpty } }
+    /// Aspoň jeden hráč musí otevírat doublem. Součet kola pak nejde použít.
+    public func anyDoubleIn(players: Int) -> Bool { (0..<max(players, 1)).contains { doubleIn(for: $0) } }
+    public func ruleLine(for player: Int) -> String {
+        var parts = ["\(startingScore(for: player))", outRule(for: player).shortTitle]
+        if doubleIn(for: player) { parts.append("Double in") }
+        return parts.joined(separator: " · ")
+    }
     public init(mode: GameMode = .x01, startingScore: Int = 501, outRule: OutRule = .double, doubleIn: Bool = false, legsToWin: Int = 2, setsToWin: Int = 1, format: MatchFormat = .firstTo) {
         self.mode = mode; self.startingScore = startingScore; self.outRule = outRule; self.doubleIn = doubleIn; self.legsToWin = legsToWin; self.setsToWin = setsToWin; self.format = format
     }
 
     private enum CodingKeys: String, CodingKey {
-        case mode, startingScore, outRule, doubleIn, legsToWin, setsToWin, format, options
+        case mode, startingScore, outRule, doubleIn, legsToWin, setsToWin, format, options, handicaps
     }
 
     public init(from decoder: Decoder) throws {
@@ -115,6 +143,7 @@ public struct GameConfig: Codable, Equatable {
         setsToWin = try container.decodeIfPresent(Int.self, forKey: .setsToWin) ?? 1
         format = try container.decodeIfPresent(MatchFormat.self, forKey: .format) ?? .firstTo
         options = try container.decodeIfPresent(MatchOptions.self, forKey: .options)
+        handicaps = try container.decodeIfPresent([Handicap].self, forKey: .handicaps)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -127,6 +156,7 @@ public struct GameConfig: Codable, Equatable {
         try container.encode(setsToWin, forKey: .setsToWin)
         try container.encode(format, forKey: .format)
         try container.encodeIfPresent(options, forKey: .options)
+        try container.encodeIfPresent(handicaps, forKey: .handicaps)
     }
 
     /// Číslo, které uživatel vidí u legů. Best of 5 je uvnitř first to 3.
@@ -178,7 +208,7 @@ public struct GameConfig: Codable, Equatable {
 
     public var summary: String {
         switch mode {
-        case .x01: return "\(startingScore) • \(outRule.title)\(doubleIn ? " • Double in" : "") • \(lengthLine)"
+        case .x01: return "\(startingScore) • \(outRule.title)\(doubleIn ? " • Double in" : "")\(hasHandicap ? " • Handicap" : "") • \(lengthLine)"
         case .cricket: return "Cricket \(settings.cricketNoScore ? "bez bodů" : "s body") • \(lengthLine)"
         case .aroundClock: return "1–20 + bull • \(settings.clockStyle.title)"
         case .countUp: return "\(settings.countUpRounds) kol • nejvyšší skóre vyhrává"
@@ -194,7 +224,10 @@ public struct PlayerState: Codable, Equatable {
     public var points = 0
     public var clockTarget = 1
     public var rounds = 0
-    public init(config: GameConfig) { remaining = config.startingScore; opened = !config.doubleIn }
+    public init(config: GameConfig, player: Int = 0) {
+        remaining = config.startingScore(for: player)
+        opened = !config.doubleIn(for: player)
+    }
 
     private enum CodingKeys: String, CodingKey {
         case remaining, opened, legs, sets, marks, points, clockTarget, rounds
@@ -270,7 +303,7 @@ public struct Match: Codable, Identifiable {
     public init(config: GameConfig, players: [Player], firstPlayer: Int = 0) {
         precondition((1...4).contains(players.count))
         self.config = config; self.players = players
-        self.states = players.map { _ in PlayerState(config: config) }
+        self.states = players.indices.map { PlayerState(config: config, player: $0) }
         active = min(max(firstPlayer, 0), players.count - 1); starter = active
     }
     public var currentPlayer: Player { players[active] }
@@ -282,7 +315,7 @@ public struct Match: Codable, Identifiable {
     public func best(for player: Int) -> Int { visits.filter { $0.player == player }.map(\.credited).max() ?? 0 }
     public var snapshot: GameSnapshot { GameSnapshot(states: states, active: active, starter: starter, leg: leg, legWinner: legWinner, winner: winner, finished: finished, visitCount: visits.count) }
     public var isSane: Bool {
-        guard (1...4).contains(players.count), states.count == players.count, states.indices.contains(active), states.indices.contains(starter), (1...15).contains(config.legsToWin), (1...11).contains(config.setsToWin), (GameConfig.minimumScore...GameConfig.maximumScore).contains(config.startingScore), (1...30).contains(config.settings.countUpRounds), config.settings.botDelay.isFinite, (0.3...5).contains(config.settings.botDelay) else { return false }
+        guard (1...4).contains(players.count), states.count == players.count, states.indices.contains(active), states.indices.contains(starter), (1...15).contains(config.legsToWin), (1...11).contains(config.setsToWin), (GameConfig.minimumScore...GameConfig.maximumScore).contains(config.startingScore), players.indices.allSatisfy({ (GameConfig.minimumScore...GameConfig.maximumScore).contains(config.startingScore(for: $0)) }), (1...30).contains(config.settings.countUpRounds), config.settings.botDelay.isFinite, (0.3...5).contains(config.settings.botDelay) else { return false }
         guard players.allSatisfy({ $0.botLevel == nil || (1...10).contains($0.botLevel!) }), states.allSatisfy({ $0.remaining >= 0 && (1...22).contains($0.clockTarget) && (0...config.setsToWin).contains($0.sets) }), visits.allSatisfy({ players.indices.contains($0.player) && (1...3).contains($0.darts.count) && $0.darts.allSatisfy(\.isValid) }) else { return false }
         guard winner.map({ players.indices.contains($0) }) ?? true, legWinner.map({ players.indices.contains($0) }) ?? true else { return false }
         guard currentDarts.count <= 2, currentDarts.allSatisfy(\.isValid) else { return false }

@@ -4,6 +4,8 @@ struct TouchDartboard: View {
     var marks: [Dart] = []
     var interactive = true
     var showMarkNumbers = true
+    /// 1 = celý terč. Vyšší hodnota přiblíží střed, gesta používají stejný poloměr.
+    var zoom: CGFloat = 1
     var onHit: (Dart) -> Void
 
     @State private var touch: CGPoint?
@@ -17,7 +19,7 @@ struct TouchDartboard: View {
     var body: some View {
         GeometryReader { geo in
             let size = geo.size
-            let radius = min(size.width, size.height) * 0.43
+            let radius = min(size.width, size.height) * 0.43 * max(zoom, 1)
             let center = CGPoint(x: size.width / 2, y: size.height / 2)
             ZStack {
                 boardCanvas(size: size, center: center, radius: radius, hover: hover)

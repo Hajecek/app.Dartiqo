@@ -12,6 +12,12 @@ struct Profile: Codable, Identifiable {
     /// Malý JPEG portrét. Chybějící klíč ve starších souborech zůstane prázdný.
     var photoJPEG: Data?
 }
+struct Friend: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var owner: UUID
+    var name: String
+    var lastPlayed: Date?
+}
 struct StoredData: Codable {
     var version = 1
     var profiles: [Profile] = []
@@ -26,6 +32,7 @@ struct StoredData: Codable {
     var lastSetups: [String: SetupDraft]?
     /// Camera-to-board mapping for autoscore. Optional so older saves still decode.
     var boardCalibration: BoardCalibration?
+    var friends: [Friend]?
 }
 struct JSONDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
@@ -69,6 +76,30 @@ struct JSONDocument: FileDocument {
         data.presets?.append(GamePreset(owner: id, name: clean, setup: setup)); save()
     }
     func deletePreset(_ id: UUID) { data.presets?.removeAll { $0.id == id }; save() }
+    var friends: [Friend] {
+        (data.friends ?? []).filter { $0.owner == profile?.id }.sorted {
+            ($0.lastPlayed ?? .distantPast, $1.name) > ($1.lastPlayed ?? .distantPast, $0.name)
+        }
+    }
+    /// Ostatní profily na tomhle telefonu.
+    var housemates: [Profile] { data.profiles.filter { $0.id != profile?.id } }
+    @discardableResult func addFriend(_ name: String) -> Friend? {
+        guard let owner = profile?.id else { return nil }
+        let clean = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24))
+        guard !clean.isEmpty else { return nil }
+        if let existing = friends.first(where: { $0.name.compare(clean, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }) { return existing }
+        let friend = Friend(owner: owner, name: clean)
+        if data.friends == nil { data.friends = [] }
+        data.friends?.append(friend); save()
+        return friend
+    }
+    func deleteFriend(_ id: UUID) { data.friends?.removeAll { $0.id == id }; save() }
+    func notePlayed(with ids: [UUID]) {
+        guard var all = data.friends else { return }
+        let now = Date()
+        for index in all.indices where ids.contains(all[index].id) { all[index].lastPlayed = now }
+        data.friends = all; save()
+    }
     var profile: Profile? { data.profiles.first { $0.id == data.selectedProfile } }
     var matches: [Match] { guard let id = profile?.id else { return [] }; return data.matches.filter { $0.players.contains { $0.id == id } }.sorted { ($0.completedAt ?? $0.createdAt) > ($1.completedAt ?? $1.createdAt) } }
     var activeMatch: Match? {
