@@ -41,6 +41,51 @@ public struct BoardCalibration: Codable, Equatable {
     /// Preview width / height when calibrated.
     public var previewAspect: Double
     public var calibratedAt: Date?
+    /// Perspektivní mapa deska → náhled (3×3). Když je, má přednost před kruhem a otočením.
+    public var homography: [Double]?
+    /// Stejná mapa vůči obrazu kamery (0…1). Nezávisí na velikosti náhledu.
+    public var camera: [Double]?
+    /// Šířka / výška obrazu kamery.
+    public var cameraAspect: Double?
+
+    /// Přiblížení kamery při kalibraci. Zápas musí použít stejné.
+    public var zoom: Double?
+    /// Naučená korekce v souřadnicích desky (afinní 2×3) z oprav hráče.
+    public var learned: [Double]?
+    /// Hody z kamery, ze kterých se korekce učí. Nová kalibrace začíná od nuly.
+    public var samples: [DartSample]?
+
+    public var isCameraMapped: Bool { camera != nil && (cameraAspect ?? 0) > 0 }
+
+    /// Poměr nejkratšího a nejdelšího poloměru terče na displeji. 1 = telefon přesně čelně.
+    public var tiltRatio: Double {
+        guard let matrix = homography, let center = PlaneFit.project(matrix, .zero) else { return 1 }
+        let aspect = max(previewAspect, 0.01)
+        let radii = (0..<24).compactMap { index -> Double? in
+            let angle = Double(index) / 24 * 2 * .pi
+            guard let point = PlaneFit.project(matrix, SIMD2(cos(angle), sin(angle))) else { return nil }
+            return hypot(point.x - center.x, (point.y - center.y) / aspect)
+        }
+        guard let low = radii.min(), let high = radii.max(), high > 0 else { return 1 }
+        return low / high
+    }
+
+    /// Mapa pro konkrétní náhled. Kalibrace z celé obrazovky tak sedí i v menším okně v zápase.
+    public func fitted(previewWidth: Double, previewHeight: Double) -> BoardCalibration {
+        guard let camera, let cameraAspect, cameraAspect > 0, previewWidth > 1, previewHeight > 1 else { return self }
+        let frame = VisionFrame(bufferWidth: cameraAspect, bufferHeight: 1, previewWidth: previewWidth, previewHeight: previewHeight)
+        guard var next = BoardCalibration(
+            homography: PlaneFit.multiply(BoardVision.previewTransform(frame), camera),
+            previewAspect: previewWidth / previewHeight,
+            calibratedAt: calibratedAt
+        ) else { return self }
+        next.camera = camera
+        next.cameraAspect = cameraAspect
+        next.zoom = zoom
+        next.learned = learned
+        next.samples = samples
+        return next
+    }
 
     public init(center: NormPoint, radius: Double, rotationDegrees: Double = 0, previewAspect: Double = 0.46, calibratedAt: Date? = nil) {
         self.center = center
@@ -48,6 +93,26 @@ public struct BoardCalibration: Codable, Equatable {
         self.rotationDegrees = rotationDegrees
         self.previewAspect = previewAspect
         self.calibratedAt = calibratedAt
+    }
+
+    /// Z perspektivní mapy dopočítá i střed, poloměr a otočení pro starší části aplikace.
+    public init?(homography matrix: [Double], previewAspect: Double, calibratedAt: Date? = nil) {
+        guard matrix.count == 9, matrix.allSatisfy(\.isFinite),
+              let center = PlaneFit.project(matrix, .zero),
+              let top = PlaneFit.project(matrix, SIMD2(0, -1)) else { return nil }
+        let aspect = max(previewAspect, 0.01)
+        let rim = (0..<24).compactMap { index -> Double? in
+            let angle = Double(index) / 24 * 2 * .pi
+            guard let point = PlaneFit.project(matrix, SIMD2(cos(angle), sin(angle))) else { return nil }
+            return hypot(point.x - center.x, (point.y - center.y) / aspect)
+        }
+        guard rim.count == 24 else { return nil }
+        self.center = NormPoint(x: center.x, y: center.y)
+        radius = rim.reduce(0, +) / Double(rim.count)
+        rotationDegrees = atan2(top.x - center.x, -(top.y - center.y) / aspect) * 180 / .pi
+        self.previewAspect = previewAspect
+        self.calibratedAt = calibratedAt
+        homography = matrix
     }
 
     public var isCalibrated: Bool { calibratedAt != nil }
@@ -78,17 +143,33 @@ public struct BoardCalibration: Codable, Equatable {
         copy.radius = radius.finiteOr(0.36).clamped(0.08, 0.7)
         copy.rotationDegrees = rotationDegrees.finiteOr(0).clamped(-180, 180)
         copy.previewAspect = previewAspect.isFinite && previewAspect > 0.2 ? previewAspect.clamped(0.3, 2.4) : 0.46
+        if let matrix = homography, matrix.count != 9 || !matrix.allSatisfy(\.isFinite) || PlaneFit.invert(matrix) == nil {
+            copy.homography = nil
+        }
+        if let matrix = camera, matrix.count != 9 || !matrix.allSatisfy(\.isFinite) || PlaneFit.invert(matrix) == nil
+            || !(cameraAspect ?? 0).isFinite || (cameraAspect ?? 0) <= 0 {
+            copy.camera = nil
+            copy.cameraAspect = nil
+        }
+        if let learned, learned.count != 6 || !learned.allSatisfy(\.isFinite) { copy.learned = nil }
+        if let zoom, !zoom.isFinite || zoom < 1 { copy.zoom = nil }
         return copy
     }
 
     enum CodingKeys: String, CodingKey {
-        case center, radius, rotationDegrees, previewAspect, calibratedAt
+        case center, radius, rotationDegrees, previewAspect, calibratedAt, homography, camera, cameraAspect, zoom, learned, samples
         case anchors, rings, wireOffsets, lensK1
     }
 
     public init(from decoder: Decoder) throws {
         let box = try decoder.container(keyedBy: CodingKeys.self)
         calibratedAt = try box.decodeIfPresent(Date.self, forKey: .calibratedAt)
+        homography = try box.decodeIfPresent([Double].self, forKey: .homography)
+        camera = try box.decodeIfPresent([Double].self, forKey: .camera)
+        cameraAspect = try box.decodeIfPresent(Double.self, forKey: .cameraAspect)
+        zoom = try box.decodeIfPresent(Double.self, forKey: .zoom)
+        learned = try box.decodeIfPresent([Double].self, forKey: .learned)
+        samples = try box.decodeIfPresent([DartSample].self, forKey: .samples)
         rotationDegrees = try box.decodeIfPresent(Double.self, forKey: .rotationDegrees) ?? 0
         previewAspect = try box.decodeIfPresent(Double.self, forKey: .previewAspect) ?? 0.46
         if let center = try box.decodeIfPresent(NormPoint.self, forKey: .center),
@@ -113,6 +194,12 @@ public struct BoardCalibration: Codable, Equatable {
         try box.encode(rotationDegrees, forKey: .rotationDegrees)
         try box.encode(previewAspect, forKey: .previewAspect)
         try box.encodeIfPresent(calibratedAt, forKey: .calibratedAt)
+        try box.encodeIfPresent(homography, forKey: .homography)
+        try box.encodeIfPresent(camera, forKey: .camera)
+        try box.encodeIfPresent(cameraAspect, forKey: .cameraAspect)
+        try box.encodeIfPresent(zoom, forKey: .zoom)
+        try box.encodeIfPresent(learned, forKey: .learned)
+        try box.encodeIfPresent(samples, forKey: .samples)
     }
 }
 
@@ -127,10 +214,26 @@ public struct BoardMapper {
     public let calibration: BoardCalibration
     private let homography: Homography?
     private let scale: Double
+    private let rotation: Double
+    private let correction: [Double]?
+    private let correctionInverse: [Double]?
 
     public init(calibration: BoardCalibration) {
         let clean = calibration.sanitized()
         self.calibration = clean
+        if let matrix = clean.homography, let fit = Homography(matrix: matrix) {
+            homography = fit
+            scale = 1
+            rotation = 0
+            let affine = clean.learned.map { [$0[0], $0[1], $0[2], $0[3], $0[4], $0[5], 0, 0, 1] }
+            let inverse = affine.flatMap(PlaneFit.invert)
+            correction = inverse == nil ? nil : affine
+            correctionInverse = inverse
+            return
+        }
+        correction = nil
+        correctionInverse = nil
+        rotation = clean.rotationDegrees
         let image = clean.anchors.outers.map { ($0.x, $0.y) }
         let board = [(0.0, -1.0), (1.0, 0.0), (0.0, 1.0), (-1.0, 0.0)]
         let fit = Homography.fit(board: board, image: image)
@@ -159,13 +262,20 @@ public struct BoardMapper {
     public func boardPoint(from image: NormPoint) -> (x: Double, y: Double)? {
         guard isReady, image.isUsable, let homography else { return nil }
         guard let raw = homography.unproject(u: image.x, v: image.y) else { return nil }
-        return (raw.x / scale, raw.y / scale)
+        let point = SIMD2(raw.x / scale, raw.y / scale)
+        guard let correction, let corrected = PlaneFit.project(correction, point) else { return (point.x, point.y) }
+        return (corrected.x, corrected.y)
     }
 
     public func imagePoint(boardX: Double, boardY: Double) -> NormPoint? {
         guard isReady, boardX.isFinite, boardY.isFinite, let homography else { return nil }
+        var boardX = boardX, boardY = boardY
+        if let correctionInverse, let raw = PlaneFit.project(correctionInverse, SIMD2(boardX, boardY)) {
+            boardX = raw.x
+            boardY = raw.y
+        }
         // Apply spider rotation around bull in board space.
-        let rad = calibration.rotationDegrees * Double.pi / 180
+        let rad = rotation * Double.pi / 180
         let cosR = cos(rad), sinR = sin(rad)
         let rx = boardX * cosR - boardY * sinR
         let ry = boardX * sinR + boardY * cosR
@@ -176,7 +286,7 @@ public struct BoardMapper {
     public func dart(at image: NormPoint) -> Dart {
         guard let point = boardPoint(from: image) else { return .miss }
         // Inverse-rotate into unrotated board space for standard hit testing.
-        let rad = -calibration.rotationDegrees * Double.pi / 180
+        let rad = -rotation * Double.pi / 180
         let cosR = cos(rad), sinR = sin(rad)
         let x = point.x * cosR - point.y * sinR
         let y = point.x * sinR + point.y * cosR
@@ -239,6 +349,17 @@ public struct BoardMapper {
 struct Homography {
     private var forward: [Double]
     private var inverse: [Double]
+
+    init?(matrix: [Double]) {
+        guard matrix.count == 9, let inverse = PlaneFit.invert(matrix) else { return nil }
+        forward = matrix
+        self.inverse = inverse
+    }
+
+    private init(forward: [Double], inverse: [Double]) {
+        self.forward = forward
+        self.inverse = inverse
+    }
 
     func project(x: Double, y: Double) -> (x: Double, y: Double)? { Self.apply(forward, x: x, y: y) }
     func unproject(u: Double, v: Double) -> (x: Double, y: Double)? { Self.apply(inverse, x: u, y: v) }

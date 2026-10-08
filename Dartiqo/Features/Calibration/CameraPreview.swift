@@ -39,9 +39,45 @@ final class CameraSession: NSObject, ObservableObject {
     }
 
     func stop() {
+        holdExposure(false)
         let capture = session
         sessionQueue.async {
             if capture.isRunning { capture.stopRunning() }
+        }
+    }
+
+    var maxZoom: Double {
+        guard let device else { return 3 }
+        return min(4, max(1, Double(device.maxAvailableVideoZoomFactor)))
+    }
+
+    func setZoom(_ factor: Double) {
+        guard let device else { return }
+        nonisolated(unsafe) let camera = device
+        let value = CGFloat(min(max(1, factor), maxZoom))
+        sessionQueue.async {
+            guard (try? camera.lockForConfiguration()) != nil else { return }
+            camera.videoZoomFactor = value
+            camera.unlockForConfiguration()
+        }
+    }
+
+    /// Při hlídání šipek zamkne expozici, vyvážení bílé a ostření. Jinak by se jas měnil sám od sebe.
+    func holdExposure(_ hold: Bool) {
+        guard let device else { return }
+        nonisolated(unsafe) let camera = device
+        sessionQueue.async {
+            guard (try? camera.lockForConfiguration()) != nil else { return }
+            defer { camera.unlockForConfiguration() }
+            if hold {
+                if camera.isExposureModeSupported(.locked) { camera.exposureMode = .locked }
+                if camera.isWhiteBalanceModeSupported(.locked) { camera.whiteBalanceMode = .locked }
+                if camera.isFocusModeSupported(.locked) { camera.focusMode = .locked }
+            } else {
+                if camera.isExposureModeSupported(.continuousAutoExposure) { camera.exposureMode = .continuousAutoExposure }
+                if camera.isWhiteBalanceModeSupported(.continuousAutoWhiteBalance) { camera.whiteBalanceMode = .continuousAutoWhiteBalance }
+                if camera.isFocusModeSupported(.continuousAutoFocus) { camera.focusMode = .continuousAutoFocus }
+            }
         }
     }
 

@@ -1,6 +1,13 @@
 import SwiftUI
 import UIKit
 
+private struct CameraHit {
+    var dart: Dart
+    /// Kde kamera hod viděla (obraz kamery 0…1).
+    var point: SIMD2<Double>?
+    var corrected = false
+}
+
 private enum MatchColors {
     static let background = Color(red:0.055,green:0.10,blue:0.08)
     static let coral = Color(red:1,green:0.32,blue:0.20)
@@ -78,6 +85,8 @@ struct MatchView: View {
     @State private var boardZoomed = false
     /// 0 = všechny legy, jinak číslo legu.
     @State private var detailLeg: Int? = 0
+    @State private var cameraHits: [CameraHit] = []
+    @State private var correcting: Int?
     var body: some View {
         Group {
             if let game = store.activeMatch {
@@ -128,6 +137,9 @@ struct MatchView: View {
             }
         }
         .sheet(isPresented: $showSettings) { settings }
+        .sheet(isPresented: Binding(get: { correcting != nil }, set: { if !$0 { correcting = nil } }), onDismiss: resumeHoldAfterCorrection) {
+            if let correcting { correctionSheet(correcting) }
+        }
         .task(id: botTaskKey) { await throwBotDart() }
         .onAppear {
             if let game = store.activeMatch {
@@ -217,15 +229,10 @@ struct MatchView: View {
                             CameraScoreView(
                                 calibration: store.boardCalibration,
                                 labels: game.currentDarts.map(\.label),
-                                dartCount: game.currentDarts.count
-                            ) { dart in
-                                let visits = store.activeMatch?.visits.count ?? 0
-                                let pending = store.activeMatch?.currentDarts.count ?? 0
-                                hit(dart)
-                                let afterVisits = store.activeMatch?.visits.count ?? 0
-                                let afterPending = store.activeMatch?.currentDarts.count ?? 0
-                                return afterVisits > visits || afterPending > pending
-                            }
+                                dartCount: game.currentDarts.count,
+                                onDart: { dart, point in recordCameraHit(dart, point: point) },
+                                onCorrect: cameraHits.count == game.currentDarts.count ? { correcting = $0 } : nil
+                            )
                         } else {
                             dartGrid
                         }
@@ -258,8 +265,120 @@ struct MatchView: View {
                 .padding(.vertical, 4)
                 .opacity(0.96)
         case .camera:
-            visitSummaryCard(title: "Kamera", value: "\(holdDarts.reduce(0) { $0 + $1.score })")
+            VStack(spacing: 10) {
+                Text("Kamera").font(AppFont.caption(13, weight: .semibold)).foregroundStyle(MatchColors.ink.opacity(0.55))
+                Text("\(holdDarts.reduce(0) { $0 + $1.score })")
+                    .font(AppFont.display(48, weight: .bold)).foregroundStyle(MatchColors.ink).monospacedDigit()
+                CameraHitChips(
+                    labels: holdDarts.map(\.label),
+                    ink: MatchColors.ink,
+                    fill: MatchColors.ink.opacity(0.07),
+                    onCorrect: cameraHits.count == holdDarts.count && legCeremony == nil ? { correcting = $0 } : nil
+                )
+                if cameraHits.count == holdDarts.count {
+                    Text("Nesedí pole? Klepni a oprav ho.")
+                        .font(AppFont.caption(12))
+                        .foregroundStyle(MatchColors.ink.opacity(0.5))
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 24)
+            .padding(.horizontal, 16)
+            .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
+    }
+
+    // MARK: Kamera: opravy a učení
+
+    private func recordCameraHit(_ dart: Dart, point: SIMD2<Double>?) -> Bool {
+        let visits = store.activeMatch?.visits.count ?? 0
+        let pending = store.activeMatch?.currentDarts.count ?? 0
+        if pending == 0, !isHoldingVisit { cameraHits = [] }
+        hit(dart)
+        let accepted = (store.activeMatch?.visits.count ?? 0) > visits || (store.activeMatch?.currentDarts.count ?? 0) > pending
+        if accepted { cameraHits.append(CameraHit(dart: dart, point: point)) }
+        return accepted
+    }
+
+    private func correctionSheet(_ index: Int) -> some View {
+        let current = cameraHits.indices.contains(index) ? cameraHits[index].dart : nil
+        return NavigationStack {
+            VStack(spacing: 18) {
+                Text("Klepni, kam \(index + 1). šipka opravdu dopadla. Kamera se z opravy doučí.")
+                    .font(AppFont.body(15))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                TouchDartboard(marks: current.map { [$0] } ?? [], interactive: true) { dart in
+                    correcting = nil
+                    correctCameraHit(index, to: dart)
+                }
+                .aspectRatio(1, contentMode: .fit)
+                .frame(maxWidth: 420)
+                Button("Mimo terč") {
+                    correcting = nil
+                    correctCameraHit(index, to: .miss)
+                }
+                .buttonStyle(.glass)
+                Spacer(minLength: 0)
+            }
+            .padding(20)
+            .navigationTitle(current.map { "Oprava: \($0.label)" } ?? "Oprava hodu")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Zrušit") { correcting = nil } }
+            }
+        }
+        .presentationDetents([.large])
+    }
+
+    /// Oprava přepíše hod v zápase a uloží se jako učební vzorek.
+    private func correctCameraHit(_ index: Int, to dart: Dart) {
+        guard legCeremony == nil, var game = store.activeMatch, cameraHits.indices.contains(index) else { return }
+        let darts = isHoldingVisit ? holdDarts : game.currentDarts
+        guard darts.count == cameraHits.count, darts.indices.contains(index) else { return }
+        var hits = cameraHits
+        if let point = hits[index].point {
+            store.learnDarts([DartSample(x: point.x, y: point.y, segment: dart.segment, multiplier: dart.multiplier, corrected: true)])
+        }
+        hits[index].dart = dart
+        hits[index].corrected = true
+        guard dart != darts[index] else {
+            cameraHits = hits
+            return
+        }
+        isHoldingVisit = false
+        holdPlayer = nil
+        holdDarts = []
+        for _ in index..<darts.count { game.undoLastInput() }
+        store.activeMatch = game
+        cameraHits = Array(hits[..<index])
+        var replay = darts
+        replay[index] = dart
+        for offset in index..<replay.count {
+            let visits = store.activeMatch?.visits.count ?? 0
+            let pending = store.activeMatch?.currentDarts.count ?? 0
+            hit(replay[offset])
+            let finished = (store.activeMatch?.visits.count ?? 0) > visits
+            guard finished || (store.activeMatch?.currentDarts.count ?? 0) > pending else { break }
+            cameraHits.append(hits[offset])
+            if finished { break }
+        }
+        revision = UUID()
+    }
+
+    private func resumeHoldAfterCorrection() {
+        guard isHoldingVisit else { return }
+        scheduleVisitHold(darts: holdDarts)
+    }
+
+    /// Hody, které nikdo neopravil, drží naučenou mapu na místě.
+    private func learnConfirmedHits() {
+        let samples = cameraHits.compactMap { hit -> DartSample? in
+            guard !hit.corrected, let point = hit.point else { return nil }
+            return DartSample(x: point.x, y: point.y, segment: hit.dart.segment, multiplier: hit.dart.multiplier, corrected: false)
+        }
+        cameraHits = []
+        store.learnDarts(samples)
     }
 
     private func visitSummaryCard(title: String, value: String) -> some View {
@@ -623,6 +742,7 @@ struct MatchView: View {
         }
         game.undoLastInput()
         withAnimation(reduceMotion ? nil : .snappy(duration: 0.35)) { store.activeMatch = game }
+        if cameraHits.count > game.currentDarts.count { cameraHits = Array(cameraHits.prefix(game.currentDarts.count)) }
         sumText = ""
         multiplier = 1
         revision = UUID()
@@ -652,11 +772,12 @@ struct MatchView: View {
         let hold = legOver ? 0.35 : reduceMotion ? 0.45 : max(1.8, min(2.8, delay + 0.6))
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(hold * 1_000_000_000))
-            guard isHoldingVisit, holdDarts == darts else { return }
+            guard isHoldingVisit, holdDarts == darts, correcting == nil else { return }
             finishVisitHold()
         }
     }
     @MainActor private func finishVisitHold() {
+        if holdSurface == .camera { learnConfirmedHits() }
         guard let game = store.activeMatch else {
             isHoldingVisit = false
             holdDarts = []

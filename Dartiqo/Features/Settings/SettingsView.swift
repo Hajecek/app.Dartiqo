@@ -53,10 +53,22 @@ struct SettingsView: View {
                             .foregroundStyle(store.boardMapper != nil ? Theme.mint : .secondary)
                     }
                 }
+                if store.boardCalibration?.isCameraMapped == true {
+                    HStack {
+                        Label("Naučeno z oprav", systemImage: "brain")
+                        Spacer()
+                        Text("\(store.learnedCorrections)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    if store.learnedCorrections > 0 {
+                        Button("Zapomenout opravy") { store.forgetLearning() }
+                    }
+                }
                 if store.boardCalibration != nil {
                     Button("Vymazat kalibraci", role: .destructive) { store.clearBoardCalibration() }
                 }
-            } header: { Text("Autoscore") } footer: { Text("Kamera sama najde okraj terče, přečte čísla a uloží mapu. V zápase pak v způsobu zápisu zvol Kamera.") }
+            } header: { Text("Autoscore") } footer: { Text("Kamera najde terč podle barev segmentů a uloží mapu. V zápase zvol zápis Kamera. Když hod opravíš klepnutím, mapa se z opravy doučí. Nová kalibrace začíná učení od nuly.") }
             Section {
                 Toggle("Chránit profil odemknutím zařízení", isOn: Binding(get: { store.data.biometricLock }, set: { value in if value { Task { await store.authenticate(enabling: true) } } else { store.data.biometricLock = false; store.save() } })).tint(Theme.mint)
                 if let error = store.authError { Text(error).font(.caption).foregroundStyle(.secondary) }

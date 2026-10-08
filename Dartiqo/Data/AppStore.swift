@@ -204,5 +204,17 @@ struct JSONDocument: FileDocument {
         data.boardCalibration = nil
         save()
     }
+    /// Hody z kamery v obrazu kamery. Opravené posunou mapu, potvrzené ji drží.
+    func learnDarts(_ samples: [DartSample]) {
+        guard !samples.isEmpty, let calibration = data.boardCalibration, calibration.isCameraMapped else { return }
+        data.boardCalibration = DartLearning.learn(calibration, adding: samples).sanitized()
+        save()
+    }
+    var learnedCorrections: Int { data.boardCalibration?.samples?.filter(\.corrected).count ?? 0 }
+    func forgetLearning() {
+        data.boardCalibration?.samples = nil
+        data.boardCalibration?.learned = nil
+        save()
+    }
     func export() throws -> JSONDocument { let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; return JSONDocument(data: try encoder.encode(data)) }
 }

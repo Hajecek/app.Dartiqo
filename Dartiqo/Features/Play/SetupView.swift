@@ -38,6 +38,7 @@ private enum Opening {
 struct SetupView: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dismiss) private var dismiss
     @State private var draft: SetupDraft
     @State private var step = 0
     @State private var live = false
@@ -56,8 +57,6 @@ struct SetupView: View {
     @State private var bullWinner: Int?
     @State private var showBullOff = false
     @State private var bullLaunched = false
-    @State private var chromeID = UUID()
-    @EnvironmentObject private var setupChrome: MatchSetupChrome
     private let presetScores = [101, 301, 501, 701, 1001]
     private var options: Binding<MatchOptions> { Binding(get: { draft.config.settings }, set: { draft.config.options = $0 }) }
     init(mode: GameMode, preset: SetupDraft? = nil) { _draft = State(initialValue: preset ?? SetupDraft(mode: mode)) }
@@ -121,6 +120,8 @@ struct SetupView: View {
             }
         }
         .animation(motion, value: step)
+        .safeAreaInset(edge: .bottom, spacing: 0) { setupBar }
+        .toolbar(.hidden, for: .tabBar)
         .screen()
         .scrollDismissesKeyboard(.interactively)
         .navigationTitle("Nový zápas")
@@ -140,32 +141,12 @@ struct SetupView: View {
         .onAppear {
             scoreText = "\(draft.config.startingScore)"
             if !presetScores.contains(draft.config.startingScore) { scoreExact = true }
-            setupChrome.owner = chromeID
-            pushChrome()
-        }
-        .onDisappear {
-            guard setupChrome.owner == chromeID else { return }
-            if !showBullOff && !live {
-                setupChrome.title = nil
-                setupChrome.owner = nil
-            }
-        }
-        .onChange(of: chromeKey) { _, _ in
-            guard setupChrome.owner == chromeID else { return }
-            pushChrome()
-        }
-        .onChange(of: setupChrome.token) { _, _ in
-            guard setupChrome.owner == chromeID else { return }
-            advance()
         }
         .onChange(of: showsOpening) { _, shown in
             if !shown, step > 3 { setStep(3) }
         }
         .onChange(of: showBullOff) { _, shown in
-            if !shown {
-                bullLaunched = false
-                pushChrome()
-            }
+            if !shown { bullLaunched = false }
         }
         .confirmationDialog("Máš rozehraný zápas", isPresented: $replace, titleVisibility: .visible) {
             Button("Pokračovat v rozehraném") { launchIntro = false; live = true }
@@ -227,12 +208,45 @@ struct SetupView: View {
         }
     }
 
-    private var chromeKey: String { "\(step)|\(stepCount)|\(canContinue)|\(canPlay)|\(isLastStep)" }
+    private var canAdvance: Bool { isLastStep ? canPlay : (step == 0 || canContinue) }
 
-    private func pushChrome() {
-        setupChrome.title = isLastStep ? "Hrát" : "Pokračovat"
-        setupChrome.enabled = isLastStep ? canPlay : (step == 0 || canContinue)
+    private var setupBar: some View {
+        GlassEffectContainer(spacing: 10) {
+            HStack(spacing: 10) {
+                Button { dismiss() } label: {
+                    Image(systemName: "house.fill")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .frame(width: 56, height: 56)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .glassEffect(.regular.interactive(), in: Circle())
+                .accessibilityLabel("Domů")
+
+                Button { advance() } label: {
+                    HStack(spacing: 8) {
+                        Text(isLastStep ? "Hrát" : "Pokračovat")
+                            .font(.headline)
+                            .contentTransition(.opacity)
+                        Image(systemName: isLastStep ? "play.fill" : "arrow.right")
+                            .font(.subheadline.weight(.bold))
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                    .foregroundStyle(canAdvance ? Color.black : Color.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .glassEffect(canAdvance ? .regular.tint(Theme.brand).interactive() : .regular, in: Capsule())
+                .disabled(!canAdvance)
+                .animation(motion, value: canAdvance)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 6)
     }
+
     private var progress: some View {
         VStack(alignment: .leading, spacing: 10) {
             GeometryReader { geo in
@@ -1520,32 +1534,6 @@ struct OptionSwitcher<ID: Hashable>: View {
     }
 }
 
-struct SetupAccessoryButton: View {
-    @EnvironmentObject private var chrome: MatchSetupChrome
-
-    var body: some View {
-        Button {
-            guard chrome.enabled else { return }
-            chrome.token += 1
-        } label: {
-            HStack(spacing: 8) {
-                Text(chrome.title ?? "Pokračovat")
-                    .font(.headline.weight(.semibold))
-                    .lineLimit(1)
-                Image(systemName: chrome.title == "Hrát" ? "play.fill" : "arrow.right")
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(chrome.enabled ? Theme.action : Color.secondary)
-                    .contentTransition(.symbolEffect(.replace))
-            }
-            .foregroundStyle(chrome.enabled ? Color.primary : Color.secondary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(!chrome.enabled)
-    }
-}
-
 private struct BullShot: Identifiable {
     let id = UUID()
     let player: Int
@@ -1603,6 +1591,10 @@ private struct BullOffView: View {
     @State private var shots: [BullShot] = []
     @State private var winner: Int?
     @State private var note: String?
+    /// Každé kolo hodů má vlastní číslo, aby bot hodil i tehdy, když začíná stejný hráč.
+    @State private var round = 0
+    /// Remíza je vidět chvíli na terči, než začne další kolo.
+    @State private var tieShown = false
     /// 1, dokud nehodí všichni. Pak se plynule přiblíží na rozdíl hodů.
     @State private var shownZoom: CGFloat = 1
 
@@ -1618,10 +1610,11 @@ private struct BullOffView: View {
         let done = Set(shots.map(\.player))
         return order.filter { !done.contains($0) }
     }
-    private var current: Int? { winner == nil ? pending.first : nil }
+    private var current: Int? { winner == nil && !tieShown ? pending.first : nil }
 
     private var headline: String {
         if let winner { return "Blíž je \(name(winner))" }
+        if tieShown { return "Remíza" }
         if let current { return "Hází \(name(current))" }
         return "Rozhoz na střed"
     }
@@ -1698,11 +1691,23 @@ private struct BullOffView: View {
         .onChange(of: targetZoom) { _, new in
             withAnimation(.smooth(duration: 1.05)) { shownZoom = new }
         }
-        .task(id: current) {
+        .task(id: "\(round)-\(current ?? -1)") {
             guard let current, bots.indices.contains(current), let level = bots[current], winner == nil else { return }
             try? await Task.sleep(nanoseconds: 700_000_000)
             guard !Task.isCancelled, self.current == current, winner == nil else { return }
             record(botDart(level: level), player: current)
+        }
+        .task(id: tieShown ? round : -1) {
+            guard tieShown else { return }
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled, tieShown else { return }
+            withAnimation(.smooth(duration: 0.45)) {
+                order = Array(order.reversed())
+                shots = []
+                tieShown = false
+                round += 1
+                note = "Hází se znovu v opačném pořadí. Začíná \(name(order.first ?? 0))."
+            }
         }
     }
 
@@ -1753,6 +1758,8 @@ private struct BullOffView: View {
         shots = []
         winner = nil
         note = nil
+        tieShown = false
+        round += 1
     }
 
     private var humanTurn: Bool {
@@ -1777,7 +1784,7 @@ private struct BullOffView: View {
     }
 
     private func resolveIfComplete() {
-        guard winner == nil, pending.isEmpty, !order.isEmpty else { return }
+        guard winner == nil, !tieShown, pending.isEmpty, !order.isEmpty else { return }
         let scored = order.compactMap { player -> (player: Int, rank: Int)? in
             guard let shot = shots.last(where: { $0.player == player }) else { return nil }
             return (player, rank(shot.dart))
@@ -1788,8 +1795,8 @@ private struct BullOffView: View {
             winner = leaders[0]
         } else {
             note = replayNote(best: best, count: leaders.count)
-            order = Array(leaders.reversed())
-            shots = []
+            order = leaders
+            tieShown = true
         }
     }
 
