@@ -279,6 +279,7 @@ public struct GameSnapshot: Codable, Equatable {
     public var visitCount: Int
     public var awaitingBullOff: Bool? = nil
     public var bullOffLegs: [Int: Int]? = nil
+    public var continuedPastLimitLegs: Set<Int>? = nil
 }
 public enum GameError: Error, LocalizedError {
     case finished, invalidDarts, legEnded, unfinishedVisit
@@ -306,6 +307,8 @@ public struct Match: Codable, Identifiable {
     public var awaitingBullOff: Bool?
     /// Legy rozhodnuté rozhozem: číslo legu → vítěz.
     public var bullOffLegs: [Int: Int]?
+    /// Legy, které hráči po vypršení limitu zvolili dohrát bez dalšího omezení.
+    public var continuedPastLimitLegs: Set<Int>?
     public var needsBullOff: Bool { awaitingBullOff == true }
     /// Čas s otevřenou hrou. Pauza, odchod ze hry ani appka na pozadí se nepočítají.
     public var playSeconds: Double?
@@ -334,11 +337,12 @@ public struct Match: Codable, Identifiable {
         return darts == 0 ? 0 : Double(v.reduce(0) { $0 + $1.credited }) / Double(darts) * 3
     }
     public func best(for player: Int) -> Int { visits.filter { $0.player == player }.map(\.credited).max() ?? 0 }
-    public var snapshot: GameSnapshot { GameSnapshot(states: states, active: active, starter: starter, leg: leg, legWinner: legWinner, winner: winner, finished: finished, visitCount: visits.count, awaitingBullOff: awaitingBullOff, bullOffLegs: bullOffLegs) }
+    public var snapshot: GameSnapshot { GameSnapshot(states: states, active: active, starter: starter, leg: leg, legWinner: legWinner, winner: winner, finished: finished, visitCount: visits.count, awaitingBullOff: awaitingBullOff, bullOffLegs: bullOffLegs, continuedPastLimitLegs: continuedPastLimitLegs) }
     public var isSane: Bool {
         guard (1...4).contains(players.count), states.count == players.count, states.indices.contains(active), states.indices.contains(starter), (1...15).contains(config.legsToWin), (1...11).contains(config.setsToWin), (GameConfig.minimumScore...GameConfig.maximumScore).contains(config.startingScore), players.indices.allSatisfy({ (GameConfig.minimumScore...GameConfig.maximumScore).contains(config.startingScore(for: $0)) }), (1...30).contains(config.settings.countUpRounds), config.settings.botDelay.isFinite, (0.3...5).contains(config.settings.botDelay) else { return false }
         guard players.allSatisfy({ $0.botLevel == nil || (1...10).contains($0.botLevel!) }), states.allSatisfy({ $0.remaining >= 0 && (1...22).contains($0.clockTarget) && (0...config.setsToWin).contains($0.sets) }), visits.allSatisfy({ players.indices.contains($0.player) && (1...3).contains($0.darts.count) && $0.darts.allSatisfy(\.isValid) }) else { return false }
         guard winner.map({ players.indices.contains($0) }) ?? true, legWinner.map({ players.indices.contains($0) }) ?? true else { return false }
+        guard continuedPastLimitLegs?.allSatisfy({ $0 >= 1 }) ?? true else { return false }
         guard currentDarts.count <= 2, currentDarts.allSatisfy(\.isValid) else { return false }
         if !currentDarts.isEmpty {
             guard !finished, legWinner == nil else { return false }

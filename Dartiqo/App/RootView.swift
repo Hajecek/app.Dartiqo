@@ -23,7 +23,11 @@ struct MainTabView: View {
                 .id(store.homeGeneration)
                 .tabItem { Label("Domů", systemImage: "house.fill") }
                 .tag(AppSection.home)
-            NavigationStack { PlayView() }
+            NavigationStack {
+                SetupView(mode: .x01) {
+                    store.section = .home
+                }
+            }
                 .id(store.homeGeneration)
                 .tabItem { Label("Hrát", systemImage: "target") }
                 .tag(AppSection.play)
@@ -33,9 +37,6 @@ struct MainTabView: View {
             NavigationStack { ProfileView() }
                 .tabItem { Label("Profil", systemImage: "person.crop.circle") }
                 .tag(AppSection.profile)
-            NavigationStack { SettingsView() }
-                .tabItem { Label("Nastavení", systemImage: "gearshape") }
-                .tag(AppSection.settings)
         }
     }
 }

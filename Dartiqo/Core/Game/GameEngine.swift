@@ -86,8 +86,18 @@ extension Match {
     /// Po posledním kole limitu se leg nedohrává. Rozhodne rozhoz na střed.
     mutating func checkDartLimit() {
         guard let rounds = dartLimitRounds, legWinner == nil, !finished,
+              continuedPastLimitLegs?.contains(leg) != true,
               states.allSatisfy({ $0.rounds >= rounds }) else { return }
         awaitingBullOff = true
+    }
+    /// Zruší rozhoz a dovolí aktuální leg dohrát. V dalších legech limit znovu platí.
+    public mutating func continuePastDartLimit() {
+        guard needsBullOff else { return }
+        undoStack.append(snapshot)
+        awaitingBullOff = nil
+        var continued = continuedPastLimitLegs ?? []
+        continued.insert(leg)
+        continuedPastLimitLegs = continued
     }
     /// Leg po vypršení limitu bere vítěz rozhozu na střed.
     public mutating func awardBullOff(to player: Int) {
@@ -118,6 +128,7 @@ extension Match {
         states = old.states; active = old.active; starter = old.starter; leg = old.leg
         legWinner = old.legWinner; winner = old.winner; finished = old.finished
         awaitingBullOff = old.awaitingBullOff; bullOffLegs = old.bullOffLegs
+        continuedPastLimitLegs = old.continuedPastLimitLegs
         visits = Array(visits.prefix(old.visitCount)); completedAt = nil
     }
     /// Vrátí zápas do stavu těsně před zvoleným kolem; to i všechna další kola zmizí.

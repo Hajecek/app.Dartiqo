@@ -134,10 +134,10 @@ struct MatchView: View {
             }
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: isHoldingVisit)
-        .confirmationDialog("Přerušit zápas?", isPresented: $showLeave, titleVisibility: .visible) {
+        .alert("Přerušit zápas?", isPresented: $showLeave) {
             Button("Uložit a odejít") { dismiss() }
-            Button("Zahodit zápas", role: .destructive) { store.activeMatch = nil; dismiss() }
-            Button("Pokračovat", role: .cancel) {}
+            Button("Vymazat zápas", role: .destructive) { store.activeMatch = nil; dismiss() }
+            Button("Zrušit", role: .cancel) {}
         } message: { Text("Ukládá se i rozehrané kolo po jedné nebo dvou šipkách.") }
         .confirmationDialog("Kolik šipek jsi použil na zavření?", isPresented: $finishPrompt, titleVisibility: .visible) {
             ForEach(1...3, id: \.self) { count in Button("\(count) šipky · správné zavření") { submitTotal(darts: count) } }
@@ -188,11 +188,7 @@ struct MatchView: View {
         }
         ToolbarItem(placement: .principal) {
             if let game = store.activeMatch {
-                VStack(spacing: 1) {
-                    Text(game.config.mode.shortTitle).font(.headline)
-                    Text(legCaption(game)).font(.caption2).foregroundStyle(.secondary)
-                }
-                .accessibilityElement(children: .combine)
+                Text(game.config.mode.shortTitle).font(.headline)
             } else {
                 Text("Zápas").font(.headline)
             }
@@ -227,7 +223,10 @@ struct MatchView: View {
         let shown = game.liveProjection
         return ScrollView {
             VStack(spacing: 14) {
-                scoreboard(game, shown: shown)
+                VStack(spacing: 6) {
+                    matchProgressStrip(game)
+                    scoreboard(game, shown: shown)
+                }
                 if paused {
                     Label("Hra je pozastavená", systemImage: "pause.circle.fill").font(AppFont.title()).padding(24)
                     Button("Pokračovat") { paused = false }.buttonStyle(PrimaryButton())
@@ -419,14 +418,6 @@ struct MatchView: View {
         .padding(.horizontal, 16)
         .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
-    private func legCaption(_ game: Match) -> String {
-        if game.config.mode == .x01, let limit = game.config.settings.dartLimit {
-            let thrown = min(limit, game.currentState.rounds * 3 + game.currentDarts.count)
-            return "\(game.config.lengthLine) · šipka \(thrown)/\(limit)"
-        }
-        if game.config.mode == .x01 || game.config.mode == .cricket { return game.config.lengthLine }
-        return game.config.summary
-    }
     private func scoreboard(_ game: Match,shown: Match) -> some View {
         let columns = min(2, game.players.count)
         let rows = stride(from: 0, to: game.players.count, by: columns).map { Array($0..<min($0 + columns, game.players.count)) }
@@ -518,6 +509,31 @@ struct MatchView: View {
         .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Aktuální hod")
+    }
+
+    private func matchProgressStrip(_ game: Match) -> some View {
+        let player = isHoldingVisit ? (holdPlayer ?? game.active) : game.active
+        return Text(playerTurnCaption(game, player: player))
+            .font(AppFont.caption(11, weight: .bold))
+            .foregroundStyle(.white.opacity(0.78))
+            .monospacedDigit()
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .frame(maxWidth: .infinity, minHeight: 26)
+            .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .accessibilityLabel(playerTurnCaption(game, player: player))
+    }
+
+    private func playerTurnCaption(_ game: Match, player: Int) -> String {
+        let completedRounds = game.visits.lazy.filter { $0.leg == game.leg && $0.player == player }.count
+        let round = isHoldingVisit ? max(1, completedRounds) : completedRounds + 1
+        let heldDarts = isHoldingVisit ? holdDarts.count : game.currentDarts.count
+        let dartsInVisit = min(3, heldDarts)
+        if game.config.mode == .x01, let limit = game.config.settings.dartLimit {
+            let used = min(limit, isHoldingVisit ? completedRounds * 3 : completedRounds * 3 + heldDarts)
+            return "Leg \(game.leg) · Kolo \(round) · Šipky \(used)/\(limit)"
+        }
+        return "Leg \(game.leg) · Kolo \(round) · Šipky \(dartsInVisit)/3"
     }
 
     @ViewBuilder
@@ -926,19 +942,74 @@ struct MatchView: View {
             presentLegCeremony(current, winner: winner)
         }
     }
+    private func continuePastDartLimit() {
+        guard var game = store.activeMatch, game.needsBullOff else { return }
+        game.continuePastDartLimit()
+        store.activeMatch = game
+        revision = UUID()
+    }
     private func bullOffCard(_ game: Match) -> some View {
         VStack(spacing: 12) {
             Image(systemName: "scope").font(.system(size: 34, weight: .semibold)).foregroundStyle(MatchColors.amber)
             Text("Limit \(game.config.settings.dartLimit ?? 0) šipek vypršel")
                 .font(AppFont.title(20))
-            Text("Nikdo leg nezavřel. Rozhodne rozhoz na střed, bližší šipka bere leg.")
+            Text("Nikdo leg nezavřel. Jak ho chceš rozhodnout?")
                 .font(AppFont.body(15))
                 .foregroundStyle(.white.opacity(0.7))
                 .multilineTextAlignment(.center)
-            Button("Rozhoz na střed") { decidingLeg = true }
-                .buttonStyle(.glassProminent)
-                .tint(MatchColors.amber)
-                .foregroundStyle(.black)
+            VStack(spacing: 10) {
+                Button { continuePastDartLimit() } label: {
+                    HStack(spacing: 13) {
+                        Image(systemName: "play.fill")
+                            .font(.subheadline.weight(.bold))
+                            .frame(width: 34, height: 34)
+                            .background(.white.opacity(0.10), in: Circle())
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Dohrát leg")
+                                .font(.headline)
+                            Text("Pokračovat bez limitu")
+                                .font(.caption)
+                                .foregroundStyle(.white.opacity(0.58))
+                        }
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.white.opacity(0.35))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .frame(maxWidth: .infinity, minHeight: 62)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+                Button { decidingLeg = true } label: {
+                    HStack(spacing: 13) {
+                        Image(systemName: "scope")
+                            .font(.subheadline.weight(.bold))
+                            .frame(width: 34, height: 34)
+                            .background(.black.opacity(0.10), in: Circle())
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Rozhoz na střed")
+                                .font(.headline)
+                            Text("Bližší šipka bere leg")
+                                .font(.caption)
+                                .foregroundStyle(.black.opacity(0.58))
+                        }
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.black.opacity(0.35))
+                    }
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 14)
+                    .frame(maxWidth: .infinity, minHeight: 62)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .glassEffect(.regular.tint(MatchColors.amber).interactive(), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(24)

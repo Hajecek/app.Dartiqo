@@ -88,6 +88,14 @@ struct ProfileView: View {
                     Label("Období: \(periodTitle)", systemImage: "calendar")
                 }
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink {
+                    SettingsView()
+                } label: {
+                    Image(systemName: "gearshape")
+                }
+                .accessibilityLabel("Nastavení")
+            }
         }
         .sheet(isPresented: $showRange) {
             DateRangeSheet(from: customFrom, to: customTo, playedDays: playedDays) { from, to in

@@ -42,7 +42,7 @@ struct JSONDocument: FileDocument {
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper { FileWrapper(regularFileWithContents: data) }
 }
 enum AppSection: Hashable {
-    case home, play, games, profile, settings
+    case home, play, games, profile
 }
 
 @MainActor final class AppStore: ObservableObject {

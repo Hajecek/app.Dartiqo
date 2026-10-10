@@ -60,6 +60,33 @@ final class GameEngineTests: XCTestCase {
         XCTAssertEqual(m.winner, 0)
     }
 
+    func testDartLimitCanBeIgnoredForCurrentLegOnly() throws {
+        var m = game(legs: 2)
+        var options = MatchOptions(); options.dartLimit = 30
+        m.config.options = options
+        for _ in 0..<10 {
+            try m.submit([Dart(1), Dart(1), Dart(1)])
+            try m.submit([Dart(1), Dart(1), Dart(1)])
+        }
+        XCTAssertTrue(m.needsBullOff)
+
+        m.continuePastDartLimit()
+        XCTAssertFalse(m.needsBullOff)
+        XCTAssertEqual(m.continuedPastLimitLegs, Set([1]))
+
+        m.states[m.active].remaining = 2
+        try m.submit([Dart(1, 2)])
+        XCTAssertEqual(m.legWinner, 0)
+        m.nextLeg()
+        XCTAssertEqual(m.leg, 2)
+
+        for _ in 0..<10 {
+            try m.submit([Dart(1), Dart(1), Dart(1)])
+            try m.submit([Dart(1), Dart(1), Dart(1)])
+        }
+        XCTAssertTrue(m.needsBullOff)
+    }
+
     func testPlayTimeAddsOnlyRunningSegments() {
         var m = game()
         let start = m.createdAt

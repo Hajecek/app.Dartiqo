@@ -39,6 +39,7 @@ struct SetupView: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
+    private let onHome: (() -> Void)?
     @State private var draft: SetupDraft
     @State private var step = 0
     @State private var live = false
@@ -60,7 +61,10 @@ struct SetupView: View {
     @State private var bullLaunched = false
     private let presetScores = [101, 301, 501, 701, 1001]
     private var options: Binding<MatchOptions> { Binding(get: { draft.config.settings }, set: { draft.config.options = $0 }) }
-    init(mode: GameMode, preset: SetupDraft? = nil) { _draft = State(initialValue: preset ?? SetupDraft(mode: mode)) }
+    init(mode: GameMode, preset: SetupDraft? = nil, onHome: (() -> Void)? = nil) {
+        self.onHome = onHome
+        _draft = State(initialValue: preset ?? SetupDraft(mode: mode))
+    }
     private var canContinue: Bool {
         !draft.seats.isEmpty && !draft.seats.indices.contains { !isMe($0) && !draft.seats[$0].isBot && draft.seats[$0].name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
@@ -218,7 +222,9 @@ struct SetupView: View {
     private var setupBar: some View {
         GlassEffectContainer(spacing: 10) {
             HStack(spacing: 10) {
-                Button { dismiss() } label: {
+                Button {
+                    if let onHome { onHome() } else { dismiss() }
+                } label: {
                     Image(systemName: "house.fill")
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(.primary)
