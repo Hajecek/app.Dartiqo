@@ -22,6 +22,8 @@ struct HistoryView: View {
     @State private var mode: GameMode?
     @State private var result: HistoryResultFilter = .all
     @State private var order: HistoryOrder = .newest
+    @State private var pendingDelete: UUID?
+    @State private var selectedMatch: UUID?
 
     private var matches: [Match] {
         let filtered = store.matches.filter { match in
@@ -39,40 +41,106 @@ struct HistoryView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                if store.matches.isEmpty {
+        List {
+            if store.matches.isEmpty {
+                Section {
                     ContentUnavailableView(
                         "Zatím žádné zápasy",
                         systemImage: "clock.arrow.circlepath",
                         description: Text("Dokončené hry se uloží sem včetně výsledku, statistik a hodů.")
                     )
-                } else {
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                }
+            } else {
+                Section {
                     record
-                    if let latest = matches.first {
-                        latestMatch(latest)
-                        if matches.count > 1 { timeline(Array(matches.dropFirst())) }
-                    } else {
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+
+                if let latest = matches.first {
+                    Section(order == .newest ? "Poslední zápas" : "První zápas") {
+                        matchLink(latest, featured: true)
+                    }
+
+                    ForEach(historyGroups(Array(matches.dropFirst()))) { group in
+                        Section(group.title) {
+                            ForEach(group.matches) { match in
+                                matchLink(match)
+                            }
+                        }
+                    }
+                } else {
+                    Section {
                         ContentUnavailableView(
                             "Žádný zápas neodpovídá",
                             systemImage: "line.3.horizontal.decrease.circle",
                             description: Text("Změň filtry v horní liště.")
                         )
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                     }
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .frame(maxWidth: 700)
-            .frame(maxWidth: .infinity)
         }
-        .screen()
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Theme.background)
         .navigationTitle("Moje hry")
         .navigationSubtitle(filterCaption)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { historyToolbar }
+        .navigationDestination(item: $selectedMatch) { id in
+            if let match = store.matches.first(where: { $0.id == id }) {
+                MatchDetailView(match: match, profileID: store.profile?.id)
+            }
+        }
         .sensoryFeedback(.selection, trigger: mode)
         .sensoryFeedback(.selection, trigger: result)
+        .alert("Opravdu smazat zápas?", isPresented: deleteDialog) {
+            Button("Smazat zápas", role: .destructive) {
+                if let pendingDelete { store.deleteMatch(pendingDelete) }
+                pendingDelete = nil
+            }
+            Button("Zrušit", role: .cancel) { pendingDelete = nil }
+        } message: {
+            Text("Zápas, jeho statistiky i všechny hody budou trvale odstraněny.")
+        }
+    }
+
+    private var deleteDialog: Binding<Bool> {
+        Binding(
+            get: { pendingDelete != nil },
+            set: { if !$0 { pendingDelete = nil } }
+        )
+    }
+
+    @ViewBuilder
+    private func matchLink(_ match: Match, featured: Bool = false) -> some View {
+        Button {
+            selectedMatch = match.id
+        } label: {
+            if featured {
+                FeaturedMatchCard(match: match, outcome: outcome(match))
+                    .padding(.vertical, 4)
+            } else {
+                MatchHistoryRow(match: match, outcome: outcome(match))
+            }
+        }
+        .buttonStyle(.plain)
+        .listRowInsets(featured ? EdgeInsets() : EdgeInsets(top: 5, leading: 0, bottom: 5, trailing: 0))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                pendingDelete = match.id
+            } label: {
+                Label("Smazat", systemImage: "trash")
+            }
+            .tint(.red)
+        }
     }
 
     private var filterCaption: String {
@@ -120,78 +188,118 @@ struct HistoryView: View {
         let wins = matches.filter { outcome($0) == .win }.count
         let losses = matches.filter { outcome($0) == .loss }.count
         let draws = matches.filter { outcome($0) == .draw }.count
-        return VStack(alignment: .leading, spacing: 16) {
+        let recent = Array(matches.prefix(8))
+        return VStack(alignment: .leading, spacing: 18) {
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 4) {
                     Eyebrow(text: "Bilance")
-                    Text("\(wins)–\(losses)\(draws > 0 ? "–\(draws)" : "")")
-                        .font(.system(size: 38, weight: .heavy, design: .rounded))
-                        .monospacedDigit()
+                    Text(recordHeadline(wins: wins))
+                        .font(.title2.bold())
+                    Text(recordDetail(wins: wins, losses: losses))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
                 Spacer()
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(winRate(wins: wins))
-                        .font(.system(.title2, design: .rounded).weight(.bold))
-                        .foregroundStyle(Theme.positive)
-                    Text("úspěšnost").font(.caption).foregroundStyle(.secondary)
-                }
+                winRateGauge(wins: wins)
             }
-            Divider()
+
             HStack(spacing: 0) {
-                recordFact("\(matches.count)", "her")
-                Divider().frame(height: 30)
-                recordFact(PlayTime.format(matches.reduce(0) { $0 + $1.playedDuration }), "u terče")
-                Divider().frame(height: 30)
-                recordFact("\(matches.filter { $0.config.mode == .x01 }.count)", "X01")
+                recordFact("\(wins)", "výhry", Theme.positive)
+                Divider().frame(height: 38)
+                recordFact("\(losses)", "prohry", .secondary)
+                Divider().frame(height: 38)
+                recordFact("\(draws)", "remízy", .orange)
+            }
+            .padding(.vertical, 10)
+            .background(Theme.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("POSLEDNÍ FORMA")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        ForEach(recent) { game in
+                            let item = outcome(game)
+                            Text(item.shortTitle)
+                                .font(.caption2.weight(.heavy))
+                                .foregroundStyle(item == .loss ? Color.primary : Color.white)
+                                .frame(width: 24, height: 24)
+                                .background(item.color, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        }
+                    }
+                }
+                Spacer(minLength: 8)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(PlayTime.format(matches.reduce(0) { $0 + $1.playedDuration }))
+                        .font(.system(.headline, design: .rounded).weight(.bold))
+                        .monospacedDigit()
+                    Text("celkem u terče")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .surface()
     }
 
-    private func recordFact(_ value: String, _ label: String) -> some View {
+    private func recordFact(_ value: String, _ label: String, _ tint: Color) -> some View {
         VStack(spacing: 2) {
             Text(value)
-                .font(.system(.headline, design: .rounded).weight(.bold))
+                .font(.system(.title2, design: .rounded).weight(.bold))
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
-            Text(label).font(.caption2).foregroundStyle(.secondary)
+                .foregroundStyle(tint)
+            Text(label).font(.caption).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
     }
 
-    private func latestMatch(_ match: Match) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text(order == .newest ? "Poslední zápas" : "První zápas").font(.title3.bold())
-                Spacer()
-                Text((match.completedAt ?? match.createdAt).formatted(.relative(presentation: .named)))
-                    .font(.caption)
+    private func winRateGauge(wins: Int) -> some View {
+        let rate = matches.isEmpty ? 0 : Double(wins) / Double(matches.count)
+        return ZStack {
+            Circle()
+                .stroke(Theme.stroke, lineWidth: 7)
+            Circle()
+                .trim(from: 0, to: rate)
+                .stroke(Theme.positive, style: StrokeStyle(lineWidth: 7, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            VStack(spacing: 0) {
+                Text(winRate(wins: wins))
+                    .font(.system(.headline, design: .rounded).weight(.bold))
+                    .monospacedDigit()
+                Text("výher")
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-            NavigationLink {
-                MatchDetailView(match: match, profileID: store.profile?.id)
-            } label: {
-                FeaturedMatchCard(match: match, outcome: outcome(match))
-            }
-            .buttonStyle(.plain)
         }
+        .frame(width: 74, height: 74)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Úspěšnost \(winRate(wins: wins))")
     }
 
-    private func timeline(_ games: [Match]) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Historie").font(.title3.bold())
-            LazyVStack(spacing: 0) {
-                ForEach(Array(games.enumerated()), id: \.element.id) { index, match in
-                    NavigationLink {
-                        MatchDetailView(match: match, profileID: store.profile?.id)
-                    } label: {
-                        MatchTimelineRow(match: match, outcome: outcome(match), last: index == games.count - 1)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
+    private func recordHeadline(wins: Int) -> String {
+        guard !matches.isEmpty else { return "Bez odehraných her" }
+        if wins == matches.count { return "Bez porážky" }
+        if wins > matches.count / 2 { return "Kladná bilance" }
+        if wins * 2 == matches.count { return "Vyrovnaná bilance" }
+        return "Je na čem pracovat"
+    }
+
+    private func recordDetail(wins: Int, losses: Int) -> String {
+        if let streak = currentStreak {
+            return streak.count == 1
+                ? "Poslední zápas: \(streak.outcome.title.lowercased())"
+                : "\(streak.count)× \(streak.outcome == .win ? "výhra" : streak.outcome == .loss ? "prohra" : "remíza") v řadě"
         }
+        return "\(wins) výher · \(losses) proher"
+    }
+
+    private var currentStreak: (outcome: GameOutcome, count: Int)? {
+        guard let first = matches.first.map(outcome) else { return nil }
+        let count = matches.prefix { outcome($0) == first }.count
+        return (first, count)
     }
 
     private func outcome(_ match: Match) -> GameOutcome {
@@ -203,18 +311,37 @@ struct HistoryView: View {
         guard !matches.isEmpty else { return "—" }
         return "\(Int((Double(wins) / Double(matches.count) * 100).rounded())) %"
     }
+
+    private func historyGroups(_ games: [Match]) -> [HistoryMonth] {
+        let calendar = Calendar.current
+        var keys: [Date] = []
+        var grouped: [Date: [Match]] = [:]
+        for game in games {
+            let date = game.completedAt ?? game.createdAt
+            let components = calendar.dateComponents([.year, .month], from: date)
+            guard let month = calendar.date(from: components) else { continue }
+            if grouped[month] == nil { keys.append(month) }
+            grouped[month, default: []].append(game)
+        }
+        return keys.map {
+            HistoryMonth(id: $0, title: $0.formatted(.dateTime.month(.wide).year()), matches: grouped[$0] ?? [])
+        }
+    }
 }
 
 private enum GameOutcome {
     case win, loss, draw
     var title: String {
-        switch self { case .win: return "Výhra"; case .loss: return "Prohra"; case .draw: return "Remíza" }
+        switch self { case .win: return "Vítězství"; case .loss: return "Prohra"; case .draw: return "Remíza" }
     }
     var symbol: String {
-        switch self { case .win: return "checkmark"; case .loss: return "xmark"; case .draw: return "equal" }
+        switch self { case .win: return "trophy.fill"; case .loss: return "xmark"; case .draw: return "equal" }
     }
     var color: Color {
-        switch self { case .win: return Theme.positive; case .loss: return .secondary; case .draw: return .orange }
+        switch self { case .win: return Theme.positive; case .loss: return .red; case .draw: return .orange }
+    }
+    var shortTitle: String {
+        switch self { case .win: return "V"; case .loss: return "P"; case .draw: return "R" }
     }
 }
 
@@ -228,9 +355,6 @@ private struct FeaturedMatchCard: View {
                 Label(match.config.mode.shortTitle, systemImage: match.config.mode.symbol)
                     .font(.subheadline.weight(.semibold))
                 Spacer()
-                Label(outcome.title, systemImage: outcome.symbol)
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(outcome == .win ? Theme.brand : .white.opacity(0.7))
             }
             MatchScoreline(match: match, dark: true)
             HStack {
@@ -240,7 +364,6 @@ private struct FeaturedMatchCard: View {
                 if match.playedDuration > 0 {
                     Label(PlayTime.format(match.playedDuration), systemImage: "clock")
                 }
-                Image(systemName: "chevron.right")
             }
             .font(.caption)
             .foregroundStyle(.white.opacity(0.65))
@@ -250,6 +373,11 @@ private struct FeaturedMatchCard: View {
         .background {
             ZStack {
                 Theme.heroWash
+                LinearGradient(
+                    colors: [outcome.color.opacity(0.42), outcome.color.opacity(0.10), .clear],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
                 Image(systemName: match.config.mode.symbol)
                     .font(.system(size: 150, weight: .bold))
                     .foregroundStyle(.white.opacity(0.05))
@@ -257,65 +385,92 @@ private struct FeaturedMatchCard: View {
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(.white.opacity(0.1), lineWidth: 1))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(outcome.color.opacity(0.65), lineWidth: 1)
+        )
+        .overlay(alignment: .topTrailing) {
+            Image(systemName: outcome.symbol)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(outcome.color)
+                .frame(width: 30, height: 30)
+                .background(.black.opacity(0.35), in: Circle())
+                .padding(14)
+                .accessibilityLabel(outcome.title)
+        }
         .accessibilityElement(children: .combine)
         .accessibilityHint("Otevře detail zápasu")
     }
 }
 
-private struct MatchTimelineRow: View {
+private struct HistoryMonth: Identifiable {
+    let id: Date
+    let title: String
+    let matches: [Match]
+}
+
+private struct MatchHistoryRow: View {
     let match: Match
     let outcome: GameOutcome
-    let last: Bool
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(spacing: 0) {
-                Circle()
-                    .fill(outcome.color)
-                    .frame(width: 10, height: 10)
-                    .overlay(Circle().stroke(Theme.background, lineWidth: 3))
-                if !last {
-                    Rectangle().fill(Theme.stroke).frame(width: 1, height: 72)
-                }
+        HStack(spacing: 12) {
+            VStack(spacing: 1) {
+                Text(date.formatted(.dateTime.day()))
+                    .font(.system(.title3, design: .rounded).weight(.bold))
+                    .monospacedDigit()
+                Image(systemName: outcome.symbol)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(outcome.color)
+                    .accessibilityLabel(outcome.title)
             }
-            .padding(.top, 18)
-            VStack(spacing: 8) {
-                HStack {
+            .frame(width: 40, height: 46)
+            .background(outcome.color.opacity(0.1), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(match.players.map(\.name).joined(separator: " vs "))
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                HStack(spacing: 6) {
                     Label(match.config.mode.shortTitle, systemImage: match.config.mode.symbol)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text((match.completedAt ?? match.createdAt).formatted(date: .abbreviated, time: .shortened))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(match.players.map(\.name).joined(separator: " vs "))
-                            .font(.subheadline.weight(.semibold))
-                            .lineLimit(1)
-                        Text(outcome.title)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(outcome.color)
+                    if match.playedDuration > 0 {
+                        Text("·")
+                        Text(PlayTime.format(match.playedDuration))
                     }
-                    Spacer(minLength: 4)
-                    Text(score)
-                        .font(.system(.title2, design: .rounded).weight(.bold))
-                        .monospacedDigit()
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.tertiary)
                 }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
-            .padding(14)
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).stroke(Theme.stroke, lineWidth: 0.5))
-            .padding(.bottom, 8)
+            Spacer(minLength: 6)
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(score)
+                    .font(.system(.title3, design: .rounded).weight(.bold))
+                    .monospacedDigit()
+            }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Theme.card)
+                .overlay {
+                    LinearGradient(
+                        colors: [outcome.color.opacity(0.22), outcome.color.opacity(0.06), .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(outcome.color.opacity(0.3), lineWidth: 0.5)
+        )
         .accessibilityElement(children: .combine)
         .accessibilityHint("Otevře detail zápasu")
     }
+
+    private var date: Date { match.completedAt ?? match.createdAt }
 
     private var score: String {
         match.players.indices.map { "\(match.config.playsSets ? match.states[$0].sets : match.states[$0].legs)" }.joined(separator: " : ")
@@ -323,6 +478,7 @@ private struct MatchTimelineRow: View {
 }
 
 private struct MatchScoreline: View {
+    @EnvironmentObject private var store: AppStore
     let match: Match
     var dark = false
 
@@ -336,7 +492,15 @@ private struct MatchScoreline: View {
                         .padding(.horizontal, 4)
                         .accessibilityHidden(true)
                 }
-                VStack(spacing: 2) {
+                VStack(spacing: 4) {
+                    Avatar(
+                        name: match.players[index].name,
+                        bot: match.players[index].botLevel != nil,
+                        size: 34,
+                        photo: store.photo(for: match.players[index].id),
+                        asset: match.players[index].botLevel.map { BotLevel.get($0).photo }
+                    )
+                    .overlay(Circle().strokeBorder(match.winner == index ? (dark ? Theme.brand : Theme.positive) : .clear, lineWidth: 2))
                     Text("\(tally(index))")
                         .font(.system(size: match.players.count > 2 ? 28 : 40, weight: .bold, design: .rounded))
                         .monospacedDigit()
@@ -366,10 +530,13 @@ private enum MatchDetailPage: String, CaseIterable, Identifiable {
 }
 
 struct MatchDetailView: View {
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.dismiss) private var dismiss
     let match: Match
     let profileID: UUID?
     @State private var page: MatchDetailPage = .overview
     @State private var focus: Int
+    @State private var confirmDelete = false
 
     init(match: Match, profileID: UUID?) {
         self.match = match
@@ -406,6 +573,15 @@ struct MatchDetailView: View {
         .toolbar { detailToolbar }
         .sensoryFeedback(.selection, trigger: page)
         .sensoryFeedback(.selection, trigger: focus)
+        .alert("Opravdu smazat tento zápas?", isPresented: $confirmDelete) {
+            Button("Smazat zápas", role: .destructive) {
+                store.deleteMatch(match.id)
+                dismiss()
+            }
+            Button("Zrušit", role: .cancel) {}
+        } message: {
+            Text("Statistiky a všechny uložené hody tohoto zápasu budou trvale odstraněny.")
+        }
     }
 
     @ToolbarContentBuilder
@@ -425,12 +601,23 @@ struct MatchDetailView: View {
             }
         }
         ToolbarItem(placement: .topBarTrailing) {
-            NavigationLink {
-                VisitLog(game: match)
+            Menu {
+                Section {
+                    NavigationLink {
+                        VisitLog(game: match)
+                    } label: {
+                        Label("Všechny hody", systemImage: "list.bullet")
+                    }
+                }
+                Section {
+                    Button("Smazat zápas", systemImage: "trash", role: .destructive) {
+                        confirmDelete = true
+                    }
+                }
             } label: {
-                Image(systemName: "list.bullet")
+                Image(systemName: "ellipsis")
             }
-            .accessibilityLabel("Všechny hody")
+            .accessibilityLabel("Další možnosti")
         }
     }
 
@@ -438,9 +625,6 @@ struct MatchDetailView: View {
         let result = outcome(match, profileID: profileID)
         return VStack(spacing: 12) {
             HStack {
-                Label(result.title, systemImage: result.symbol)
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(result == .win ? Theme.brand : .white.opacity(0.7))
                 Spacer()
                 Text((match.completedAt ?? match.createdAt).formatted(date: .abbreviated, time: .shortened))
                     .font(.caption)
@@ -450,8 +634,30 @@ struct MatchDetailView: View {
         }
         .foregroundStyle(.white)
         .padding(18)
-        .background(Theme.heroWash, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(.white.opacity(0.1), lineWidth: 1))
+        .background {
+            ZStack {
+                Theme.heroWash
+                LinearGradient(
+                    colors: [result.color.opacity(0.42), result.color.opacity(0.10), .clear],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(result.color.opacity(0.65), lineWidth: 1)
+        )
+        .overlay(alignment: .topLeading) {
+            Image(systemName: result.symbol)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(result.color)
+                .frame(width: 30, height: 30)
+                .background(.black.opacity(0.35), in: Circle())
+                .padding(14)
+                .accessibilityLabel(result.title)
+        }
     }
 
     private var overview: some View {
@@ -514,7 +720,7 @@ struct MatchDetailView: View {
                 ForEach(match.players.indices, id: \.self) { index in
                     Button { focus = index } label: {
                         HStack(spacing: 7) {
-                            Avatar(name: match.players[index].name, bot: match.players[index].botLevel != nil, size: 28, asset: match.players[index].botLevel.map { BotLevel.get($0).photo })
+                            Avatar(name: match.players[index].name, bot: match.players[index].botLevel != nil, size: 28, photo: store.photo(for: match.players[index].id), asset: match.players[index].botLevel.map { BotLevel.get($0).photo })
                             Text(playerName(index)).lineLimit(1)
                         }
                         .font(.subheadline.weight(.semibold))
@@ -564,27 +770,121 @@ struct MatchDetailView: View {
 
     private var legList: some View {
         let legs = Array(Set(match.visits.map(\.leg))).sorted()
-        return VStack(spacing: 0) {
-            ForEach(legs, id: \.self) { leg in
-                let winner = match.bullOffLegs?[leg] ?? match.visits.last { $0.leg == leg && $0.checkout }?.player
-                HStack(spacing: 12) {
-                    Text("\(leg)")
-                        .font(.system(.headline, design: .rounded).weight(.bold))
-                        .frame(width: 30, height: 30)
-                        .background(Theme.background, in: Circle())
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(winner.map { match.players[$0].name } ?? "Bez vítěze")
-                            .font(.subheadline.weight(.semibold))
-                        Text(legCaption(leg)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        let darts = match.visits.reduce(0) { $0 + $1.darts.count }
+        return VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 0) {
+                flowFact("\(legs.count)", czech(legs.count, "leg", "legy", "legů"))
+                Divider().frame(height: 34)
+                flowFact("\(match.visits.count)", czech(match.visits.count, "návštěva", "návštěvy", "návštěv"))
+                Divider().frame(height: 34)
+                flowFact("\(darts)", czech(darts, "šipka", "šipky", "šipek"))
+            }
+            .padding(.vertical, 8)
+            .background(Theme.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+            VStack(spacing: 0) {
+                ForEach(Array(legs.enumerated()), id: \.element) { offset, leg in
+                    let winner = winnerForLeg(leg, lastLeg: legs.last)
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(spacing: 0) {
+                            ZStack {
+                                Circle()
+                                    .fill(winner == nil ? Color.secondary : Theme.playerColor(winner!))
+                                    .frame(width: 32, height: 32)
+                                Image(systemName: winner == nil ? "ellipsis" : "flag.fill")
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(winner == nil ? Color.white : Color.black)
+                            }
+                            if offset < legs.count - 1 {
+                                Rectangle()
+                                    .fill(Theme.stroke)
+                                    .frame(width: 2, height: 62)
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 7) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text("Leg \(leg)")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text(runningScore(through: leg, legs: legs))
+                                    .font(.system(.subheadline, design: .rounded).weight(.bold))
+                                    .monospacedDigit()
+                            }
+                            HStack(spacing: 8) {
+                                if let winner {
+                                    Avatar(
+                                        name: match.players[winner].name,
+                                        bot: match.players[winner].botLevel != nil,
+                                        size: 30,
+                                        photo: store.photo(for: match.players[winner].id),
+                                        asset: match.players[winner].botLevel.map { BotLevel.get($0).photo }
+                                    )
+                                    Text(match.players[winner].name)
+                                        .font(.headline)
+                                        .lineLimit(1)
+                                } else {
+                                    Text("Bez vítěze")
+                                        .font(.headline)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Text(legDetail(leg))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                        .padding(.bottom, offset < legs.count - 1 ? 14 : 0)
                     }
-                    Spacer()
-                    if winner != nil { Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.positive) }
                 }
-                .padding(.vertical, 10)
-                if leg != legs.last { Divider() }
             }
         }
         .surface()
+    }
+
+    private func flowFact(_ value: String, _ label: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.system(.headline, design: .rounded).weight(.bold))
+                .monospacedDigit()
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func winnerForLeg(_ leg: Int, lastLeg: Int?) -> Int? {
+        if let winner = match.bullOffLegs?[leg] { return winner }
+        if let winner = match.visits.last(where: { $0.leg == leg && $0.checkout })?.player { return winner }
+        if leg == lastLeg, match.finished { return match.winner }
+        return nil
+    }
+
+    private func runningScore(through leg: Int, legs: [Int]) -> String {
+        var score = Array(repeating: 0, count: match.players.count)
+        for item in legs where item <= leg {
+            if let winner = winnerForLeg(item, lastLeg: legs.last) { score[winner] += 1 }
+        }
+        return score.map(String.init).joined(separator: " : ")
+    }
+
+    private func legDetail(_ leg: Int) -> String {
+        let visits = match.visits.filter { $0.leg == leg }
+        let darts = visits.reduce(0) { $0 + $1.darts.count }
+        if match.bullOffLegs?[leg] != nil {
+            return "Rozhodnuto rozhozem na střed · \(czechCount(darts, "šipka", "šipky", "šipek"))"
+        }
+        if let checkout = visits.last(where: \.checkout) {
+            let route = checkout.enteredAsTotal == true ? nil : checkout.darts.map(\.label).joined(separator: " · ")
+            if let route, !route.isEmpty {
+                return "Checkout \(checkout.credited) · \(route)"
+            }
+            return "Checkout \(checkout.credited) · \(czechCount(checkout.darts.count, "šipka", "šipky", "šipek"))"
+        }
+        return "\(czechCount(visits.count, "návštěva", "návštěvy", "návštěv")) · \(czechCount(darts, "šipka", "šipky", "šipek"))"
     }
 
     private func playerStats(_ index: Int) -> some View {
@@ -592,7 +892,7 @@ struct MatchDetailView: View {
         let darts = visits.reduce(0) { $0 + $1.darts.count }
         return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
-                Avatar(name: match.players[index].name, bot: match.players[index].botLevel != nil, size: 48, asset: match.players[index].botLevel.map { BotLevel.get($0).photo })
+                Avatar(name: match.players[index].name, bot: match.players[index].botLevel != nil, size: 48, photo: store.photo(for: match.players[index].id), asset: match.players[index].botLevel.map { BotLevel.get($0).photo })
                 VStack(alignment: .leading, spacing: 2) {
                     Text(match.players[index].name).font(.headline)
                     Text("\(czechCount(darts, "šipka", "šipky", "šipek")) · \(czechCount(visits.count, "kolo", "kola", "kol"))")
@@ -712,22 +1012,16 @@ struct MatchDetailView: View {
     private func playerName(_ index: Int) -> String {
         match.players[index].id == profileID ? "\(match.players[index].name) · Ty" : match.players[index].name
     }
-
-    private func legCaption(_ leg: Int) -> String {
-        match.players.indices.map { index in
-            let points = match.visits.filter { $0.player == index && $0.leg == leg }.reduce(0) { $0 + $1.credited }
-            return "\(match.players[index].name) \(points)"
-        }.joined(separator: " · ")
-    }
 }
 
 private struct ThrowPreviewRow: View {
+    @EnvironmentObject private var store: AppStore
     let match: Match
     let visit: Visit
 
     var body: some View {
         HStack(spacing: 12) {
-            Avatar(name: match.players[visit.player].name, bot: match.players[visit.player].botLevel != nil, size: 34, asset: match.players[visit.player].botLevel.map { BotLevel.get($0).photo })
+            Avatar(name: match.players[visit.player].name, bot: match.players[visit.player].botLevel != nil, size: 34, photo: store.photo(for: match.players[visit.player].id), asset: match.players[visit.player].botLevel.map { BotLevel.get($0).photo })
             VStack(alignment: .leading, spacing: 3) {
                 Text("\(match.players[visit.player].name) · leg \(visit.leg)")
                     .font(.subheadline.weight(.semibold))

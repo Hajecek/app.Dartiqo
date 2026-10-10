@@ -108,6 +108,9 @@ enum AppSection: Hashable {
         data.friends = all; save()
     }
     var profile: Profile? { data.profiles.first { $0.id == data.selectedProfile } }
+    func photo(for playerID: UUID) -> Data? {
+        data.profiles.first { $0.id == playerID }?.photoJPEG
+    }
     var matches: [Match] { guard let id = profile?.id else { return [] }; return data.matches.filter { $0.players.contains { $0.id == id } }.sorted { ($0.completedAt ?? $0.createdAt) > ($1.completedAt ?? $1.createdAt) } }
     var activeMatch: Match? {
         get { guard let id = profile?.id.uuidString else { return nil }; return data.activeMatches[id] }
@@ -165,6 +168,11 @@ enum AppSection: Hashable {
         guard let match = activeMatch, match.finished else { return }
         if !data.matches.contains(where: { $0.id == match.id }) { var archived = match; archived.undoStack = []; data.matches.append(archived) }
         activeMatch = nil
+    }
+    func deleteMatch(_ id: UUID) {
+        guard data.matches.contains(where: { $0.id == id }) else { return }
+        data.matches.removeAll { $0.id == id }
+        save()
     }
     /// Uloží dohraný zápas a otevře záložku Domů bez rozehrané obrazovky zápasu.
     func returnHome() {

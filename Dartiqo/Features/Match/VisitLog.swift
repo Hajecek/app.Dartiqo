@@ -2,6 +2,7 @@ import SwiftUI
 
 /// Historie hodů po legech. S `onRewind` jde hru vrátit na zvolené kolo.
 struct VisitLog: View {
+    @EnvironmentObject private var store: AppStore
     var game: Match
     var onRewind: ((Visit) -> Void)? = nil
 
@@ -77,7 +78,7 @@ struct VisitLog: View {
 
     private var openVisitRow: some View {
         HStack(spacing: 12) {
-            Avatar(name: game.currentPlayer.name, bot: game.currentPlayer.botLevel != nil, size: 36, asset: game.currentPlayer.botLevel.map { BotLevel.get($0).photo })
+            Avatar(name: game.currentPlayer.name, bot: game.currentPlayer.botLevel != nil, size: 36, photo: store.photo(for: game.currentPlayer.id), asset: game.currentPlayer.botLevel.map { BotLevel.get($0).photo })
             VStack(alignment: .leading, spacing: 6) {
                 Text("\(game.currentPlayer.name) · rozehrané").font(.subheadline.weight(.semibold))
                 DartChips(darts: game.currentDarts)
@@ -96,6 +97,7 @@ struct VisitLog: View {
 }
 
 private struct VisitRow: View {
+    @EnvironmentObject private var store: AppStore
     let game: Match
     let visit: Visit
     let round: Int
@@ -103,7 +105,7 @@ private struct VisitRow: View {
     var body: some View {
         let player = game.players[visit.player]
         HStack(spacing: 12) {
-            Avatar(name: player.name, bot: player.botLevel != nil, size: 36, asset: player.botLevel.map { BotLevel.get($0).photo })
+            Avatar(name: player.name, bot: player.botLevel != nil, size: 36, photo: store.photo(for: player.id), asset: player.botLevel.map { BotLevel.get($0).photo })
             VStack(alignment: .leading, spacing: 6) {
                 Text("\(player.name) · kolo \(round)")
                     .font(.subheadline.weight(.semibold))
@@ -176,6 +178,7 @@ private struct DartChips: View {
 }
 
 struct VisitDetailView: View {
+    @EnvironmentObject private var store: AppStore
     let game: Match
     let visit: Visit
     var onRewind: ((Visit) -> Void)?
@@ -264,7 +267,7 @@ struct VisitDetailView: View {
 
     private var header: some View {
         VStack(spacing: 10) {
-            Avatar(name: player.name, bot: player.botLevel != nil, size: 56, asset: player.botLevel.map { BotLevel.get($0).photo })
+            Avatar(name: player.name, bot: player.botLevel != nil, size: 56, photo: store.photo(for: player.id), asset: player.botLevel.map { BotLevel.get($0).photo })
             Text(player.name).font(.headline)
             VisitScore(visit: visit, size: 56)
             if visit.checkout {
