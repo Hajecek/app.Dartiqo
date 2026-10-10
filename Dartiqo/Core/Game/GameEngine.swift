@@ -11,7 +11,7 @@ extension Match {
     }
     private mutating func applyVisit(_ darts: [Dart]) throws {
         guard !finished else { throw GameError.finished }
-        guard legWinner == nil else { throw GameError.legEnded }
+        guard legWinner == nil, !needsBullOff else { throw GameError.legEnded }
         guard (1...3).contains(darts.count), darts.allSatisfy(\.isValid) else { throw GameError.invalidDarts }
         undoStack.append(snapshot)
         let index = active
@@ -58,19 +58,47 @@ extension Match {
             winner = leaders.count == 1 ? leaders[0] : nil
             finished = true; completedAt = Date()
         } else if won {
-            states[index].legs += 1; legWinner = index
-            let instant = [.aroundClock, .countUp].contains(config.mode)
-            if instant || config.setsToWin <= 1 {
-                if instant || states[index].legs >= config.legsToWin {
-                    finished = true; winner = index; completedAt = Date()
-                }
-            } else if states[index].legs >= config.legsToWin {
-                states[index].sets += 1
-                if states[index].sets >= config.setsToWin {
-                    finished = true; winner = index; completedAt = Date()
-                }
+            winLeg(index)
+        } else {
+            active = (active + 1) % players.count
+            checkDartLimit()
+        }
+    }
+    private mutating func winLeg(_ index: Int) {
+        states[index].legs += 1; legWinner = index
+        let instant = [.aroundClock, .countUp].contains(config.mode)
+        if instant || config.setsToWin <= 1 {
+            if instant || states[index].legs >= config.legsToWin {
+                finished = true; winner = index; completedAt = Date()
             }
-        } else { active = (active + 1) % players.count }
+        } else if states[index].legs >= config.legsToWin {
+            states[index].sets += 1
+            if states[index].sets >= config.setsToWin {
+                finished = true; winner = index; completedAt = Date()
+            }
+        }
+    }
+    /// Kolik šipek na hráče v legu zbývá do rozhozu. `nil`, když se limit nehraje.
+    public var dartLimitRounds: Int? {
+        guard config.mode == .x01, let limit = config.settings.dartLimit, limit >= 3 else { return nil }
+        return limit / 3
+    }
+    /// Po posledním kole limitu se leg nedohrává. Rozhodne rozhoz na střed.
+    mutating func checkDartLimit() {
+        guard let rounds = dartLimitRounds, legWinner == nil, !finished,
+              states.allSatisfy({ $0.rounds >= rounds }) else { return }
+        awaitingBullOff = true
+    }
+    /// Leg po vypršení limitu bere vítěz rozhozu na střed.
+    public mutating func awardBullOff(to player: Int) {
+        guard needsBullOff, players.indices.contains(player) else { return }
+        undoStack.append(snapshot)
+        pendingDarts = nil
+        awaitingBullOff = nil
+        var decided = bullOffLegs ?? [:]
+        decided[leg] = player
+        bullOffLegs = decided
+        winLeg(player)
     }
     public mutating func nextLeg() {
         guard legWinner != nil, !finished else { return }
@@ -89,6 +117,7 @@ extension Match {
         pendingDarts = nil
         states = old.states; active = old.active; starter = old.starter; leg = old.leg
         legWinner = old.legWinner; winner = old.winner; finished = old.finished
+        awaitingBullOff = old.awaitingBullOff; bullOffLegs = old.bullOffLegs
         visits = Array(visits.prefix(old.visitCount)); completedAt = nil
     }
     /// Vrátí zápas do stavu těsně před zvoleným kolem; to i všechna další kola zmizí.

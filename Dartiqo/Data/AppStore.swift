@@ -41,11 +41,18 @@ struct JSONDocument: FileDocument {
     init(configuration: ReadConfiguration) throws { data = configuration.file.regularFileContents ?? Data() }
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper { FileWrapper(regularFileWithContents: data) }
 }
+enum AppSection: Hashable {
+    case home, play, games, profile, settings
+}
+
 @MainActor final class AppStore: ObservableObject {
     @Published var data = StoredData()
     @Published var locked = false
     @Published var storageError: String?
     @Published var authError: String?
+    @Published var section: AppSection = .home
+    /// Nová hodnota zavře zápas i průvodce a vrátí čistou domovskou obrazovku.
+    @Published private(set) var homeGeneration = 0
     private let speaker = AVSpeechSynthesizer()
     @Published private(set) var needsRecovery = false
     private let file: URL
@@ -158,6 +165,12 @@ struct JSONDocument: FileDocument {
         guard let match = activeMatch, match.finished else { return }
         if !data.matches.contains(where: { $0.id == match.id }) { var archived = match; archived.undoStack = []; data.matches.append(archived) }
         activeMatch = nil
+    }
+    /// Uloží dohraný zápas a otevře záložku Domů bez rozehrané obrazovky zápasu.
+    func returnHome() {
+        finish()
+        section = .home
+        homeGeneration += 1
     }
     func feedback(_ score: Int? = nil) {
         if data.haptics { UIImpactFeedbackGenerator(style: .light).impactOccurred() }

@@ -9,6 +9,98 @@ final class GameEngineTests: XCTestCase {
         var m = game(); try m.submit([Dart(20,3),Dart(20,3),Dart(20,3)])
         XCTAssertEqual(m.states[0].remaining,321); XCTAssertEqual(m.active,1); XCTAssertEqual(m.average(for:0),180)
     }
+    func testDartLimitEndsLegInBullOff() throws {
+        var m = game(legs: 2)
+        var options = MatchOptions(); options.dartLimit = 30
+        m.config.options = options
+        for round in 0..<10 {
+            XCTAssertFalse(m.needsBullOff, "kolo \(round)")
+            try m.submit([Dart(1), Dart(1), Dart(1)])
+            try m.submit([Dart(1), Dart(1), Dart(1)])
+        }
+        XCTAssertTrue(m.needsBullOff)
+        XCTAssertNil(m.legWinner)
+        XCTAssertThrowsError(try m.recordDart(Dart(20)))
+
+        m.awardBullOff(to: 1)
+        XCTAssertFalse(m.needsBullOff)
+        XCTAssertEqual(m.legWinner, 1)
+        XCTAssertEqual(m.states[1].legs, 1)
+        XCTAssertEqual(m.bullOffLegs?[1], 1)
+        XCTAssertFalse(m.finished)
+
+        m.nextLeg()
+        XCTAssertEqual(m.leg, 2)
+        XCTAssertFalse(m.needsBullOff)
+        XCTAssertEqual(m.states[1].legs, 1)
+
+        m.undoLastInput()
+        XCTAssertEqual(m.leg, 1)
+        XCTAssertTrue(m.needsBullOff)
+        XCTAssertEqual(m.states[1].legs, 0)
+        XCTAssertNil(m.bullOffLegs?[1])
+        XCTAssertEqual(m.visits.count, 20)
+        XCTAssertTrue(m.currentDarts.isEmpty)
+
+        m.undoLastInput()
+        XCTAssertFalse(m.needsBullOff)
+        XCTAssertEqual(m.currentDarts.count, 2)
+    }
+
+    func testDartLimitBullOffCanWinTheMatch() throws {
+        var m = game(legs: 1)
+        var options = MatchOptions(); options.dartLimit = 30
+        m.config.options = options
+        for _ in 0..<10 {
+            try m.submit([Dart(1), Dart(1), Dart(1)])
+            try m.submit([Dart(1), Dart(1), Dart(1)])
+        }
+        m.awardBullOff(to: 0)
+        XCTAssertTrue(m.finished)
+        XCTAssertEqual(m.winner, 0)
+    }
+
+    func testPlayTimeAddsOnlyRunningSegments() {
+        var m = game()
+        let start = m.createdAt
+        m.addPlayTime(from: start, to: start.addingTimeInterval(600))
+        m.addPlayTime(from: start.addingTimeInterval(3_600), to: start.addingTimeInterval(3_900))
+        m.addPlayTime(from: start, to: start.addingTimeInterval(-50))
+        XCTAssertEqual(m.playedDuration, 900, accuracy: 0.001)
+    }
+
+    func testPlayTimeSplitsTrainingBotsAndFriends() {
+        let me = Player(name: "Já")
+        var solo = Match(config: GameConfig(mode: .countUp), players: [me]); solo.playSeconds = 600
+        var bot = Match(config: GameConfig(), players: [me, Player(name: "Bot", botLevel: 3)]); bot.playSeconds = 900
+        var friends = Match(config: GameConfig(), players: [me, Player(name: "Petr")]); friends.playSeconds = 1_800
+        let other = Match(config: GameConfig(), players: [Player(name: "Cizí"), Player(name: "Petr")])
+        let time = PlayTime.make(matches: [solo, bot, friends, other], playerID: me.id, range: nil)
+        XCTAssertEqual(time.seconds[.training], 600)
+        XCTAssertEqual(time.seconds[.bots], 900)
+        XCTAssertEqual(time.seconds[.friends], 1_800)
+        XCTAssertEqual(time.total, 3_300)
+        XCTAssertEqual(time.byMode[.x01], 2_700)
+        XCTAssertEqual(time.longest, 1_800)
+        XCTAssertEqual(time.activeDays, 1)
+        XCTAssertEqual(time.perMatch, 1_100)
+        let days = time.days(ending: Date(), count: 7)
+        XCTAssertEqual(days.count, 21)
+        XCTAssertEqual(days.filter { Calendar.current.isDateInToday($0.date) }.reduce(0) { $0 + $1.seconds }, 3_300)
+        XCTAssertEqual(PlayTime.format(3_300), "55 min")
+        XCTAssertEqual(PlayTime.format(8_100), "2 h 15 min")
+    }
+
+    func testCheckoutBeforeLimitStillWins() throws {
+        var m = game()
+        var options = MatchOptions(); options.dartLimit = 30
+        m.config.options = options
+        m.states[0].remaining = 40
+        try m.submit([Dart(20, 2)])
+        XCTAssertEqual(m.legWinner, 0)
+        XCTAssertFalse(m.needsBullOff)
+    }
+
     func testRewindRestoresStateBeforeChosenVisit() throws {
         var m = game(legs: 2)
         try m.submit([Dart(20,3),Dart(20,3),Dart(20,3)])

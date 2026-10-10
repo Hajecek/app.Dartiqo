@@ -53,6 +53,7 @@ struct HomeView: View {
             NavigationStack { MatchView() }
                 .environmentObject(store)
         }
+        .onChange(of: store.homeGeneration) { _, _ in live = false }
         .sheet(item: $preview) { item in
             FeaturePreview(preview: item)
         }
@@ -376,37 +377,5 @@ private struct FeaturePreview: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .preferredColorScheme(.dark)
-    }
-}
-
-struct MatchRow: View {
-    let match: Match
-    var profileID: UUID?
-    private var won: Bool { match.winner.map { match.players[$0].id == profileID } ?? false }
-    private var result: String {
-        match.winner.map { match.players[$0].id == profileID ? "Výhra" : "Prohra" } ?? "Remíza"
-    }
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: match.config.mode.symbol)
-                .font(.body)
-                .foregroundStyle(Theme.accent)
-                .frame(width: 28, height: 28)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(match.players.map(\.name).joined(separator: " vs "))
-                    .font(.body)
-                    .lineLimit(2)
-                Text("\(match.config.mode.shortTitle) · \(match.createdAt.formatted(date: .abbreviated, time: .omitted))")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 8)
-            Text(result)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(won ? Theme.positive : .secondary)
-        }
-        .accessibilityElement(children: .combine)
     }
 }

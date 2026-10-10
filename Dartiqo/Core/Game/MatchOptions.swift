@@ -19,6 +19,11 @@ public struct MatchOptions: Codable, Equatable {
     public var botDelay = 1.5
     public var checkoutHints = true
     public var keepAwake = true
+    /// X01: když leg nikdo nezavře do tolika šipek na hráče, rozhodne rozhoz na střed. `nil` = bez limitu.
+    public var dartLimit: Int?
+    public static let dartLimitChoices = [30, 45, 60, 75, 90]
+    /// Vlastní limit se volí po kolech, jedno kolo jsou tři šipky.
+    public static let dartLimitRounds = 3...100
     public init() {}
 }
 public struct SeatDraft: Codable, Identifiable, Equatable {
@@ -66,7 +71,7 @@ extension Match {
     public mutating func submitTotal(_ score: Int, checkoutDarts: Int = 3) throws {
         guard config.mode == .x01, currentState.opened else { throw ScoreEntryError.unsupported }
         guard !finished else { throw GameError.finished }
-        guard legWinner == nil else { throw GameError.legEnded }
+        guard legWinner == nil, !needsBullOff else { throw GameError.legEnded }
         guard (0...180).contains(score) else { throw ScoreEntryError.impossible }
         let remaining = currentState.remaining
         let rule = config.outRule(for: active)
@@ -86,13 +91,14 @@ extension Match {
         guard currentDarts.isEmpty else { throw GameError.unfinishedVisit }
         guard config.mode == .x01, currentState.opened else { throw ScoreEntryError.unsupported }
         guard !finished else { throw GameError.finished }
-        guard legWinner == nil else { throw GameError.legEnded }
+        guard legWinner == nil, !needsBullOff else { throw GameError.legEnded }
         guard (1...3).contains(darts) else { throw GameError.invalidDarts }
         guard canBust(remaining: currentState.remaining, darts: darts) else { throw ScoreEntryError.invalidBust }
         undoStack.append(snapshot)
         states[active].rounds += 1
         visits.append(Visit(player: active, leg: leg, darts: Array(repeating: .miss, count: darts), credited: 0, bust: true, checkout: false, remaining: currentState.remaining, enteredAsTotal: true))
         active = (active + 1) % players.count
+        checkDartLimit()
     }
     private func canBust(remaining: Int, darts: Int) -> Bool {
         if remaining > darts * 60 + 1 { return false }

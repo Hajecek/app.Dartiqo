@@ -48,10 +48,11 @@ struct SetupView: View {
     @State private var presetName = "Moje 501"
     @State private var scoreText = "501"
     @State private var scoreExact = false
+    @State private var limitCustom = false
     @State private var openRule: RuleKey? = .start
     @State private var showFriends = false
     @FocusState private var focusedGuest: UUID?
-    private enum RuleKey: Hashable { case start, finish, mode, length, handicap, flow }
+    private enum RuleKey: Hashable { case start, finish, mode, length, limit, handicap, flow }
     @State private var opening: Opening?
     @State private var pickedStarter: Int?
     @State private var bullWinner: Int?
@@ -154,6 +155,10 @@ struct SetupView: View {
             Button("Zrušit", role: .cancel) {}
         }
         .fullScreenCover(isPresented: $live) { MatchLaunchView(intro: launchIntro).environmentObject(store) }
+        .onChange(of: store.homeGeneration) { _, _ in
+            live = false
+            showBullOff = false
+        }
         .fullScreenCover(isPresented: $showBullOff) {
             ZStack {
                 if bullLaunched {
@@ -667,6 +672,9 @@ struct SetupView: View {
             if draft.config.mode == .x01 || draft.config.mode == .cricket {
                 ruleSection(.length, "Délka zápasu", icon: "trophy.fill", value: draft.config.lengthLine) { lengthGroup }
             }
+            if draft.config.mode == .x01 {
+                ruleSection(.limit, "Limit šipek", icon: "timer", value: limitSummary) { limitGroup }
+            }
             if draft.config.mode == .x01 && draft.seats.count > 1 {
                 ruleSection(.handicap, "Handicap", icon: "scalemass.fill", value: handicapSummary) { handicapGroup }
             }
@@ -736,6 +744,9 @@ struct SetupView: View {
         }
         if draft.config.mode == .x01 || draft.config.mode == .cricket {
             rows.append(SummaryRow(key: .length, icon: "trophy.fill", title: "Délka zápasu", value: draft.config.lengthLine))
+        }
+        if draft.config.mode == .x01 {
+            rows.append(SummaryRow(key: .limit, icon: "timer", title: "Limit šipek", value: limitSummary))
         }
         if draft.config.mode == .x01 && draft.seats.count > 1 {
             rows.append(SummaryRow(key: .handicap, icon: "scalemass.fill", title: "Handicap", value: seatsHaveHandicap ? handicapSummary : "Vypnuto"))
@@ -959,6 +970,59 @@ struct SetupView: View {
         case .double: return "Double nebo bull"
         case .straight: return "Jakýkoli zásah"
         case .master: return "Double i triple"
+        }
+    }
+
+    private var limitSummary: String {
+        guard let limit = draft.config.settings.dartLimit else { return "Bez limitu" }
+        return "\(limit) šipek · pak rozhoz"
+    }
+
+    private var usingCustomLimit: Bool {
+        guard let limit = draft.config.settings.dartLimit else { return false }
+        return limitCustom || !MatchOptions.dartLimitChoices.contains(limit)
+    }
+
+    private var limitGroup: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            RuleTiles(
+                options: [(id: 0, title: "Vypnuto", detail: nil)]
+                    + MatchOptions.dartLimitChoices.map { (id: $0, title: "\($0)", detail: "\($0 / 3) kol") }
+                    + [(id: -1, title: "Vlastní", detail: usingCustomLimit ? "\(draft.config.settings.dartLimit ?? 0) šipek" : "kola i šipky")],
+                selection: usingCustomLimit ? -1 : draft.config.settings.dartLimit ?? 0,
+                columns: 3
+            ) { limit in
+                withAnimation(motion) {
+                    limitCustom = limit == -1
+                    if limit == -1 {
+                        if draft.config.settings.dartLimit == nil { options.wrappedValue.dartLimit = 45 }
+                    } else {
+                        options.wrappedValue.dartLimit = limit == 0 ? nil : limit
+                    }
+                }
+            }
+            if usingCustomLimit, let limit = draft.config.settings.dartLimit {
+                Stepper(value: Binding(
+                    get: { limit / 3 },
+                    set: { rounds in options.wrappedValue.dartLimit = rounds * 3 }
+                ), in: MatchOptions.dartLimitRounds) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("\(limit / 3) kol")
+                            .font(.system(.title2, design: .rounded).weight(.bold))
+                            .monospacedDigit()
+                            .contentTransition(.numericText(value: Double(limit)))
+                        Text("\(limit) šipek na hráče").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .padding(12)
+                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .accessibilityValue("\(limit / 3) kol, \(limit) šipek")
+            }
+            Text(draft.config.settings.dartLimit.map { "Když leg nikdo nezavře do \($0) šipek na hráče, rozhodne rozhoz na střed. Bližší šipka bere leg." }
+                 ?? "Leg se hraje, dokud ho někdo nezavře.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -1347,6 +1411,7 @@ struct RuleTiles<ID: Hashable>: View {
     var onSelect: (ID) -> Void
 
     var body: some View {
+        let tall = options.contains { $0.detail != nil }
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: columns), spacing: 8) {
             ForEach(options, id: \.id) { option in
                 let selected = option.id == selection
@@ -1367,7 +1432,7 @@ struct RuleTiles<ID: Hashable>: View {
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
-                    .frame(maxWidth: .infinity, minHeight: option.detail == nil ? 50 : 66, alignment: Alignment(horizontal: alignment, vertical: .center))
+                    .frame(maxWidth: .infinity, minHeight: tall ? 66 : 50, alignment: Alignment(horizontal: alignment, vertical: .center))
                     .foregroundStyle(selected ? Color.black : Color.primary)
                     .background(selected ? Theme.brand : Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                     .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -1581,9 +1646,12 @@ private struct BullPins: View, Animatable {
 }
 
 /// Rozhoz na střed. Červený střed je výš než zelený. Stejný výsledek se hází znovu v opačném pořadí.
-private struct BullOffView: View {
+/// Určí, kdo začíná, nebo rozhodne leg po vypršení limitu šipek.
+struct BullOffView: View {
+    enum Purpose { case opening, decider }
     var names: [String]
     var bots: [Int?]
+    var purpose: Purpose = .opening
     var onFinish: (Int) -> Void
     var onCancel: () -> Void
 
@@ -1598,9 +1666,10 @@ private struct BullOffView: View {
     /// 1, dokud nehodí všichni. Pak se plynule přiblíží na rozdíl hodů.
     @State private var shownZoom: CGFloat = 1
 
-    init(names: [String], bots: [Int?], onFinish: @escaping (Int) -> Void, onCancel: @escaping () -> Void) {
+    init(names: [String], bots: [Int?], purpose: Purpose = .opening, onFinish: @escaping (Int) -> Void, onCancel: @escaping () -> Void) {
         self.names = names
         self.bots = bots
+        self.purpose = purpose
         self.onFinish = onFinish
         self.onCancel = onCancel
         _order = State(initialValue: Array(names.indices))
@@ -1621,8 +1690,11 @@ private struct BullOffView: View {
 
     private var subline: String {
         if let note { return note }
-        if winner != nil { return "Začíná \(name(winner ?? 0)). Terč je přiblížený na rozdíl hodů." }
-        if shots.isEmpty { return "Klepni tam, kam šipka dopadla. Přímka je v procentech poloměru." }
+        if winner != nil { return "\(purpose == .decider ? "Leg bere" : "Začíná") \(name(winner ?? 0)). Terč je přiblížený na rozdíl hodů." }
+        if shots.isEmpty {
+            let tap = "Klepni tam, kam šipka dopadla. Přímka je v procentech poloměru."
+            return purpose == .decider ? "Limit šipek vypršel a nikdo nezavřel. Leg rozhodne bližší šipka. \(tap)" : tap
+        }
         return "Červený střed bere před zeleným."
     }
 
@@ -1678,7 +1750,7 @@ private struct BullOffView: View {
                 }
                 ToolbarSpacer(.flexible, placement: .bottomBar)
                 ToolbarItem(placement: .bottomBar) {
-                    Button("Hrát") { if let winner { onFinish(winner) } }
+                    Button(purpose == .decider ? "Potvrdit" : "Hrát") { if let winner { onFinish(winner) } }
                         .buttonStyle(.borderedProminent)
                         .tint(Theme.brand)
                         .foregroundStyle(.black)

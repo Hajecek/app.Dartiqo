@@ -55,6 +55,7 @@ private struct LegCeremony: Equatable, Identifiable {
     var legsToWin: Int
     var setClosed: Bool
     var duration: Double
+    var byBullOff = false
 }
 private struct BoardDetailSelection: Identifiable {
     let player: Int
@@ -87,9 +88,16 @@ struct MatchView: View {
     @State private var detailLeg: Int? = 0
     @State private var cameraHits: [CameraHit] = []
     @State private var correcting: Int?
-    var body: some View {
+    @State private var decidingLeg = false
+    @State private var leavingHome = false
+    /// Začátek právě běžícího úseku hry. Stopky stojí při pauze, mimo hru a na pozadí.
+    @State private var clockStart: Date?
+    var body: some View { clockTracking(screen) }
+    private var screen: some View {
         Group {
-            if let game = store.activeMatch {
+            if leavingHome {
+                MatchColors.background
+            } else if let game = store.activeMatch {
                 if game.finished && !isHoldingVisit && legCeremony == nil { result(game) }
                 else { live(game) }
             } else {
@@ -108,6 +116,17 @@ struct MatchView: View {
         .toolbar(legCeremony == nil ? .automatic : .hidden, for: .navigationBar)
         .fullScreenCover(item: $legCeremony) { ceremony in
             legCeremonyScreen(ceremony)
+        }
+        .fullScreenCover(isPresented: $decidingLeg) {
+            if let game = store.activeMatch {
+                BullOffView(
+                    names: game.players.map(\.name),
+                    bots: game.players.map(\.botLevel),
+                    purpose: .decider,
+                    onFinish: awardBullOff,
+                    onCancel: { decidingLeg = false }
+                )
+            }
         }
         .fullScreenCover(item: $boardDetail) { selection in
             if let game = store.activeMatch {
@@ -153,8 +172,12 @@ struct MatchView: View {
                 UIApplication.shared.isIdleTimerDisabled = game.config.settings.keepAwake
                 if game.currentPlayer.botLevel != nil { holdDarts = game.currentDarts }
             }
+            syncClock()
         }
-        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
+        .onDisappear {
+            flushClock()
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
     }
 
     @ToolbarContentBuilder
@@ -208,6 +231,8 @@ struct MatchView: View {
                 if paused {
                     Label("Hra je pozastavená", systemImage: "pause.circle.fill").font(AppFont.title()).padding(24)
                     Button("Pokračovat") { paused = false }.buttonStyle(PrimaryButton())
+                } else if game.needsBullOff && !isHoldingVisit {
+                    bullOffCard(game)
                 } else if game.legWinner != nil && !isHoldingVisit && legCeremony == nil {
                     // Ceremony overlay handles continuation; keep a quiet placeholder underneath.
                     Color.clear.frame(height: 1)
@@ -395,6 +420,10 @@ struct MatchView: View {
         .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
     private func legCaption(_ game: Match) -> String {
+        if game.config.mode == .x01, let limit = game.config.settings.dartLimit {
+            let thrown = min(limit, game.currentState.rounds * 3 + game.currentDarts.count)
+            return "\(game.config.lengthLine) · šipka \(thrown)/\(limit)"
+        }
         if game.config.mode == .x01 || game.config.mode == .cricket { return game.config.lengthLine }
         return game.config.summary
     }
@@ -565,7 +594,7 @@ struct MatchView: View {
     /// Spodní lišta: Zpět, potvrzení součtu a způsob zápisu.
     @ViewBuilder
     private func bottomBar(_ game: Match) -> some View {
-        let humanInput = !paused && game.legWinner == nil && !showingBotBoard && !isHoldingVisit
+        let humanInput = !paused && game.legWinner == nil && !game.needsBullOff && !showingBotBoard && !isHoldingVisit
         let canUndo = isHoldingVisit || !game.currentDarts.isEmpty || !game.visits.isEmpty
         if !paused && legCeremony == nil && (game.legWinner == nil || isHoldingVisit) {
             HStack(spacing: 10) {
@@ -702,7 +731,7 @@ struct MatchView: View {
         game.config.options = options; store.activeMatch = game
     }
     private func hit(_ dart: Dart) {
-        guard !paused, !isHoldingVisit, legCeremony == nil, var game = store.activeMatch, game.currentPlayer.botLevel == nil, !game.finished, game.legWinner == nil else { return }
+        guard !paused, !isHoldingVisit, legCeremony == nil, var game = store.activeMatch, game.currentPlayer.botLevel == nil, !game.finished, game.legWinner == nil, !game.needsBullOff else { return }
         let thrower = game.active
         let count = game.visits.count
         do {
@@ -791,6 +820,8 @@ struct MatchView: View {
         }
         if let winner = game.legWinner {
             presentLegCeremony(game, winner: winner)
+        } else if game.needsBullOff {
+            decidingLeg = true
         } else {
             revision = UUID()
         }
@@ -810,7 +841,8 @@ struct MatchView: View {
             isCheckout: visit?.checkout == true,
             legsToWin: game.config.legsToWin,
             setClosed: !game.finished && game.config.playsSets && game.states.contains { $0.legs >= game.config.legsToWin },
-            duration: auto
+            duration: auto,
+            byBullOff: game.bullOffLegs?[game.leg] == winner
         )
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.35)) {
             legCeremony = ceremony
@@ -825,9 +857,7 @@ struct MatchView: View {
     private func dismissLegCeremony() {
         guard let ceremony = legCeremony else { return }
         if ceremony.matchFinished {
-            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
-                legCeremony = nil
-            }
+            leaveToHome()
             return
         }
         guard var game = store.activeMatch, game.legWinner != nil, !game.finished else {
@@ -846,13 +876,81 @@ struct MatchView: View {
         }
         revision = UUID()
     }
+    private func leaveToHome() {
+        guard !leavingHome else { return }
+        leavingHome = true
+        flushClock()
+        store.returnHome()
+        dismiss()
+    }
+    private func clockTracking(_ content: some View) -> some View {
+        content
+            .task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 30_000_000_000)
+                    if clockStart != nil { flushClock(keepRunning: true) }
+                }
+            }
+            .onChange(of: scenePhase) { _, _ in syncClock() }
+            .onChange(of: paused) { _, _ in syncClock() }
+            .onChange(of: store.activeMatch?.finished ?? true) { _, _ in syncClock() }
+    }
+    private var clockRuns: Bool {
+        scenePhase == .active && !paused && store.activeMatch.map { !$0.finished } == true
+    }
+    private func syncClock() {
+        if clockRuns {
+            if clockStart == nil { clockStart = Date() }
+        } else {
+            flushClock()
+        }
+    }
+    /// Připíše uběhlý úsek do zápasu. Průběžně, aby se čas neztratil ani při pádu appky.
+    private func flushClock(keepRunning: Bool = false) {
+        guard let start = clockStart else { return }
+        let now = Date()
+        if var game = store.activeMatch {
+            game.addPlayTime(from: start, to: now)
+            store.activeMatch = game
+        }
+        clockStart = keepRunning && clockRuns ? now : nil
+    }
+    private func awardBullOff(_ winner: Int) {
+        guard var game = store.activeMatch, game.needsBullOff else { decidingLeg = false; return }
+        game.awardBullOff(to: winner)
+        store.activeMatch = game
+        decidingLeg = false
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            guard let current = store.activeMatch, current.legWinner == winner, legCeremony == nil else { return }
+            presentLegCeremony(current, winner: winner)
+        }
+    }
+    private func bullOffCard(_ game: Match) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: "scope").font(.system(size: 34, weight: .semibold)).foregroundStyle(MatchColors.amber)
+            Text("Limit \(game.config.settings.dartLimit ?? 0) šipek vypršel")
+                .font(AppFont.title(20))
+            Text("Nikdo leg nezavřel. Rozhodne rozhoz na střed, bližší šipka bere leg.")
+                .font(AppFont.body(15))
+                .foregroundStyle(.white.opacity(0.7))
+                .multilineTextAlignment(.center)
+            Button("Rozhoz na střed") { decidingLeg = true }
+                .buttonStyle(.glassProminent)
+                .tint(MatchColors.amber)
+                .foregroundStyle(.black)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(24)
+        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+    }
     /// Celá obrazovka přes lištu i stavový řádek. Krátké shrnutí legu.
     private func legCeremonyScreen(_ ceremony: LegCeremony) -> some View {
         LegCeremonyView(ceremony: ceremony, reduceMotion: reduceMotion) { dismissLegCeremony() }
     }
     @MainActor private func throwBotDart() async {
         guard scenePhase == .active, !paused, !showSettings, !showLog, !showLeave, !isHoldingVisit, legCeremony == nil else { return }
-        guard let game = store.activeMatch, !game.finished, game.legWinner == nil, game.currentPlayer.botLevel != nil else { return }
+        guard let game = store.activeMatch, !game.finished, game.legWinner == nil, !game.needsBullOff, game.currentPlayer.botLevel != nil else { return }
         if holdDarts.count != game.currentDarts.count { holdDarts = game.currentDarts }
         let key = botTaskKey
         let thrower = game.active
@@ -1339,7 +1437,7 @@ struct MatchView: View {
     }
 
     private func legWinner(_ game: Match, leg: Int) -> Int? {
-        game.visits.last { $0.leg == leg && $0.checkout }?.player
+        game.bullOffLegs?[leg] ?? game.visits.last { $0.leg == leg && $0.checkout }?.player
     }
 
     private func legPicker(_ game: Match, player: Int, pages: [Int]) -> some View {
@@ -1594,13 +1692,13 @@ struct MatchView: View {
             .buttonStyle(.glass)
             .tint(.white)
 
-            Button { store.finish(); dismiss() } label: {
+            Button { leaveToHome() } label: {
                 Label("Dokončit", systemImage: "checkmark")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.glassProminent)
             .tint(MatchColors.finish)
-            .accessibilityHint("Uloží výsledek do historie")
+            .accessibilityHint("Uloží výsledek a vrátí na domovskou stránku")
         }
         .font(.headline)
         .controlSize(.large)
@@ -1666,6 +1764,7 @@ private struct LegCeremonyView: View {
     private var badge: (title: String, icon: String) {
         if ceremony.matchFinished { return ("Konec zápasu", "trophy.fill") }
         if ceremony.setClosed { return ("Set hotový", "square.stack.3d.up.fill") }
+        if ceremony.byBullOff { return ("Leg \(ceremony.leg) · rozhoz na střed", "scope") }
         if ceremony.isCheckout { return ("Leg \(ceremony.leg) · zavřeno", "checkmark.seal.fill") }
         return ("Leg \(ceremony.leg)", "flag.checkered")
     }
@@ -1733,7 +1832,7 @@ private struct LegCeremonyView: View {
             ? "\(winnerName) zavřel na \(ceremony.checkoutScore) a vyhrává leg \(ceremony.leg)."
             : "\(winnerName) vyhrává leg \(ceremony.leg)."
         )
-        .accessibilityHint(ceremony.matchFinished ? "Pokračuj na shrnutí" : "Pokračuj na další leg")
+        .accessibilityHint(ceremony.matchFinished ? "Vrátí tě na domovskou stránku" : "Pokračuj na další leg")
         .accessibilityAddTraits(.isButton)
     }
 
@@ -1834,7 +1933,7 @@ private struct LegCeremonyView: View {
 
     private var continueButton: some View {
         Button(action: onContinue) {
-            Text(ceremony.matchFinished ? "Zobrazit shrnutí" : ceremony.setClosed ? "Další set" : "Další leg")
+            Text(ceremony.matchFinished ? "Domů" : ceremony.setClosed ? "Další set" : "Další leg")
                 .font(.headline)
                 .foregroundStyle(MatchColors.ink)
                 .frame(maxWidth: .infinity, minHeight: 54)

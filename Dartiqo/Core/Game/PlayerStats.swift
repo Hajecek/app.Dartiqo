@@ -46,6 +46,94 @@ public enum StatsPeriod: String, CaseIterable, Identifiable {
     }
 }
 
+/// Čas u terče přes všechny režimy, rozdělený podle toho, s kým se hrálo.
+public struct PlayTime {
+    public enum Kind: String, CaseIterable, Identifiable {
+        case training, bots, friends
+        public var id: String { rawValue }
+        public var title: String {
+            switch self {
+            case .training: return "Trénink"
+            case .bots: return "S botem"
+            case .friends: return "S kamarády"
+            }
+        }
+        public var detail: String {
+            switch self {
+            case .training: return "sám, bez soupeře"
+            case .bots: return "aspoň jeden bot"
+            case .friends: return "jen lidé"
+            }
+        }
+        public var symbol: String {
+            switch self {
+            case .training: return "figure.mind.and.body"
+            case .bots: return "cpu"
+            case .friends: return "person.2.fill"
+            }
+        }
+        public static func of(_ match: Match) -> Kind {
+            if match.players.count == 1 { return .training }
+            return match.players.contains { $0.botLevel != nil } ? .bots : .friends
+        }
+    }
+
+    public struct Day: Identifiable {
+        public let date: Date
+        public let kind: Kind
+        public let seconds: TimeInterval
+        public var id: String { "\(date.timeIntervalSince1970)-\(kind.rawValue)" }
+    }
+
+    public var seconds: [Kind: TimeInterval] = [:]
+    public var matches: [Kind: Int] = [:]
+    public var byMode: [GameMode: TimeInterval] = [:]
+    /// Začátek dne → čas podle druhu hry.
+    public var daily: [Date: [Kind: TimeInterval]] = [:]
+    public var longest: TimeInterval = 0
+    public var total: TimeInterval { seconds.values.reduce(0, +) }
+    public var matchCount: Int { matches.values.reduce(0, +) }
+    public var activeDays: Int { daily.count }
+    public var perMatch: TimeInterval { matchCount == 0 ? 0 : total / Double(matchCount) }
+    public var perActiveDay: TimeInterval { activeDays == 0 ? 0 : total / Double(activeDays) }
+    public func share(_ kind: Kind) -> Double { total <= 0 ? 0 : (seconds[kind] ?? 0) / total }
+
+    public init() {}
+
+    public static func make(matches all: [Match], playerID: UUID, range: Range<Date>?, calendar: Calendar = .current) -> PlayTime {
+        var time = PlayTime()
+        for match in all where match.players.contains(where: { $0.id == playerID }) && (range?.contains(match.completedAt ?? match.createdAt) ?? true) {
+            let kind = Kind.of(match)
+            let duration = match.playedDuration
+            time.seconds[kind, default: 0] += duration
+            time.matches[kind, default: 0] += 1
+            time.byMode[match.config.mode, default: 0] += duration
+            time.longest = max(time.longest, duration)
+            let day = calendar.startOfDay(for: match.completedAt ?? match.createdAt)
+            time.daily[day, default: [:]][kind, default: 0] += duration
+        }
+        return time
+    }
+
+    /// Sloupce po dnech pro graf. Dny bez hry zůstanou prázdné, aby byla vidět pravidelnost.
+    public func days(ending end: Date, count: Int, calendar: Calendar = .current) -> [Day] {
+        let last = calendar.startOfDay(for: end)
+        return (0..<count).reversed().flatMap { offset -> [Day] in
+            guard let date = calendar.date(byAdding: .day, value: -offset, to: last) else { return [] }
+            return Kind.allCases.map { Day(date: date, kind: $0, seconds: daily[date]?[$0] ?? 0) }
+        }
+    }
+
+    /// „2 h 15 min“, „45 min“, „<1 min“.
+    public static func format(_ seconds: TimeInterval) -> String {
+        let minutes = Int((seconds / 60).rounded())
+        if minutes < 1 { return seconds > 0 ? "<1 min" : "0 min" }
+        let hours = minutes / 60
+        if hours == 0 { return "\(minutes) min" }
+        return minutes % 60 == 0 ? "\(hours) h" : "\(hours) h \(minutes % 60) min"
+    }
+}
+
 /// Souhrn výkonu jednoho hráče přes dokončené zápasy.
 public struct PlayerStats {
     public struct MatchPoint: Identifiable {
@@ -147,7 +235,7 @@ public struct PlayerStats {
             if match.config.legsToWin > 1 && match.players.count > 1 {
                 var won = Array(repeating: 0, count: match.players.count)
                 for leg in Set(match.visits.map(\.leg)).sorted() {
-                    guard let winner = match.visits.last(where: { $0.leg == leg && $0.checkout })?.player,
+                    guard let winner = match.bullOffLegs?[leg] ?? match.visits.last(where: { $0.leg == leg && $0.checkout })?.player,
                           won.indices.contains(winner) else { continue }
                     if won.filter({ $0 == match.config.legsToWin - 1 }).count >= 2 {
                         stats.decidingLegs += 1

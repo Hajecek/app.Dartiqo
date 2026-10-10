@@ -208,7 +208,7 @@ public struct GameConfig: Codable, Equatable {
 
     public var summary: String {
         switch mode {
-        case .x01: return "\(startingScore) • \(outRule.title)\(doubleIn ? " • Double in" : "")\(hasHandicap ? " • Handicap" : "") • \(lengthLine)"
+        case .x01: return "\(startingScore) • \(outRule.title)\(doubleIn ? " • Double in" : "")\(hasHandicap ? " • Handicap" : "")\(settings.dartLimit.map { " • \($0) šipek" } ?? "") • \(lengthLine)"
         case .cricket: return "Cricket \(settings.cricketNoScore ? "bez bodů" : "s body") • \(lengthLine)"
         case .aroundClock: return "1–20 + bull • \(settings.clockStyle.title)"
         case .countUp: return "\(settings.countUpRounds) kol • nejvyšší skóre vyhrává"
@@ -277,6 +277,8 @@ public struct GameSnapshot: Codable, Equatable {
     public var winner: Int?
     public var finished: Bool
     public var visitCount: Int
+    public var awaitingBullOff: Bool? = nil
+    public var bullOffLegs: [Int: Int]? = nil
 }
 public enum GameError: Error, LocalizedError {
     case finished, invalidDarts, legEnded, unfinishedVisit
@@ -300,6 +302,25 @@ public struct Match: Codable, Identifiable {
     public var visits: [Visit] = []
     public var undoStack: [GameSnapshot] = []
     public var pendingDarts: [Dart]?
+    /// Limit šipek vypršel a leg čeká na rozhoz na střed.
+    public var awaitingBullOff: Bool?
+    /// Legy rozhodnuté rozhozem: číslo legu → vítěz.
+    public var bullOffLegs: [Int: Int]?
+    public var needsBullOff: Bool { awaitingBullOff == true }
+    /// Čas s otevřenou hrou. Pauza, odchod ze hry ani appka na pozadí se nepočítají.
+    public var playSeconds: Double?
+
+    public mutating func addPlayTime(from start: Date, to end: Date) {
+        let span = end.timeIntervalSince(start)
+        guard span > 0, span.isFinite else { return }
+        playSeconds = (playSeconds ?? 0) + span
+    }
+    /// Změřený čas, u starších zápasů odhad z začátku a konce.
+    public var playedDuration: TimeInterval {
+        if let playSeconds { return playSeconds }
+        guard let completedAt else { return 0 }
+        return min(max(0, completedAt.timeIntervalSince(createdAt)), 2 * 3600)
+    }
     public init(config: GameConfig, players: [Player], firstPlayer: Int = 0) {
         precondition((1...4).contains(players.count))
         self.config = config; self.players = players
@@ -313,7 +334,7 @@ public struct Match: Codable, Identifiable {
         return darts == 0 ? 0 : Double(v.reduce(0) { $0 + $1.credited }) / Double(darts) * 3
     }
     public func best(for player: Int) -> Int { visits.filter { $0.player == player }.map(\.credited).max() ?? 0 }
-    public var snapshot: GameSnapshot { GameSnapshot(states: states, active: active, starter: starter, leg: leg, legWinner: legWinner, winner: winner, finished: finished, visitCount: visits.count) }
+    public var snapshot: GameSnapshot { GameSnapshot(states: states, active: active, starter: starter, leg: leg, legWinner: legWinner, winner: winner, finished: finished, visitCount: visits.count, awaitingBullOff: awaitingBullOff, bullOffLegs: bullOffLegs) }
     public var isSane: Bool {
         guard (1...4).contains(players.count), states.count == players.count, states.indices.contains(active), states.indices.contains(starter), (1...15).contains(config.legsToWin), (1...11).contains(config.setsToWin), (GameConfig.minimumScore...GameConfig.maximumScore).contains(config.startingScore), players.indices.allSatisfy({ (GameConfig.minimumScore...GameConfig.maximumScore).contains(config.startingScore(for: $0)) }), (1...30).contains(config.settings.countUpRounds), config.settings.botDelay.isFinite, (0.3...5).contains(config.settings.botDelay) else { return false }
         guard players.allSatisfy({ $0.botLevel == nil || (1...10).contains($0.botLevel!) }), states.allSatisfy({ $0.remaining >= 0 && (1...22).contains($0.clockTarget) && (0...config.setsToWin).contains($0.sets) }), visits.allSatisfy({ players.indices.contains($0.player) && (1...3).contains($0.darts.count) && $0.darts.allSatisfy(\.isValid) }) else { return false }
