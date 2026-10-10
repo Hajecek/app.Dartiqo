@@ -1363,18 +1363,53 @@ struct SetupView: View {
     }
 }
 struct ChoiceCard: View {
-    var title: String; var detail: String; var symbol: String; var selected: Bool; var action: () -> Void
+    var title: String
+    var detail: String
+    var symbol: String
+    var selected: Bool
+    var action: () -> Void
+    /// Když je nastavené, stojí na místě kolečka výběru.
+    var info: (() -> Void)? = nil
+
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 16) {
-                Image(systemName: symbol).font(.title2).frame(width: 46, height: 52).foregroundStyle(Theme.action)
-                VStack(alignment: .leading, spacing: 7) { Text(title).font(.title3.bold()); Text(detail).font(.caption).foregroundStyle(.secondary) }
-                Spacer(minLength: 0)
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(selected ? Theme.action : .secondary)
-                    .contentTransition(.symbolEffect(.replace))
-            }.foregroundStyle(.primary).padding(18).frame(maxWidth: .infinity, alignment: .leading).background(selected ? Theme.action.opacity(0.09) : Theme.card, in: RoundedRectangle(cornerRadius: 22)).overlay(RoundedRectangle(cornerRadius: 22).stroke(selected ? Theme.action : Theme.stroke, lineWidth: selected ? 1.5 : 1))
-        }.buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
+        HStack(spacing: 0) {
+            Button(action: action) {
+                HStack(spacing: 16) {
+                    Image(systemName: symbol).font(.title2).frame(width: 46, height: 52).foregroundStyle(Theme.action)
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text(title).font(.title3.bold())
+                        Text(detail).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                    if info == nil {
+                        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(selected ? Theme.action : .secondary)
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if let info {
+                Button(action: info) {
+                    Image(systemName: "info.circle")
+                        .font(.title2)
+                        .foregroundStyle(Theme.action)
+                        .frame(width: 44, height: 44)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Info o hře \(title)")
+            }
+        }
+        .foregroundStyle(.primary)
+        .padding(.leading, 18)
+        .padding(.trailing, info == nil ? 18 : 10)
+        .padding(.vertical, 18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(selected ? Theme.action.opacity(0.09) : Theme.card, in: RoundedRectangle(cornerRadius: 22))
+        .overlay(RoundedRectangle(cornerRadius: 22).stroke(selected ? Theme.action : Theme.stroke, lineWidth: selected ? 1.5 : 1))
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 struct ChoicePill: View {

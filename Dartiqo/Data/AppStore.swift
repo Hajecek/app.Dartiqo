@@ -33,6 +33,13 @@ struct StoredData: Codable {
     /// Camera-to-board mapping for autoscore. Optional so older saves still decode.
     var boardCalibration: BoardCalibration?
     var friends: [Friend]?
+    /// Trénink. Volitelná pole, aby starší soubor verze 1 dál šel načíst.
+    var trainingSessions: [TrainingSession]?
+    var activeTraining: [String: TrainingSession]?
+    var trainingFavorites: [String: [String]]?
+    var xpEvents: [XPEvent]?
+    var trainingPlan: [String: TrainingPlan]?
+    var achievementUnlocks: [AchievementUnlock]?
 }
 struct JSONDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
@@ -42,7 +49,7 @@ struct JSONDocument: FileDocument {
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper { FileWrapper(regularFileWithContents: data) }
 }
 enum AppSection: Hashable {
-    case home, play, games, profile
+    case home, play, training, games, profile
 }
 
 @MainActor final class AppStore: ObservableObject {
@@ -116,7 +123,11 @@ enum AppSection: Hashable {
         get { guard let id = profile?.id.uuidString else { return nil }; return data.activeMatches[id] }
         set { guard let id = profile?.id.uuidString else { return }; data.activeMatches[id] = newValue; save() }
     }
-    var xp: Int { matches.reduce(0) { sum, match in sum + 50 + ((match.winner.map { match.players[$0].id == profile?.id } ?? false) ? 50 : 0) } }
+    var xp: Int {
+        let played = matches.reduce(0) { sum, match in sum + 50 + ((match.winner.map { match.players[$0].id == profile?.id } ?? false) ? 50 : 0) }
+        let trained = (data.xpEvents ?? []).filter { $0.owner == profile?.id }.reduce(0) { $0 + $1.amount }
+        return played + trained
+    }
     var level: Int { xp / 500 + 1 }
     var x01Matches: [Match] { matches.filter { $0.config.mode == .x01 } }
     var ownVisits: [Visit] { x01Matches.flatMap { m in m.visits.filter { m.players[$0.player].id == profile?.id } } }
@@ -209,7 +220,14 @@ enum AppSection: Hashable {
         data.matches.removeAll { $0.players.contains { $0.id == id } }
         data.activeMatches[id.uuidString] = nil
         data.presets?.removeAll { $0.owner == id }; data.lastSetups?[id.uuidString] = nil
-        data.profiles.removeAll { $0.id == id }; data.selectedProfile = nil; save()
+        data.profiles.removeAll { $0.id == id }; data.selectedProfile = nil
+        data.trainingSessions?.removeAll { $0.owner == id }
+        data.activeTraining?[id.uuidString] = nil
+        data.trainingFavorites?[id.uuidString] = nil
+        data.xpEvents?.removeAll { $0.owner == id }
+        data.trainingPlan?[id.uuidString] = nil
+        data.achievementUnlocks?.removeAll { $0.owner == id }
+        save()
     }
     var boardCalibration: BoardCalibration? { data.boardCalibration }
     var boardMapper: BoardMapper? {
@@ -238,4 +256,139 @@ enum AppSection: Hashable {
         save()
     }
     func export() throws -> JSONDocument { let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; return JSONDocument(data: try encoder.encode(data)) }
+
+    var trainingHistory: [TrainingSession] {
+        guard let id = profile?.id else { return [] }
+        return (data.trainingSessions ?? []).filter { $0.owner == id }.sorted { ($0.finishedAt ?? $0.startedAt) > ($1.finishedAt ?? $1.startedAt) }
+    }
+    var activeTrainingSession: TrainingSession? {
+        guard let id = profile?.id.uuidString else { return nil }
+        return data.activeTraining?[id]
+    }
+    var favoriteTrainingIDs: [String] {
+        guard let id = profile?.id.uuidString else { return [] }
+        return data.trainingFavorites?[id] ?? []
+    }
+    var currentTrainingPlan: TrainingPlan? {
+        guard let id = profile?.id.uuidString else { return nil }
+        return data.trainingPlan?[id]
+    }
+    func isFavoriteTraining(_ id: String) -> Bool { favoriteTrainingIDs.contains(id) }
+    func trainingContext() -> TrainingContext {
+        TrainingCoach.context(matches: matches, sessions: trainingHistory, profileID: profile?.id)
+    }
+    func trainingRecommendation() -> TrainingRecommendation {
+        TrainingCoach.recommend(matches: matches, sessions: trainingHistory, profileID: profile?.id)
+    }
+    func ghostThrows(for definitionID: String) -> [Dart]? {
+        guard let session = trainingHistory.first(where: { $0.definitionID == definitionID && $0.status == .completed && ($0.result?.darts ?? 0) > 0 }) else { return nil }
+        let darts = session.actions.compactMap { action -> Dart? in
+            if case .dart(let dart) = action { return dart }
+            return nil
+        }
+        return darts.isEmpty ? nil : darts
+    }
+    func bestTrainingResult(for definitionID: String) -> TrainingResult? {
+        trainingHistory.compactMap { session -> TrainingResult? in
+            guard session.definitionID == definitionID, session.status == .completed, session.result?.success == true else { return nil }
+            return session.result
+        }.max { lhs, rhs in
+            if lhs.higherIsBetter { return lhs.score < rhs.score }
+            return lhs.score > rhs.score
+        }
+    }
+    func stageTraining(_ session: TrainingSession) {
+        guard let key = profile?.id.uuidString, session.owner == profile?.id else { return }
+        if data.activeTraining == nil { data.activeTraining = [:] }
+        data.activeTraining?[key] = session
+        save()
+    }
+    func toggleTrainingFavorite(_ id: String) {
+        guard let key = profile?.id.uuidString else { return }
+        if data.trainingFavorites == nil { data.trainingFavorites = [:] }
+        var list = data.trainingFavorites?[key] ?? []
+        if let index = list.firstIndex(of: id) { list.remove(at: index) } else { list.append(id) }
+        data.trainingFavorites?[key] = list
+        save()
+    }
+    func saveTrainingPlan(_ plan: TrainingPlan) {
+        guard let key = profile?.id.uuidString, plan.owner == profile?.id else { return }
+        if data.trainingPlan == nil { data.trainingPlan = [:] }
+        data.trainingPlan?[key] = plan
+        save()
+    }
+    /// Zapíše výsledek jednou. Stejné id session XP ani historii nezdvojí.
+    @discardableResult
+    func commitTraining(_ session: TrainingSession) -> Int {
+        guard let owner = profile?.id, session.owner == owner, session.status == .completed, session.result != nil else { return 0 }
+        if data.trainingSessions?.contains(where: { $0.id == session.id }) == true {
+            if data.activeTraining?[owner.uuidString]?.id == session.id { data.activeTraining?[owner.uuidString] = nil; save() }
+            return data.xpEvents?.first { $0.sessionID == session.id }?.amount ?? 0
+        }
+        if data.trainingSessions == nil { data.trainingSessions = [] }
+        let calendar = Calendar.current
+        let day = calendar.startOfDay(for: session.finishedAt ?? Date())
+        let prior = (data.trainingSessions ?? []).filter {
+            $0.owner == owner && $0.definitionID == session.definitionID && $0.status == .completed &&
+            calendar.startOfDay(for: $0.finishedAt ?? $0.startedAt) == day
+        }.count
+        let result = session.result!
+        let previous = bestTrainingResult(for: session.definitionID)
+        let record = result.success && isBetterTraining(result, than: previous)
+        let amount: Int
+        if let definition = TrainingCatalog.find(session.definitionID) {
+            amount = TrainingRewards.award(
+                definition: definition,
+                config: session.config,
+                result: result,
+                completionsToday: prior,
+                isRecord: record,
+                isDaily: session.config.isDaily,
+                isWeekly: session.config.isWeekly
+            )
+        } else {
+            amount = 0
+        }
+        data.trainingSessions?.append(session)
+        if amount > 0 {
+            if data.xpEvents == nil { data.xpEvents = [] }
+            if data.xpEvents?.contains(where: { $0.sessionID == session.id }) != true {
+                data.xpEvents?.append(XPEvent(owner: owner, sessionID: session.id, definitionID: session.definitionID, amount: amount, createdAt: session.finishedAt ?? Date()))
+            }
+        }
+        if data.activeTraining?[owner.uuidString]?.id == session.id { data.activeTraining?[owner.uuidString] = nil }
+        if var plan = data.trainingPlan?[owner.uuidString] {
+            if let index = plan.items.firstIndex(where: { $0.sessionID == nil && $0.definitionID == session.definitionID }) {
+                plan.items[index].sessionID = session.id
+            }
+            let history = (data.trainingSessions ?? []).filter { $0.owner == owner }
+            TrainingPlans.react(&plan, sessions: history)
+            data.trainingPlan?[owner.uuidString] = plan
+        }
+        let owned = (data.trainingSessions ?? []).filter { $0.owner == owner }
+        let earned = TrainingAchievements.earned(sessions: owned, matchOneEighties: n180, streak: TrainingStreaks.daily(sessions: owned))
+        if data.achievementUnlocks == nil { data.achievementUnlocks = [] }
+        let have = Set((data.achievementUnlocks ?? []).filter { $0.owner == owner }.map(\.key))
+        for key in earned.subtracting(have) {
+            data.achievementUnlocks?.append(AchievementUnlock(owner: owner, key: key))
+        }
+        save()
+        return amount
+    }
+    func abandonTraining(_ session: TrainingSession) {
+        guard let owner = profile?.id.uuidString else { return }
+        if data.activeTraining?[owner]?.id == session.id { data.activeTraining?[owner] = nil; save() }
+    }
+    func trainingUnlocked(_ key: String) -> Bool {
+        guard let owner = profile?.id else { return false }
+        if (data.achievementUnlocks ?? []).contains(where: { $0.owner == owner && $0.key == key }) { return true }
+        let owned = trainingHistory
+        return TrainingAchievements.earned(sessions: owned, matchOneEighties: n180, streak: TrainingStreaks.daily(sessions: owned)).contains(key)
+    }
+    private func isBetterTraining(_ result: TrainingResult, than previous: TrainingResult?) -> Bool {
+        guard result.success else { return false }
+        guard let previous else { return true }
+        if result.higherIsBetter { return result.score > previous.score }
+        return result.score < previous.score
+    }
 }

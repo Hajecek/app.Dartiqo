@@ -129,10 +129,10 @@ struct HomeView: View {
                         height: 190
                     )
                 }
-                NavigationLink { SetupView(mode: .countUp) } label: {
+                NavigationLink { TrainingHomeView() } label: {
                     LobbyCard(
                         title: "Trénovat",
-                        detail: "Count Up, překonej svoje maximum",
+                        detail: "80 her, výzvy a plán podle hodů",
                         symbol: "scope",
                         colors: [Color(red: 1.0, green: 0.72, blue: 0.20), Color(red: 0.95, green: 0.48, blue: 0.08)],
                         height: 190

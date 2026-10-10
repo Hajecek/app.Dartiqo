@@ -453,30 +453,36 @@ struct ProfileView: View {
 
     private var milestones: some View {
         let bestCheckout = store.ownVisits.filter(\.checkout).map(\.credited).max() ?? 0
-        let items: [(String, String, Bool)] = [
+        let trained180 = store.trainingHistory.reduce(0) { $0 + ($1.result?.oneEighties ?? 0) }
+        var items: [(String, String, Bool)] = [
             ("První zápas", "shoeprints.fill", !store.matches.isEmpty),
             ("První výhra", "trophy.fill", store.wins > 0),
-            ("Maximum 180", "flame.fill", store.n180 > 0),
+            ("Maximum 180", "flame.fill", store.n180 + trained180 > 0),
             ("Zavření 100+", "sparkles", bestCheckout >= 100),
             ("20 zápasů", "medal.fill", store.matches.count >= 20)
         ]
+        items += TrainingAchievements.keys.map { key in
+            (TrainingAchievements.title(key), TrainingAchievements.symbol(key), store.trainingUnlocked(key))
+        }
         return block("Milníky", symbol: "star.circle.fill", trailing: "\(items.filter(\.2).count)/\(items.count)") {
-            HStack(alignment: .top, spacing: 0) {
-                ForEach(items, id: \.0) { item in
-                    VStack(spacing: 8) {
-                        Image(systemName: item.2 ? item.1 : "lock.fill")
-                            .font(.title3)
-                            .foregroundStyle(item.2 ? Theme.onAccent : .secondary)
-                            .frame(width: 50, height: 50)
-                            .background(item.2 ? AnyShapeStyle(Theme.accentFill) : AnyShapeStyle(Color.primary.opacity(0.07)), in: Circle())
-                        Text(item.0)
-                            .font(.caption2.weight(.medium))
-                            .multilineTextAlignment(.center)
-                            .foregroundStyle(item.2 ? .primary : .secondary)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(alignment: .top, spacing: 12) {
+                    ForEach(items, id: \.0) { item in
+                        VStack(spacing: 8) {
+                            Image(systemName: item.2 ? item.1 : "lock.fill")
+                                .font(.title3)
+                                .foregroundStyle(item.2 ? Theme.onAccent : .secondary)
+                                .frame(width: 50, height: 50)
+                                .background(item.2 ? AnyShapeStyle(Theme.accentFill) : AnyShapeStyle(Color.primary.opacity(0.07)), in: Circle())
+                            Text(item.0)
+                                .font(.caption2.weight(.medium))
+                                .multilineTextAlignment(.center)
+                                .foregroundStyle(item.2 ? .primary : .secondary)
+                                .frame(width: 72)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityValue(item.2 ? "Splněno" : "Zamčeno")
                     }
-                    .frame(maxWidth: .infinity)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityValue(item.2 ? "Splněno" : "Zamčeno")
                 }
             }
             .surface()

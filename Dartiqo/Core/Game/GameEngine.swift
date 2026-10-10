@@ -21,16 +21,14 @@ extension Match {
             used.append(dart)
             switch config.mode {
             case .x01:
-                if !states[index].opened {
-                    guard dart.multiplier == 2 else { continue }
-                    states[index].opened = true
-                }
-                let next = states[index].remaining - dart.score
                 let rule = config.outRule(for: index)
-                if next < 0 || (next == 1 && rule != .straight) || (next == 0 && !rule.allows(dart)) {
+                let doubleIn = config.doubleIn(for: index)
+                if !ScoringRules.counts(dart, opened: states[index].opened, doubleIn: doubleIn) { continue }
+                if doubleIn && !states[index].opened { states[index].opened = true }
+                if ScoringRules.isBust(remaining: states[index].remaining, dart: dart, rule: rule) {
                     states[index] = before; credited = 0; bust = true
                 } else {
-                    states[index].remaining = next; credited += dart.score; won = next == 0
+                    states[index].remaining -= dart.score; credited += dart.score; won = states[index].remaining == 0
                 }
             case .cricket:
                 guard dart.segment >= 15 && (dart.segment <= 20 || dart.segment == 25) else { continue }
@@ -210,6 +208,45 @@ public enum Checkout {
             }
         }
         return nil
+    }
+
+    /// `nil`, když skóre v daném počtu šipek a pravidle out nejde zavřít.
+    public static func canFinish(_ score: Int, rule: OutRule = .double, darts: Int = 3) -> Bool {
+        route(for: score, rule: rule, darts: darts) != nil
+    }
+
+    /// Další rozumné cesty vedle té preferované. Prázdné pole znamená nezavřitelné skóre.
+    public static func alternatives(for score: Int, rule: OutRule = .double, darts: Int = 3, limit: Int = 3) -> [[Dart]] {
+        guard limit > 0, canFinish(score, rule: rule, darts: darts) else { return [] }
+        var found: [[Dart]] = []
+        func add(_ path: [Dart]) {
+            guard found.count < limit, path.reduce(0, { $0 + $1.score }) == score, !found.contains(path) else { return }
+            found.append(path)
+        }
+        if let preferred = route(for: score, rule: rule, darts: darts) { add(preferred) }
+        let ends = finishingDarts(rule: rule)
+        if darts >= 1 {
+            for end in ends where end.score == score { add([end]) }
+        }
+        if darts >= 2 {
+            for end in ends {
+                let need = score - end.score
+                guard need > 0 else { continue }
+                for setup in preferredSetups where setup.score == need { add([setup, end]) }
+            }
+        }
+        if darts >= 3, found.count < limit {
+            for end in ends where found.count < limit {
+                let rest = score - end.score
+                guard rest > end.score else { continue }
+                for first in preferredSetups.prefix(24) where found.count < limit && first.score < rest {
+                    let midNeed = rest - first.score
+                    guard midNeed > 0, let second = preferredSetups.first(where: { $0.score == midNeed }) else { continue }
+                    add([first, second, end])
+                }
+            }
+        }
+        return found
     }
 
     /// One-dart leaves players recognise, best first. Bull sits with the big doubles.
