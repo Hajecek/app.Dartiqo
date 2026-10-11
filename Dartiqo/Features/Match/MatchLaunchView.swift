@@ -1,19 +1,17 @@
 import SwiftUI
 
-/// Úvod s logem před novým zápasem. Po krátké chvíli se rovnou otevře hra.
+/// Úvod před novým zápasem — černé plátno, žlutý pás a sestava, pak rovnou hra.
 struct MatchLaunchView: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var intro = true
 
     @State private var ready = false
-    @State private var pulse = false
-    @State private var appeared = false
+    @State private var showContent = false
+    @State private var floorUp = false
+    @State private var loadProgress: CGFloat = 0
 
-    private let canvas = Color(red: 0.04, green: 0.07, blue: 0.06)
-    private let glow = Color(red: 1, green: 0.72, blue: 0.12)
-    /// Dostat času na sestavení MatchView a animaci splash.
-    private let introDuration: UInt64 = 2_400_000_000
+    private let introSeconds: Double = 2.4
 
     var body: some View {
         ZStack {
@@ -25,50 +23,86 @@ struct MatchLaunchView: View {
                     .transition(.opacity)
             }
         }
-        .animation(.easeInOut(duration: 0.45), value: ready)
-        .task {
-            guard intro, !ready else { return }
-            withAnimation(reduceMotion ? nil : .spring(response: 0.55, dampingFraction: 0.86)) {
-                appeared = true
-            }
-            pulse = true
+        .animation(.easeInOut(duration: 0.35), value: ready)
+        .task { await runIntro() }
+    }
+
+    private func runIntro() async {
+        guard intro, !ready else { return }
+
+        if reduceMotion {
+            floorUp = true
+            showContent = true
+            loadProgress = 1
 #if DEBUG
             if PreviewSupport.isXcodePreview { return }
 #endif
-            try? await Task.sleep(nanoseconds: introDuration)
+            try? await Task.sleep(nanoseconds: UInt64(introSeconds * 0.4 * 1_000_000_000))
             ready = true
+            return
         }
+
+        withAnimation(.spring(response: 0.7, dampingFraction: 0.88)) { floorUp = true }
+        try? await Task.sleep(nanoseconds: 160_000_000)
+        withAnimation(.spring(response: 0.55, dampingFraction: 0.86)) { showContent = true }
+
+#if DEBUG
+        if PreviewSupport.isXcodePreview {
+            withAnimation(.linear(duration: 1.1)) { loadProgress = 0.7 }
+            return
+        }
+#endif
+
+        withAnimation(.linear(duration: introSeconds)) { loadProgress = 1 }
+        try? await Task.sleep(nanoseconds: UInt64(introSeconds * 1_000_000_000))
+        ready = true
     }
 
     private var splash: some View {
-        ZStack {
-            background
+        ZStack(alignment: .bottom) {
+            Color.black.ignoresSafeArea()
+
+            // Velký watermark režimu — jediná dekorace na černém plátně.
+            if let match = store.activeMatch {
+                Text(watermark(match))
+                    .font(.system(size: 120, weight: .black, design: .rounded))
+                    .foregroundStyle(Color.white.opacity(0.045))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.4)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .padding(.top, 96)
+                    .offset(y: showContent || reduceMotion ? 0 : 24)
+                    .opacity(showContent || reduceMotion ? 1 : 0)
+                    .accessibilityHidden(true)
+            }
 
             VStack(spacing: 0) {
-                logoMark
+                brandHeader
                     .padding(.top, 28)
-                    .scaleEffect(appeared || reduceMotion ? 1 : 0.88)
-                    .opacity(appeared || reduceMotion ? 1 : 0)
+                    .opacity(showContent || reduceMotion ? 1 : 0)
+                    .offset(y: showContent || reduceMotion ? 0 : -12)
 
                 Spacer(minLength: 20)
 
                 if let match = store.activeMatch {
                     matchup(match)
                         .padding(.horizontal, 24)
-                        .scaleEffect(appeared || reduceMotion ? 1 : 0.94)
-                        .opacity(appeared || reduceMotion ? 1 : 0)
+                        .opacity(showContent || reduceMotion ? 1 : 0)
+                        .scaleEffect(showContent || reduceMotion ? 1 : 0.96)
                 }
 
                 Spacer(minLength: 20)
-
-                loadingFooter
-                    .padding(.bottom, 36)
-                    .opacity(appeared || reduceMotion ? 1 : 0)
             }
-            .frame(maxWidth: 520)
+            .frame(maxWidth: 560)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.bottom, 108)
+
+            yellowFloor
+                .offset(y: floorUp || reduceMotion ? 0 : 120)
         }
         .preferredColorScheme(.dark)
+        .statusBarHidden(true)
+        .persistentSystemOverlays(.hidden)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilitySplashLabel)
     }
@@ -79,122 +113,123 @@ struct MatchLaunchView: View {
         return "Načítám hru. \(match.players.map(\.name).joined(separator: " proti ")). Začíná \(starter)."
     }
 
-    private var background: some View {
-        ZStack {
-            canvas
-            RadialGradient(
-                colors: [glow.opacity(0.38), glow.opacity(0.08), .clear],
-                center: UnitPoint(x: 0.5, y: 0.08),
-                startRadius: 20,
-                endRadius: 420
-            )
-            RadialGradient(
-                colors: [Theme.brand.opacity(0.14), .clear],
-                center: UnitPoint(x: 0.15, y: 0.85),
-                startRadius: 10,
-                endRadius: 320
-            )
-            RadialGradient(
-                colors: [Color(red: 0.12, green: 0.28, blue: 0.18).opacity(0.55), .clear],
-                center: UnitPoint(x: 0.9, y: 0.55),
-                startRadius: 20,
-                endRadius: 380
-            )
-            DartboardArt()
-                .opacity(0.07)
-                .scaleEffect(1.35)
-                .offset(y: 40)
-                .accessibilityHidden(true)
-        }
-        .ignoresSafeArea()
-    }
+    // MARK: - Brand
 
-    private var logoMark: some View {
-        GlassEffectContainer(spacing: 0) {
+    private var brandHeader: some View {
+        HStack(spacing: 12) {
             Image("Logo")
                 .resizable()
                 .renderingMode(.original)
                 .scaledToFit()
-                .frame(width: 72, height: 72)
+                .frame(width: 40, height: 40)
                 .clipShape(Circle())
-                .padding(14)
-                .contentShape(Circle())
+
+            Text("Dartiqo")
+                .font(.system(size: 28, weight: .heavy, design: .rounded))
+                .foregroundStyle(.white)
+                .tracking(-0.5)
         }
-        .glassEffect(.regular, in: Circle())
-        .scaleEffect(pulse && !reduceMotion ? 1.04 : 0.98)
-        .animation(
-            reduceMotion ? nil : .easeInOut(duration: 0.85).repeatForever(autoreverses: true),
-            value: pulse
-        )
+        .accessibilityElement(children: .combine)
         .accessibilityLabel("Dartiqo")
     }
 
+    // MARK: - Matchup
+
     private func matchup(_ match: Match) -> some View {
-        VStack(spacing: 22) {
-            if match.players.count == 2 {
-                HStack(spacing: 10) {
-                    playerTile(match.players[0], starts: match.starter == 0)
-                    Text("VS")
-                        .font(AppFont.caption(13, weight: .heavy))
-                        .foregroundStyle(.white.opacity(0.4))
-                        .frame(width: 28)
-                    playerTile(match.players[1], starts: match.starter == 1)
-                }
-            } else {
-                HStack(spacing: 12) {
-                    ForEach(Array(match.players.enumerated()), id: \.offset) { index, player in
-                        playerTile(player, starts: index == match.starter, compact: true)
-                    }
-                }
+        VStack(spacing: 28) {
+            Text(caption(match))
+                .font(AppFont.caption(13, weight: .bold))
+                .foregroundStyle(Theme.brand)
+                .tracking(1.4)
+                .textCase(.uppercase)
+
+            switch match.players.count {
+            case 1: solo(match.players[0])
+            case 2: duel(match)
+            case 4: quartet(match)
+            default: trio(match)
             }
 
-            Text(caption(match))
-                .font(AppFont.caption(14, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.7))
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 10)
-                .frame(maxWidth: .infinity)
-                .glassEffect(.regular, in: Capsule())
+            if let starter = match.players[safe: match.starter] {
+                Text("Začíná \(starter.name)")
+                    .font(AppFont.body(17, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.75))
+            }
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 24)
-        .frame(maxWidth: .infinity)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
     }
 
-    private func playerTile(_ player: Player, starts: Bool, compact: Bool = false) -> some View {
+    private func duel(_ match: Match) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            playerBlock(match.players[0], index: 0, starts: match.starter == 0)
+            Text("–")
+                .font(.system(size: 28, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.28))
+                .frame(width: 36)
+            playerBlock(match.players[1], index: 1, starts: match.starter == 1)
+        }
+    }
+
+    private func solo(_ player: Player) -> some View {
+        playerBlock(player, index: 0, starts: true, size: 120)
+    }
+
+    private func trio(_ match: Match) -> some View {
+        VStack(spacing: 22) {
+            playerBlock(match.players[0], index: 0, starts: match.starter == 0, size: 88)
+            HStack(spacing: 36) {
+                playerBlock(match.players[1], index: 1, starts: match.starter == 1, size: 78)
+                playerBlock(match.players[2], index: 2, starts: match.starter == 2, size: 78)
+            }
+        }
+    }
+
+    private func quartet(_ match: Match) -> some View {
+        VStack(spacing: 26) {
+            HStack(spacing: 40) {
+                playerBlock(match.players[0], index: 0, starts: match.starter == 0, size: 84)
+                playerBlock(match.players[1], index: 1, starts: match.starter == 1, size: 84)
+            }
+            HStack(spacing: 40) {
+                playerBlock(match.players[2], index: 2, starts: match.starter == 2, size: 84)
+                playerBlock(match.players[3], index: 3, starts: match.starter == 3, size: 84)
+            }
+        }
+    }
+
+    private func playerBlock(_ player: Player, index: Int, starts: Bool, size: CGFloat = 96) -> some View {
         let look = avatarLook(for: player)
-        return VStack(spacing: compact ? 8 : 10) {
+        return VStack(spacing: 12) {
             Avatar(
                 name: player.name,
                 bot: look.bot,
-                size: compact ? 56 : 72,
+                size: size,
                 photo: look.photo,
                 asset: look.asset
             )
             .overlay(
                 Circle()
-                    .strokeBorder(starts ? Theme.brand : Color.white.opacity(0.18), lineWidth: starts ? 3 : 1.5)
+                    .strokeBorder(starts ? Theme.brand : Color.white.opacity(0.2), lineWidth: starts ? 3 : 1)
             )
-            .shadow(color: starts ? Theme.brand.opacity(0.35) : .clear, radius: 10, y: 2)
 
-            Text(player.name)
-                .font(AppFont.caption(14, weight: .bold))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-                .frame(maxWidth: .infinity)
+            VStack(spacing: 4) {
+                Text(player.name)
+                    .font(AppFont.title(size > 90 ? 20 : 16, weight: .bold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
 
-            Text(starts ? "ZAČÍNÁ" : " ")
-                .font(.system(size: 11, weight: .heavy, design: .rounded))
-                .tracking(0.8)
-                .foregroundStyle(starts ? Theme.brand : .clear)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(starts ? Theme.brand.opacity(0.16) : Color.clear, in: Capsule())
+                Text(starts ? "první hod" : " ")
+                    .font(AppFont.caption(12, weight: .semibold))
+                    .foregroundStyle(starts ? Theme.brand : .clear)
+            }
         }
         .frame(maxWidth: .infinity)
+        .opacity(showContent || reduceMotion ? 1 : 0)
+        .offset(y: showContent || reduceMotion ? 0 : 16)
+        .animation(
+            reduceMotion ? nil : .spring(response: 0.55, dampingFraction: 0.86).delay(Double(index) * 0.05),
+            value: showContent
+        )
     }
 
     private func avatarLook(for player: Player) -> (photo: Data?, asset: String?, bot: Bool) {
@@ -204,22 +239,50 @@ struct MatchLaunchView: View {
         return (store.photo(for: player.id), nil, false)
     }
 
-    private var loadingFooter: some View {
+    // MARK: - Floor
+
+    private var yellowFloor: some View {
         VStack(spacing: 14) {
-            ProgressView()
-                .controlSize(.regular)
-                .tint(Theme.brand)
-            Text("Načítám hru")
-                .font(AppFont.caption(15, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.78))
-                .tracking(0.4)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(Color.black.opacity(0.18))
+                    Capsule()
+                        .fill(Color.black)
+                        .frame(width: max(10, geo.size.width * loadProgress))
+                }
+            }
+            .frame(height: 5)
+
+            Text("Připravuju hru")
+                .font(AppFont.caption(14, weight: .bold))
+                .foregroundStyle(Color.black.opacity(0.72))
         }
+        .padding(.horizontal, 28)
+        .padding(.top, 22)
+        .padding(.bottom, 34)
+        .frame(maxWidth: .infinity)
+        .background(Theme.brand.ignoresSafeArea(edges: .bottom))
     }
 
     private func caption(_ match: Match) -> String {
         let mode = match.config.mode
         if mode == .x01 || mode == .cricket { return "\(mode.shortTitle) · \(match.config.lengthLine)" }
         return match.config.summary
+    }
+
+    private func watermark(_ match: Match) -> String {
+        switch match.config.mode {
+        case .x01: return "\(match.config.startingScore)"
+        case .cricket: return "CRI"
+        default: return match.config.mode.shortTitle.uppercased()
+        }
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
 
