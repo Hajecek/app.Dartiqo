@@ -265,3 +265,9 @@ enum TrainingDaily {
         ]
     }
 }
+
+#if DEBUG
+#Preview {
+    NavigationStack { TrainingCenterView() }.dartiqoPreview(PreviewSupport.store(activeMatch: false))
+}
+#endif

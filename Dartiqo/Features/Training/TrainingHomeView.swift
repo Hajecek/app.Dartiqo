@@ -685,3 +685,9 @@ private struct TrainingLesson {
 
     private static var definitionFallback: String { "Tref zvýrazněný segment." }
 }
+
+#if DEBUG
+#Preview {
+    NavigationStack { TrainingHomeView() }.dartiqoPreview(PreviewSupport.store(activeMatch: false))
+}
+#endif

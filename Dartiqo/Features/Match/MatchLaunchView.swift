@@ -32,6 +32,9 @@ struct MatchLaunchView: View {
                 appeared = true
             }
             pulse = true
+#if DEBUG
+            if PreviewSupport.isXcodePreview { return }
+#endif
             try? await Task.sleep(nanoseconds: introDuration)
             ready = true
         }
@@ -219,3 +222,18 @@ struct MatchLaunchView: View {
         return match.config.summary
     }
 }
+
+#if DEBUG
+#Preview("1v1") {
+    MatchLaunchView().dartiqoPreview(PreviewSupport.store(players: 2))
+}
+#Preview("Sólo") {
+    MatchLaunchView().dartiqoPreview(PreviewSupport.store(players: 1))
+}
+#Preview("3 hráči") {
+    MatchLaunchView().dartiqoPreview(PreviewSupport.store(players: 3))
+}
+#Preview("4 hráči") {
+    MatchLaunchView().dartiqoPreview(PreviewSupport.store(players: 4))
+}
+#endif

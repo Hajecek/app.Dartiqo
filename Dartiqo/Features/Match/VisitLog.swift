@@ -304,3 +304,12 @@ struct VisitDetailView: View {
         return "\(removed) \(again)"
     }
 }
+
+#if DEBUG
+#Preview {
+    NavigationStack {
+        VisitLog(game: PreviewSupport.sampleMatch)
+    }
+    .dartiqoPreview()
+}
+#endif

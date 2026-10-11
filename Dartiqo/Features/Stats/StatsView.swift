@@ -1109,3 +1109,16 @@ private func czech(_ count: Int, _ one: String, _ few: String, _ many: String) -
 private func czechCount(_ count: Int, _ one: String, _ few: String, _ many: String) -> String {
     "\(count) \(czech(count, one, few, many))"
 }
+
+#if DEBUG
+#Preview("Historie") {
+    NavigationStack { HistoryView() }.dartiqoPreview()
+}
+#Preview("Detail") {
+    let store = PreviewSupport.store(finished: true)
+    NavigationStack {
+        MatchDetailView(match: store.activeMatch!, profileID: store.profile?.id)
+    }
+    .dartiqoPreview(store)
+}
+#endif

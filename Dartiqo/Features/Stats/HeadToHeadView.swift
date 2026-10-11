@@ -1058,3 +1058,26 @@ struct HeadToHeadProfileEntry: View {
         return "Head-to-Head, \(totalWins) ku \(totalLosses)"
     }
 }
+
+#if DEBUG
+#Preview("Seznam") {
+    NavigationStack { HeadToHeadListView() }.dartiqoPreview()
+}
+#Preview("Detail") {
+    NavigationStack {
+        HeadToHeadDetailView(rivalKey: PreviewSupport.sampleHeadToHead.key)
+    }
+    .dartiqoPreview()
+}
+#Preview("Před zápasem") {
+    HeadToHeadPregameView(
+        series: PreviewSupport.sampleHeadToHead,
+        myName: "Ty",
+        myPhoto: nil,
+        theirPhoto: nil,
+        onContinue: {},
+        onCancel: {}
+    )
+    .dartiqoPreview()
+}
+#endif

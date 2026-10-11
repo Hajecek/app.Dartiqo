@@ -158,3 +158,11 @@ struct CheckoutStatsView: View {
         .accessibilityElement(children: .combine)
     }
 }
+
+#if DEBUG
+#Preview {
+    CheckoutStatsView(stats: CheckoutStats())
+        .padding()
+        .dartiqoPreview()
+}
+#endif

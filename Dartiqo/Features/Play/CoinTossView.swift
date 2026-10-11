@@ -340,3 +340,17 @@ private struct Coin3D: View, Animatable {
         }
     }
 }
+
+#if DEBUG
+#Preview {
+    CoinTossView(
+        players: [
+            CoinTossPlayer(id: 0, name: "Ty", photo: nil, asset: nil, bot: false, tint: Theme.playerColor(0)),
+            CoinTossPlayer(id: 1, name: "Bot 5", photo: nil, asset: BotLevel.get(5).photo, bot: true, tint: Theme.playerColor(1))
+        ],
+        onFinish: { _ in },
+        onCancel: {}
+    )
+    .preferredColorScheme(.dark)
+}
+#endif

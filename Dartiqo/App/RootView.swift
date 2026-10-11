@@ -44,3 +44,9 @@ struct MainTabView: View {
         }
     }
 }
+
+#if DEBUG
+#Preview {
+    RootView().dartiqoPreview(PreviewSupport.store(activeMatch: false))
+}
+#endif

@@ -176,3 +176,15 @@ struct XPInfoSheet: View {
         .presentationDragIndicator(.visible)
     }
 }
+
+#if DEBUG
+#Preview("Nastavení") {
+    NavigationStack { SettingsView() }.dartiqoPreview()
+}
+#Preview("Pravidla") {
+    NavigationStack { RulesView() }.dartiqoPreview()
+}
+#Preview("XP") {
+    NavigationStack { XPInfoView() }.dartiqoPreview()
+}
+#endif

@@ -560,3 +560,12 @@ struct TrainingPlayView: View {
         dismiss()
     }
 }
+
+#if DEBUG
+#Preview {
+    NavigationStack {
+        TrainingPlayView(definition: PreviewSupport.sampleTraining, config: TrainingConfig())
+    }
+    .dartiqoPreview(PreviewSupport.store(activeMatch: false))
+}
+#endif

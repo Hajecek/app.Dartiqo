@@ -229,3 +229,12 @@ struct CameraHitChips: View {
         }
     }
 }
+
+#if DEBUG
+#Preview {
+    NavigationStack {
+        CameraScoreView(calibration: nil, labels: [], dartCount: 0, onDart: { _, _ in false })
+    }
+    .dartiqoPreview()
+}
+#endif

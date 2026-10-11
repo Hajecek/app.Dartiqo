@@ -445,3 +445,9 @@ private struct FeaturePreview: View {
         .preferredColorScheme(.dark)
     }
 }
+
+#if DEBUG
+#Preview {
+    NavigationStack { HomeView() }.dartiqoPreview(PreviewSupport.store(activeMatch: true))
+}
+#endif

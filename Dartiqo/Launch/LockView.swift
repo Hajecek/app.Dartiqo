@@ -77,3 +77,12 @@ struct StorageRecoveryView: View {
         }
     }
 }
+
+#if DEBUG
+#Preview("Zámek") {
+    LockView().dartiqoPreview(PreviewSupport.store(activeMatch: false))
+}
+#Preview("Obnova") {
+    StorageRecoveryView().dartiqoPreview(PreviewSupport.store(activeMatch: false))
+}
+#endif

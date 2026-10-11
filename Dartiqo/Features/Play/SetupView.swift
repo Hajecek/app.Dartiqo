@@ -2945,3 +2945,12 @@ struct BullOffView: View {
         return BoardGeometry.hit(x: cos(angle) * radius, y: sin(angle) * radius)
     }
 }
+
+#if DEBUG
+#Preview("Hrát") {
+    NavigationStack { PlayView() }.dartiqoPreview(PreviewSupport.store(activeMatch: false))
+}
+#Preview("Setup") {
+    NavigationStack { SetupView(mode: .x01) }.dartiqoPreview(PreviewSupport.store(activeMatch: false))
+}
+#endif

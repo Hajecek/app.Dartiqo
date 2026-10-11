@@ -200,3 +200,18 @@ struct EmptyCard: View {
             .frame(maxWidth: .infinity)
     }
 }
+
+#if DEBUG
+#Preview("Avatar") {
+    HStack(spacing: 16) {
+        Avatar(name: "Ty", size: 64)
+        Avatar(name: "Bot", bot: true, size: 64, asset: BotLevel.get(5).photo)
+    }
+    .padding()
+    .background(Color.black)
+}
+#Preview("EmptyCard") {
+    EmptyCard(title: "Zatím nic", subtitle: "Až odehraješ první zápas, uvidíš ho tady.")
+        .padding()
+}
+#endif

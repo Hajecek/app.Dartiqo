@@ -76,6 +76,17 @@ enum AppSection: Hashable {
         } catch { needsRecovery = true; storageError = "Data se nepodařilo načíst. Původní soubor nebyl přepsán. Použij obrazovku obnovy pro uložení kopie dat. \(error.localizedDescription)" }
         locked = data.biometricLock && profile != nil
     }
+#if DEBUG
+    /// In-memory store pro SwiftUI Previews — nečte ani nepřepisuje produkční soubor.
+    init(preview data: StoredData) {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Dartiqo-Preview", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        file = directory.appendingPathComponent("preview-\(UUID().uuidString).json")
+        self.data = data
+        locked = false
+        needsRecovery = false
+    }
+#endif
     var presets: [GamePreset] { (data.presets ?? []).filter { $0.owner == profile?.id } }
     func remember(_ setup: SetupDraft) {
         guard let id = profile?.id.uuidString else { return }

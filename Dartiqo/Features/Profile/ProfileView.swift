@@ -1539,3 +1539,9 @@ private struct DateRangeSheet: View {
         return Array(repeating: nil, count: leading) + days.map { Optional($0) }
     }
 }
+
+#if DEBUG
+#Preview {
+    NavigationStack { ProfileView() }.dartiqoPreview()
+}
+#endif

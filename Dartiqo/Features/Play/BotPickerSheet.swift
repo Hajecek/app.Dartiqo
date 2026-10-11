@@ -211,3 +211,10 @@ struct BotPickerSheet: View {
         .padding(.bottom, 10)
     }
 }
+
+#if DEBUG
+#Preview {
+    BotPickerSheet(initialLevel: 5, onConfirm: { _ in })
+        .preferredColorScheme(.dark)
+}
+#endif

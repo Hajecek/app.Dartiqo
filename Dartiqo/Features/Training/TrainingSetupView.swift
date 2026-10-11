@@ -153,3 +153,12 @@ struct TrainingSetupView: View {
         if segments.contains(number) { segments.remove(number) } else { segments.insert(number) }
     }
 }
+
+#if DEBUG
+#Preview {
+    NavigationStack {
+        TrainingSetupView(definition: PreviewSupport.sampleTraining)
+    }
+    .dartiqoPreview(PreviewSupport.store(activeMatch: false))
+}
+#endif

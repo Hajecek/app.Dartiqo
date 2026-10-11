@@ -169,3 +169,10 @@ struct ContactPicker: UIViewControllerRepresentable {
         }
     }
 }
+
+#if DEBUG
+#Preview {
+    FriendPickerSheet(taken: [], slots: 2, onPick: { _ in })
+        .dartiqoPreview(PreviewSupport.store(activeMatch: false))
+}
+#endif

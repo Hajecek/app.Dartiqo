@@ -209,3 +209,12 @@ private struct BoardInteractionModifier<G: Gesture>: ViewModifier {
         }
     }
 }
+
+#if DEBUG
+#Preview {
+    TouchDartboard(onHit: { _ in })
+        .frame(height: 420)
+        .background(Color.black)
+        .preferredColorScheme(.dark)
+}
+#endif

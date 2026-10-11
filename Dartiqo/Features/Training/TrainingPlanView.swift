@@ -152,3 +152,9 @@ struct TrainingDayPoint: Identifiable {
     var average: Double?
     var id: Date { day }
 }
+
+#if DEBUG
+#Preview {
+    NavigationStack { TrainingPlanView() }.dartiqoPreview(PreviewSupport.store(activeMatch: false))
+}
+#endif

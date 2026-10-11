@@ -365,3 +365,9 @@ private struct GaugeCard: View {
         .accessibilityElement(children: .combine)
     }
 }
+
+#if DEBUG
+#Preview {
+    NavigationStack { BoardCalibrationView() }.dartiqoPreview()
+}
+#endif

@@ -109,3 +109,9 @@ struct WelcomeView: View {
         }
     }
 }
+
+#if DEBUG
+#Preview {
+    WelcomeView().dartiqoPreview(PreviewSupport.store(activeMatch: false))
+}
+#endif

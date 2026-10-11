@@ -2226,3 +2226,12 @@ struct ZoomableDartboard: View {
                       height: min(limit, max(-limit, value.height)))
     }
 }
+
+#if DEBUG
+#Preview("Živě") {
+    NavigationStack { MatchView() }.dartiqoPreview(PreviewSupport.store(players: 2))
+}
+#Preview("Výsledek") {
+    NavigationStack { MatchView() }.dartiqoPreview(PreviewSupport.store(players: 2, finished: true))
+}
+#endif
