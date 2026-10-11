@@ -50,6 +50,7 @@ extension Match {
         }
         states[index].rounds += 1
         visits.append(Visit(player: index, leg: leg, darts: used, credited: credited, bust: bust, checkout: won, remaining: states[index].remaining))
+        if isGhost(index) { ghostVisitIndex = (ghostVisitIndex ?? 0) + 1 }
         if config.mode == .countUp && states.allSatisfy({ $0.rounds >= config.settings.countUpRounds }) {
             let high = states.map(\.points).max() ?? 0
             let leaders = states.indices.filter { states[$0].points == high }
@@ -127,6 +128,7 @@ extension Match {
         legWinner = old.legWinner; winner = old.winner; finished = old.finished
         awaitingBullOff = old.awaitingBullOff; bullOffLegs = old.bullOffLegs
         continuedPastLimitLegs = old.continuedPastLimitLegs
+        ghostVisitIndex = old.ghostVisitIndex
         visits = Array(visits.prefix(old.visitCount)); completedAt = nil
     }
     /// Vrátí zápas do stavu těsně před zvoleným kolem; to i všechna další kola zmizí.
@@ -140,12 +142,13 @@ extension Match {
         self = next
         return true
     }
-    /// Undo bot replies together with the human visit they answered.
+    /// Undo bot/ghost replies together with the human visit they answered.
     public mutating func undoHumanTurn() {
         guard !undoStack.isEmpty else { return }
-        let hasHuman = players.contains { $0.botLevel == nil }
-        repeat { undo() } while hasHuman && currentPlayer.botLevel != nil && !undoStack.isEmpty
+        let hasHuman = players.indices.contains { players[$0].botLevel == nil && !isGhost($0) }
+        repeat { undo() } while hasHuman && (currentPlayer.botLevel != nil || isGhostTurn) && !undoStack.isEmpty
     }
+
 }
 
 public enum Checkout {

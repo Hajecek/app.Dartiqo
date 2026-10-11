@@ -34,9 +34,13 @@ public struct SeatDraft: Codable, Identifiable, Equatable {
     public var handicap: Handicap?
     /// Přítel nebo profil z tohoto telefonu. Zápas se pak započítá pod stejné ID.
     public var friendID: UUID?
-    public init(name: String, isBot: Bool = false, level: Int = 3, friendID: UUID? = nil) {
+    /// Ghost Mode soupeř. Volitelné kvůli starším předvolbám.
+    public var isGhost: Bool?
+    public init(name: String, isBot: Bool = false, level: Int = 3, friendID: UUID? = nil, isGhost: Bool = false) {
         self.name = name; self.isBot = isBot; self.level = level; self.friendID = friendID
+        self.isGhost = isGhost ? true : nil
     }
+    public var ghostSeat: Bool { isGhost == true }
 }
 public struct SetupDraft: Codable, Equatable {
     public var config = GameConfig()
@@ -44,6 +48,8 @@ public struct SetupDraft: Codable, Equatable {
     public var starter = 0 // -1 means random; otherwise explicit roster position
     /// `true` znamená, že první místo nepatří vlastníkovi profilu.
     public var withoutMe: Bool?
+    /// Zvolená varianta Ghost Mode. Volitelné pole JSON v1.
+    public var ghostKind: GhostKind?
     public var includesMe: Bool { withoutMe != true }
     public init(mode: GameMode = .x01) { config.mode = mode; config.options = MatchOptions() }
 }

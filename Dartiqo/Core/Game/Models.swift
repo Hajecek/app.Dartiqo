@@ -280,6 +280,7 @@ public struct GameSnapshot: Codable, Equatable {
     public var awaitingBullOff: Bool? = nil
     public var bullOffLegs: [Int: Int]? = nil
     public var continuedPastLimitLegs: Set<Int>? = nil
+    public var ghostVisitIndex: Int? = nil
 }
 public enum GameError: Error, LocalizedError {
     case finished, invalidDarts, legEnded, unfinishedVisit
@@ -312,6 +313,13 @@ public struct Match: Codable, Identifiable {
     public var needsBullOff: Bool { awaitingBullOff == true }
     /// Čas s otevřenou hrou. Pauza, odchod ze hry ani appka na pozadí se nepočítají.
     public var playSeconds: Double?
+    /// Ghost Mode: typ zdroje, popisek, průměr a fronta návštěv. Volitelná pole pro JSON v1.
+    public var ghostKind: GhostKind?
+    public var ghostLabel: String?
+    public var ghostAverage: Double?
+    public var ghostVisits: [[Dart]]?
+    public var ghostVisitIndex: Int?
+    public var ghostPlayerIndex: Int?
 
     public mutating func addPlayTime(from start: Date, to end: Date) {
         let span = end.timeIntervalSince(start)
@@ -332,12 +340,23 @@ public struct Match: Codable, Identifiable {
     }
     public var currentPlayer: Player { players[active] }
     public var currentState: PlayerState { states[active] }
+    public func isGhost(_ player: Int) -> Bool {
+        ghostVisits != nil && ghostPlayerIndex == player
+    }
+    public var isGhostTurn: Bool { isGhost(active) }
+    public var tracksGhostAverage: Bool { ghostKind == .beatPB }
     public func average(for player: Int) -> Double {
         let v = visits.filter { $0.player == player }; let darts = v.reduce(0) { $0 + $1.darts.count }
         return darts == 0 ? 0 : Double(v.reduce(0) { $0 + $1.credited }) / Double(darts) * 3
     }
     public func best(for player: Int) -> Int { visits.filter { $0.player == player }.map(\.credited).max() ?? 0 }
-    public var snapshot: GameSnapshot { GameSnapshot(states: states, active: active, starter: starter, leg: leg, legWinner: legWinner, winner: winner, finished: finished, visitCount: visits.count, awaitingBullOff: awaitingBullOff, bullOffLegs: bullOffLegs, continuedPastLimitLegs: continuedPastLimitLegs) }
+    public var snapshot: GameSnapshot {
+        GameSnapshot(
+            states: states, active: active, starter: starter, leg: leg, legWinner: legWinner, winner: winner,
+            finished: finished, visitCount: visits.count, awaitingBullOff: awaitingBullOff, bullOffLegs: bullOffLegs,
+            continuedPastLimitLegs: continuedPastLimitLegs, ghostVisitIndex: ghostVisitIndex
+        )
+    }
     public var isSane: Bool {
         guard (1...4).contains(players.count), states.count == players.count, states.indices.contains(active), states.indices.contains(starter), (1...15).contains(config.legsToWin), (1...11).contains(config.setsToWin), (GameConfig.minimumScore...GameConfig.maximumScore).contains(config.startingScore), players.indices.allSatisfy({ (GameConfig.minimumScore...GameConfig.maximumScore).contains(config.startingScore(for: $0)) }), (1...30).contains(config.settings.countUpRounds), config.settings.botDelay.isFinite, (0.3...5).contains(config.settings.botDelay) else { return false }
         guard players.allSatisfy({ $0.botLevel == nil || (1...10).contains($0.botLevel!) }), states.allSatisfy({ $0.remaining >= 0 && (1...22).contains($0.clockTarget) && (0...config.setsToWin).contains($0.sets) }), visits.allSatisfy({ players.indices.contains($0.player) && (1...3).contains($0.darts.count) && $0.darts.allSatisfy(\.isValid) }) else { return false }

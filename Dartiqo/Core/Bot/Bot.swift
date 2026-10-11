@@ -22,6 +22,69 @@ public struct BotLevel: Identifiable {
         .init(id: 10, name: "Legenda", precision: 0.60, persona: "Phil Tayler", nickname: "Powerhouse")
     ]
     public static func get(_ level: Int) -> BotLevel { all[min(9, max(0, level - 1))] }
+
+    /// Orientační statistiky podle úrovně.
+    /// Level 10 ≈ průměrný PDC tour pro (televizní / ProTour čísla ~2024):
+    /// průměr cca 92–98, doubles ~40–45 %, zhruba 0,3× 180 na leg.
+    private var profile: BotStatProfile { BotStatProfile.forLevel(id) }
+
+    public var averageLow: Int { profile.averageLow }
+    public var averageHigh: Int { profile.averageHigh }
+    public var averageText: String { "\(averageLow)–\(averageHigh)" }
+
+    public var checkoutLow: Int { profile.checkoutLow }
+    public var checkoutHigh: Int { profile.checkoutHigh }
+    public var checkoutText: String { "\(checkoutLow)–\(checkoutHigh) %" }
+
+    /// Orientační počet maxim na leg (klasická profi statistika).
+    public var oneEightiesPerLeg: Double { profile.oneEightiesPerLeg }
+    public var maxVisitText: String {
+        let value = oneEightiesPerLeg.formatted(.number.precision(.fractionLength(oneEightiesPerLeg < 0.1 ? 2 : 1)))
+        return "\(value) / leg"
+    }
+
+    public var throwSeconds: Double { profile.throwSeconds }
+    public var throwTempoLabel: String {
+        switch throwSeconds {
+        case ..<1.0: return "Rychlé"
+        case ..<1.7: return "Plynulé"
+        default: return "Klidné"
+        }
+    }
+    public var throwTempoText: String {
+        let seconds = throwSeconds.formatted(.number.precision(.fractionLength(1)))
+        return "\(throwTempoLabel) · ~\(seconds) s"
+    }
+}
+
+/// Veřejně zobrazované odhady výkonu bota. Level 10 sedí na průměrném PDC profíkovi.
+private struct BotStatProfile {
+    var averageLow: Int
+    var averageHigh: Int
+    var checkoutLow: Int
+    var checkoutHigh: Int
+    var oneEightiesPerLeg: Double
+    var throwSeconds: Double
+
+    static func forLevel(_ level: Int) -> BotStatProfile {
+        let index = min(9, max(0, level - 1))
+        return ladder[index]
+    }
+
+    /// Od začátečníka po průměrného tour profíka. Ne elite 100+ avg.
+    private static let ladder: [BotStatProfile] = [
+        .init(averageLow: 18, averageHigh: 28, checkoutLow: 3, checkoutHigh: 8, oneEightiesPerLeg: 0.02, throwSeconds: 2.6),
+        .init(averageLow: 24, averageHigh: 34, checkoutLow: 5, checkoutHigh: 12, oneEightiesPerLeg: 0.04, throwSeconds: 2.4),
+        .init(averageLow: 32, averageHigh: 42, checkoutLow: 8, checkoutHigh: 16, oneEightiesPerLeg: 0.06, throwSeconds: 2.2),
+        .init(averageLow: 40, averageHigh: 50, checkoutLow: 12, checkoutHigh: 22, oneEightiesPerLeg: 0.08, throwSeconds: 1.8),
+        .init(averageLow: 52, averageHigh: 62, checkoutLow: 18, checkoutHigh: 28, oneEightiesPerLeg: 0.12, throwSeconds: 1.5),
+        .init(averageLow: 62, averageHigh: 72, checkoutLow: 24, checkoutHigh: 34, oneEightiesPerLeg: 0.18, throwSeconds: 1.3),
+        .init(averageLow: 72, averageHigh: 82, checkoutLow: 30, checkoutHigh: 38, oneEightiesPerLeg: 0.22, throwSeconds: 1.1),
+        .init(averageLow: 82, averageHigh: 90, checkoutLow: 34, checkoutHigh: 42, oneEightiesPerLeg: 0.26, throwSeconds: 0.9),
+        .init(averageLow: 88, averageHigh: 95, checkoutLow: 38, checkoutHigh: 44, oneEightiesPerLeg: 0.30, throwSeconds: 0.8),
+        // Lv. 10 — průměrný PDC ProTour / TV pro (ne Humphries/Littler 100+)
+        .init(averageLow: 92, averageHigh: 98, checkoutLow: 40, checkoutHigh: 45, oneEightiesPerLeg: 0.32, throwSeconds: 0.7)
+    ]
 }
 public enum Bot {
     private static let board = [20,1,18,4,13,6,10,15,2,17,3,19,7,16,8,11,14,9,12,5]

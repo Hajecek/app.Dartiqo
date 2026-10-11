@@ -130,6 +130,15 @@ enum AppSection: Hashable {
     }
     var level: Int { xp / 500 + 1 }
     var x01Matches: [Match] { matches.filter { $0.config.mode == .x01 } }
+    /// Ghost nabídky pro zvolená X01 pravidla.
+    func ghostOffers(startingScore: Int, outRule: OutRule) -> [GhostOffer] {
+        guard let id = profile?.id else { return [] }
+        return GhostMode.offers(matches: matches, playerID: id, startingScore: startingScore, outRule: outRule)
+    }
+    func ghostOffer(_ kind: GhostKind, startingScore: Int, outRule: OutRule) -> GhostOffer? {
+        guard let id = profile?.id else { return nil }
+        return GhostMode.offer(kind: kind, matches: matches, playerID: id, startingScore: startingScore, outRule: outRule)
+    }
     var ownVisits: [Visit] { x01Matches.flatMap { m in m.visits.filter { m.players[$0.player].id == profile?.id } } }
     var average: Double {
         let darts = ownVisits.reduce(0) { $0 + $1.darts.count }
@@ -257,6 +266,27 @@ enum AppSection: Hashable {
     }
     func export() throws -> JSONDocument { let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]; return JSONDocument(data: try encoder.encode(data)) }
 
+    var trainingStreak: Int { TrainingStreaks.daily(sessions: trainingHistory) }
+    /// Součet od startu do konce uložených tréninků, včetně přerušených.
+    var trainingPlayed: TimeInterval {
+        trainingHistory.reduce(0) { sum, session in
+            guard let end = session.finishedAt else { return sum }
+            return sum + max(0, end.timeIntervalSince(session.startedAt))
+        }
+    }
+    var trainingWeekXP: Int {
+        guard let id = profile?.id else { return 0 }
+        let start = Calendar.current.dateInterval(of: .weekOfYear, for: Date())?.start ?? .distantPast
+        return (data.xpEvents ?? []).filter { $0.owner == id && $0.createdAt >= start }.reduce(0) { $0 + $1.amount }
+    }
+    /// Přesnost z tréninků za posledních 7 dní. Bez šipek je prázdná.
+    var trainingAccuracy: Double? {
+        let start = Calendar.current.date(byAdding: .day, value: -6, to: Calendar.current.startOfDay(for: Date())) ?? .distantPast
+        let recent = trainingHistory.filter { $0.status == .completed && ($0.finishedAt ?? $0.startedAt) >= start && ($0.result?.darts ?? 0) > 0 }
+        let rows = recent.isEmpty ? trainingHistory.filter { $0.status == .completed && ($0.result?.darts ?? 0) > 0 } : recent
+        guard !rows.isEmpty else { return nil }
+        return rows.reduce(0) { $0 + ($1.result?.accuracy ?? 0) } / Double(rows.count)
+    }
     var trainingHistory: [TrainingSession] {
         guard let id = profile?.id else { return [] }
         return (data.trainingSessions ?? []).filter { $0.owner == id }.sorted { ($0.finishedAt ?? $0.startedAt) > ($1.finishedAt ?? $1.startedAt) }

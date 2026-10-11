@@ -79,6 +79,7 @@ struct SettingsView: View {
             } header: { Text("Tvoje data") }
             Section {
                 NavigationLink("Pravidla a ovládání") { RulesView() }
+                NavigationLink("XP a level") { XPInfoView() }
                 LabeledContent("Verze", value: "1.2.0")
                 LabeledContent("Provoz", value: "Offline")
             }
@@ -120,6 +121,58 @@ struct RulesView: View {
                 Text("Namiř kameru tak, aby byl celý terč ve snímku. Kruh zezelená, jakmile pozná okraj. Čísla na terči sama určí segmenty a otočení.")
                 Text("V zápasu zvol způsob zápisu Kamera. Ukáže se živý obraz a nová šipka se zapíše, jakmile zůstane v terči. Šipku mimo terč doplň tlačítkem Mimo. Telefon po kalibraci nepřemisťuj.")
             }
+            Section("XP a level") {
+                Text("Level stoupá každých 500 XP. Body dávají dokončené zápasy a uložené tréninky.")
+                NavigationLink("Podrobnosti o XP") { XPInfoView() }
+            }
         }.navigationTitle("Jak hrát").navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// Kde se bere XP a jak roste level.
+struct XPInfoView: View {
+    var body: some View {
+        List {
+            Section {
+                Text("Level stoupá každých 500 XP. Body se sčítají ze zápasů a z uložených tréninků.")
+            }
+            Section("Zápas") {
+                Label("50 XP za dohraný zápas", systemImage: "target")
+                Label("Dalších 50 XP za výhru", systemImage: "trophy.fill")
+            }
+            Section("Trénink") {
+                Text("XP se započítá až po uložení dokončené hry, ve které padla aspoň jedna šipka. Restart, přerušení a prázdná hra nic nedají. Stejná hra se nezapočítá dvakrát.")
+                Label("Základ 20 / 40 / 70 podle obtížnosti", systemImage: "slider.horizontal.3")
+                Label("+30 za splnění", systemImage: "checkmark.circle.fill")
+                Label("Až +20 podle přesnosti", systemImage: "scope")
+                Label("+40 za nový rekord", systemImage: "medal.fill")
+                Label("+15 při přesnosti aspoň 50 % nebo sérii 3 zásahů", systemImage: "flame.fill")
+                Label("+50 u denní výzvy, +40 u týdenní", systemImage: "flag.fill")
+            }
+            Section("Ochrana před farmením") {
+                Text("Čtvrté a další dokončení stejné tréninkové hry v jeden den dají jen 10 % základu, bez bonusů. U pokročilé obtížnosti to znamená 4 XP.")
+            }
+        }
+        .navigationTitle("XP a level")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// Okno s vysvětlením XP. Stejný obsah jako v nastavení.
+struct XPInfoSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            XPInfoView()
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Hotovo") { dismiss() }
+                            .tint(Theme.brand)
+                    }
+                }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 }

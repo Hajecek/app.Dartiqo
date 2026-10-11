@@ -63,6 +63,9 @@ struct TrainingPlayView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
+                if finished {
+                    resultScreen
+                } else {
                 Text(projection.task.isEmpty ? definition.title : projection.task)
                     .font(AppFont.caption(11, weight: .bold))
                     .foregroundStyle(.white.opacity(0.78))
@@ -71,9 +74,7 @@ struct TrainingPlayView: View {
                     .frame(maxWidth: .infinity, minHeight: 26)
                     .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                 scoreboard
-                if finished {
-                    resultCard
-                } else if projection.phase == .memorize {
+                if projection.phase == .memorize {
                     promptCard {
                         Text(projection.memory.joined(separator: "  ·  "))
                             .font(AppFont.display(28))
@@ -94,6 +95,7 @@ struct TrainingPlayView: View {
                 } else {
                     throwStrip
                     input
+                }
                 }
             }
             .padding(.horizontal, 16)
@@ -284,58 +286,159 @@ struct TrainingPlayView: View {
             .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 
-    private var resultCard: some View {
+    private var resultScreen: some View {
         let result = session?.result ?? projection.result
-        return VStack(alignment: .leading, spacing: 10) {
-            Text(result?.success == true ? "Splněno" : "Nesplněno")
-                .font(AppFont.title())
-                .foregroundStyle(TrainingColors.ink)
-            Text(result?.summary ?? "")
-                .font(AppFont.body(15))
-                .foregroundStyle(TrainingColors.ink.opacity(0.75))
-            if let result {
-                Text("Šipky \(result.darts) · přesnost \(Int((result.accuracy * 100).rounded())) %")
-                    .foregroundStyle(TrainingColors.ink)
-                if let average = result.average {
-                    Text(String(format: "Průměr %.1f", average)).foregroundStyle(TrainingColors.ink)
+        let success = result?.success == true
+        let accent = success ? Theme.brand : TrainingColors.coral
+        return VStack(alignment: .leading, spacing: 14) {
+            VStack(spacing: 16) {
+                ZStack {
+                    Circle()
+                        .fill(accent.opacity(0.18))
+                        .frame(width: 96, height: 96)
+                    Circle()
+                        .fill(accent)
+                        .frame(width: 68, height: 68)
+                    Image(systemName: success ? "checkmark" : "xmark")
+                        .font(.system(size: 30, weight: .bold))
+                        .foregroundStyle(success ? Color.black : Color.white)
                 }
-                recordLine(result)
+                .accessibilityHidden(true)
+                VStack(spacing: 6) {
+                    Text(success ? "Splněno" : "Nesplněno")
+                        .font(.largeTitle.bold())
+                        .foregroundStyle(.white)
+                    if let summary = result?.summary, !summary.isEmpty {
+                        Text(summary)
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.72))
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                if let result {
+                    recordLine(result, success: success)
+                }
+            }
+            .padding(.vertical, 28)
+            .padding(.horizontal, 20)
+            .frame(maxWidth: .infinity)
+            .background {
+                ZStack {
+                    Color.white.opacity(0.05)
+                    RadialGradient(colors: [accent.opacity(0.34), .clear], center: .top, startRadius: 0, endRadius: 280)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 28, style: .continuous).strokeBorder(.white.opacity(0.08), lineWidth: 1))
+
+            if let result {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                    ForEach(resultFacts(result), id: \.label) { fact in
+                        resultChip(fact.value, fact.label)
+                    }
+                }
             }
             if saved {
-                Text(awarded > 0 ? "+\(awarded) XP" : "XP za tuhle hru už je zapsané.")
-                    .font(AppFont.body(16, weight: .bold))
-                    .foregroundStyle(TrainingColors.ink)
-            } else {
-                Button("Uložit výsledek") { save() }
-                    .buttonStyle(.glassProminent)
-                    .tint(TrainingColors.finish)
+                Label(awarded > 0 ? "+\(awarded) XP" : "XP za tuhle hru už je zapsané", systemImage: "bolt.fill")
+                    .font(.headline)
+                    .foregroundStyle(.black)
+                    .frame(maxWidth: .infinity, minHeight: 52)
+                    .background(Theme.brand, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
-            Button("Hrát znovu") { restart() }
-                .buttonStyle(.glass)
+        }
+    }
+
+    private func resultFacts(_ result: TrainingResult) -> [(value: String, label: String)] {
+        var facts: [(String, String)] = [
+            ("\(result.darts)", "Šipky"),
+            ("\(Int((result.accuracy * 100).rounded())) %", "Přesnost"),
+            ("\(result.score)", "Skóre")
+        ]
+        if let average = result.average {
+            facts.append((String(format: "%.1f", average), "Průměr"))
+        }
+        if let best = result.bestVisit {
+            facts.append(("\(best)", "Nejlepší kolo"))
+        }
+        if result.oneEighties > 0 {
+            facts.append(("\(result.oneEighties)", "180"))
+        }
+        if result.checkoutAttempts > 0 {
+            facts.append(("\(result.checkoutHits)/\(result.checkoutAttempts)", "Zavření"))
+        }
+        if result.busts > 0 {
+            facts.append(("\(result.busts)", "Přehozy"))
+        }
+        if result.bestStreak > 0 {
+            facts.append(("\(result.bestStreak)", "Série"))
+        }
+        return facts
+    }
+
+    private func resultChip(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.system(.title3, design: .rounded).weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.55))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
-        .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .padding(12)
+        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder
-    private func recordLine(_ result: TrainingResult) -> some View {
-        if let previous = previousBest {
-            let better = result.success && (result.higherIsBetter ? result.score > previous.score : result.score < previous.score)
-            Text(better ? "Nový rekord \(result.score)" : "Rekord zůstává \(previous.score)")
-                .foregroundStyle(TrainingColors.ink)
-        } else if result.success {
-            Text("První záznam \(result.score)").foregroundStyle(TrainingColors.ink)
+    private func recordLine(_ result: TrainingResult, success: Bool) -> some View {
+        let text: String? = {
+            if let previous = previousBest {
+                let better = success && (result.higherIsBetter ? result.score > previous.score : result.score < previous.score)
+                return better ? "Nový rekord \(result.score)" : "Rekord zůstává \(previous.score)"
+            }
+            return success ? "První záznam \(result.score)" : nil
+        }()
+        if let text {
+            Label(text, systemImage: "trophy.fill")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.black)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Theme.brand, in: Capsule())
         }
     }
 
     private var bottomBar: some View {
         HStack(spacing: 10) {
-            Button { undo() } label: { Label("Zpět", systemImage: "arrow.uturn.backward") }
+            if !finished || !saved {
+                Button { undo() } label: { Label("Zpět", systemImage: "arrow.uturn.backward") }
+                    .buttonStyle(.glass)
+                    .disabled(saved || (session?.actions.isEmpty ?? true))
+            }
+            if finished {
+                Button { restart() } label: {
+                    Label("Znovu", systemImage: "arrow.clockwise")
+                        .frame(maxWidth: .infinity)
+                }
                 .buttonStyle(.glass)
-                .disabled(saved || (session?.actions.isEmpty ?? true))
-            Spacer(minLength: 0)
+                Button {
+                    if saved { store.returnHome() } else { save() }
+                } label: {
+                    Label(saved ? "Domů" : "Uložit", systemImage: saved ? "house.fill" : "checkmark")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.glassProminent)
+                .tint(saved ? Theme.brand : TrainingColors.finish)
+            }
             if !finished {
+                Spacer(minLength: 0)
                 Menu {
                     Picker("Způsob zápisu", selection: $surface) {
                         ForEach(TrainingSurface.allCases) { item in

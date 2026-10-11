@@ -31,11 +31,8 @@ struct MainTabView: View {
                 .id(store.homeGeneration)
                 .tabItem { Label("Hrát", systemImage: "target") }
                 .tag(AppSection.play)
-            NavigationStack {
-                TrainingHomeView {
-                    store.section = .home
-                }
-            }
+            NavigationStack { TrainingCenterView() }
+                .id(store.homeGeneration)
                 .tabItem { Label("Trénink", systemImage: "scope") }
                 .tag(AppSection.training)
             NavigationStack { HistoryView() }

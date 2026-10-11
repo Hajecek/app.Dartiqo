@@ -170,7 +170,7 @@ struct MatchView: View {
                     surface = .grid
                 }
                 UIApplication.shared.isIdleTimerDisabled = game.config.settings.keepAwake
-                if game.currentPlayer.botLevel != nil { holdDarts = game.currentDarts }
+                if game.currentPlayer.botLevel != nil || game.isGhostTurn { holdDarts = game.currentDarts }
             }
             syncClock()
         }
@@ -207,16 +207,16 @@ struct MatchView: View {
     }
     private var botIsThrowing: Bool {
         guard let game = store.activeMatch, !isHoldingVisit, legCeremony == nil else { return false }
-        return game.currentPlayer.botLevel != nil
+        return game.currentPlayer.botLevel != nil || game.isGhostTurn
     }
     private var holdingBotVisit: Bool {
         guard isHoldingVisit, let player = holdPlayer, let game = store.activeMatch else { return false }
-        return game.players[player].botLevel != nil
+        return game.players[player].botLevel != nil || game.isGhost(player)
     }
     private var showingBotBoard: Bool { botIsThrowing || holdingBotVisit }
     private func stripDarts(for game: Match) -> [Dart] {
         if isHoldingVisit { return holdDarts }
-        if game.currentPlayer.botLevel != nil { return holdDarts.isEmpty ? game.currentDarts : holdDarts }
+        if game.currentPlayer.botLevel != nil || game.isGhostTurn { return holdDarts.isEmpty ? game.currentDarts : holdDarts }
         return game.currentDarts
     }
     private func live(_ game: Match) -> some View {
@@ -226,6 +226,10 @@ struct MatchView: View {
                 VStack(spacing: 6) {
                     matchProgressStrip(game)
                     scoreboard(game, shown: shown)
+                    if game.tracksGhostAverage, let ghostAvg = game.ghostAverage,
+                       let human = game.players.indices.first(where: { game.players[$0].botLevel == nil && !game.isGhost($0) }) {
+                        ghostRaceStrip(human: shown.average(for: human), ghost: ghostAvg)
+                    }
                 }
                 if paused {
                     Label("Hra je pozastavená", systemImage: "pause.circle.fill").font(AppFont.title()).padding(24)
@@ -443,7 +447,11 @@ struct MatchView: View {
         return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
                 Text(player.name).font(AppFont.body(14, weight: .semibold)).lineLimit(1)
-                if player.botLevel != nil { Image(systemName: "cpu").font(AppFont.caption(11, weight: .semibold)) }
+                if player.botLevel != nil {
+                    Image(systemName: "cpu").font(AppFont.caption(11, weight: .semibold))
+                } else if game.isGhost(index) {
+                    Image(systemName: "person.fill.viewfinder").font(AppFont.caption(11, weight: .semibold))
+                }
                 Spacer(minLength: 4)
                 if game.config.playsSets {
                     Text("\(state.sets)")
@@ -791,7 +799,7 @@ struct MatchView: View {
         sumText = ""
         multiplier = 1
         revision = UUID()
-        holdDarts = game.currentPlayer.botLevel != nil || !game.currentDarts.isEmpty ? game.currentDarts : []
+        holdDarts = game.currentPlayer.botLevel != nil || game.isGhostTurn || !game.currentDarts.isEmpty ? game.currentDarts : []
         if !game.currentDarts.isEmpty && surface == .total { surface = .board }
     }
     /// Arm hold *before* publishing the advanced match so the UI never flashes the next player's surface.
@@ -873,7 +881,10 @@ struct MatchView: View {
     private func dismissLegCeremony() {
         guard let ceremony = legCeremony else { return }
         if ceremony.matchFinished {
-            leaveToHome()
+            // Po konci zápasu nejdřív statistiky; domů až přes „Dokončit“.
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.3)) {
+                legCeremony = nil
+            }
             return
         }
         guard var game = store.activeMatch, game.legWinner != nil, !game.finished else {
@@ -1019,18 +1030,53 @@ struct MatchView: View {
     private func legCeremonyScreen(_ ceremony: LegCeremony) -> some View {
         LegCeremonyView(ceremony: ceremony, reduceMotion: reduceMotion) { dismissLegCeremony() }
     }
+    private func ghostRaceStrip(human: Double, ghost: Double) -> some View {
+        let ahead = human > ghost && human > 0
+        return HStack(spacing: 8) {
+            Text(String(format: "Ty %.1f", human))
+                .font(AppFont.caption(12, weight: .bold))
+                .monospacedDigit()
+            Text("·")
+                .foregroundStyle(.white.opacity(0.45))
+            Text(String(format: "Ghost %.1f", ghost))
+                .font(AppFont.caption(12, weight: .bold))
+                .monospacedDigit()
+            Spacer(minLength: 0)
+            Text(ahead ? "vedeš" : "dožeň PB")
+                .font(AppFont.caption(11, weight: .heavy))
+                .foregroundStyle(.black)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(ahead ? MatchColors.amber : Color.white.opacity(0.85), in: Capsule())
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(String(format: "Tvůj průměr %.1f, ghost %.1f", human, ghost))
+    }
+
     @MainActor private func throwBotDart() async {
         guard scenePhase == .active, !paused, !showSettings, !showLog, !showLeave, !isHoldingVisit, legCeremony == nil else { return }
-        guard let game = store.activeMatch, !game.finished, game.legWinner == nil, !game.needsBullOff, game.currentPlayer.botLevel != nil else { return }
+        guard let game = store.activeMatch, !game.finished, game.legWinner == nil, !game.needsBullOff else { return }
+        let auto = game.currentPlayer.botLevel != nil || game.isGhostTurn
+        guard auto else { return }
         if holdDarts.count != game.currentDarts.count { holdDarts = game.currentDarts }
         let key = botTaskKey
         let thrower = game.active
         do { try await Task.sleep(nanoseconds: UInt64(game.config.settings.botDelay * 1_000_000_000)) } catch { return }
-        guard !Task.isCancelled, key == botTaskKey, !isHoldingVisit, legCeremony == nil, var current = store.activeMatch, current.currentPlayer.botLevel != nil else { return }
-        var rng = SystemRandomNumberGenerator()
-        let projected = current.liveProjection
-        let target = Bot.target(in: projected, dartsLeft: 3 - current.currentDarts.count)
-        let dart = Bot.throwDart(at: target, level: current.currentPlayer.botLevel ?? 1, using: &rng)
+        guard !Task.isCancelled, key == botTaskKey, !isHoldingVisit, legCeremony == nil, var current = store.activeMatch else { return }
+        guard current.currentPlayer.botLevel != nil || current.isGhostTurn else { return }
+        let dart: Dart
+        if current.isGhostTurn {
+            dart = GhostMode.nextDart(in: current)
+        } else {
+            var rng = SystemRandomNumberGenerator()
+            let projected = current.liveProjection
+            let target = Bot.target(in: projected, dartsLeft: 3 - current.currentDarts.count)
+            dart = Bot.throwDart(at: target, level: current.currentPlayer.botLevel ?? 1, using: &rng)
+        }
         let oldCount = current.visits.count
         do {
             try current.recordDart(dart)
@@ -1903,7 +1949,7 @@ private struct LegCeremonyView: View {
             ? "\(winnerName) zavřel na \(ceremony.checkoutScore) a vyhrává leg \(ceremony.leg)."
             : "\(winnerName) vyhrává leg \(ceremony.leg)."
         )
-        .accessibilityHint(ceremony.matchFinished ? "Vrátí tě na domovskou stránku" : "Pokračuj na další leg")
+        .accessibilityHint(ceremony.matchFinished ? "Otevře statistiky zápasu" : "Pokračuj na další leg")
         .accessibilityAddTraits(.isButton)
     }
 
@@ -2004,7 +2050,7 @@ private struct LegCeremonyView: View {
 
     private var continueButton: some View {
         Button(action: onContinue) {
-            Text(ceremony.matchFinished ? "Domů" : ceremony.setClosed ? "Další set" : "Další leg")
+            Text(ceremony.matchFinished ? "Statistiky" : ceremony.setClosed ? "Další set" : "Další leg")
                 .font(.headline)
                 .foregroundStyle(MatchColors.ink)
                 .frame(maxWidth: .infinity, minHeight: 54)

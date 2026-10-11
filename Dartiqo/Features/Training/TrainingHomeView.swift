@@ -1,4 +1,5 @@
 import SwiftUI
+import AVKit
 
 /// Stejný průvodce jako nový zápas: výběr kartou, zpět šipkou a lišta Domů / Pokračovat.
 struct TrainingHomeView: View {
@@ -6,6 +7,8 @@ struct TrainingHomeView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
     private let onHome: (() -> Void)?
+    private let gameIDs: [String]?
+    private let marksDaily: Bool
 
     @State private var selectedID = TrainingCatalog.showcase.first ?? "around-clock"
     @State private var step = 0
@@ -18,11 +21,16 @@ struct TrainingHomeView: View {
     @State private var showCheckouts = true
     @State private var numbers = Set(1...7)
 
-    init(onHome: (() -> Void)? = nil) {
+    init(gameIDs: [String]? = nil, marksDaily: Bool = false, onHome: (() -> Void)? = nil) {
+        self.gameIDs = gameIDs
+        self.marksDaily = marksDaily
         self.onHome = onHome
     }
 
-    private var games: [TrainingDefinition] { TrainingCatalog.showcaseGames }
+    private var games: [TrainingDefinition] {
+        let ids = gameIDs ?? TrainingCatalog.showcase
+        return ids.compactMap(TrainingCatalog.find)
+    }
     private var selected: TrainingDefinition? { games.first { $0.id == selectedID } ?? games.first }
     private let stepTitles = ["Hra", "Pravidla", "Souhrn"]
     private var stepCount: Int { stepTitles.count }
@@ -76,6 +84,10 @@ struct TrainingHomeView: View {
             }
         }
         .sensoryFeedback(.selection, trigger: step)
+        .onAppear {
+            guard let first = games.first?.id, !games.contains(where: { $0.id == selectedID }) else { return }
+            choose(first)
+        }
         .sheet(item: $info) { definition in
             TrainingInfoSheet(definition: definition) {
                 info = nil
@@ -354,6 +366,7 @@ struct TrainingHomeView: View {
         default:
             break
         }
+        value.isDaily = marksDaily
         return value
     }
 
@@ -384,30 +397,34 @@ struct TrainingHomeView: View {
     }
 }
 
-/// Okno hry: terč přehraje cíle a pod ním je, co se má udělat.
-private struct TrainingInfoSheet: View {
+/// Okno hry: animace terče, švihnutím video a pod tím přesný postup.
+struct TrainingInfoSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var definition: TrainingDefinition
     var onSelect: () -> Void
 
     @State private var beat = 0
+    @State private var page = 0
 
-    private var beats: [TrainingDemoBeat] { TrainingDemoBeat.script(definition.id) }
-    private var shown: TrainingDemoBeat { beats[beat % beats.count] }
+    private var lesson: TrainingLesson { TrainingLesson.load(definition.id) }
+    private var shown: TrainingDemoBeat { lesson.beats[beat % lesson.beats.count] }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    TouchDartboard(marks: shown.darts, interactive: false, showMarkNumbers: shown.darts.count > 1) { _ in }
-                        .frame(maxWidth: 320)
+                    TabView(selection: $page) {
+                        animationPage.tag(0)
+                        TrainingClipPage(gameID: definition.id).tag(1)
+                    }
+                    .tabViewStyle(.page(indexDisplayMode: .always))
+                    .frame(height: 430)
+                    Text(page == 0 ? "Potáhni doleva pro video" : "Potáhni doprava pro animaci")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity)
-                    Text(shown.caption)
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .multilineTextAlignment(.center)
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 10) {
                         Text("O co jde")
                             .font(.caption.weight(.bold))
                             .foregroundStyle(.secondary)
@@ -417,10 +434,18 @@ private struct TrainingInfoSheet: View {
                             .font(.caption.weight(.bold))
                             .foregroundStyle(.secondary)
                             .padding(.top, 4)
-                        Text(definition.rules)
-                            .font(.body)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        ForEach(Array(lesson.steps.enumerated()), id: \.offset) { index, step in
+                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                Text("\(index + 1)")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(.black)
+                                    .frame(width: 22, height: 22)
+                                    .background(Theme.brand, in: Circle())
+                                Text(step)
+                                    .font(.body)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
                     }
                     .padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -443,54 +468,220 @@ private struct TrainingInfoSheet: View {
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
         .task(id: definition.id) {
-            guard !reduceMotion, beats.count > 1 else { return }
+            guard !reduceMotion, lesson.beats.count > 1 else { return }
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 2_800_000_000)
                 guard !Task.isCancelled else { return }
-                beat = (beat + 1) % beats.count
+                beat = (beat + 1) % lesson.beats.count
             }
         }
+    }
+
+    private var animationPage: some View {
+        VStack(spacing: 12) {
+            TouchDartboard(marks: shown.darts, interactive: false, showMarkNumbers: shown.darts.count > 1) { _ in }
+                .frame(maxWidth: 300)
+                .frame(maxWidth: .infinity)
+            Text(shown.caption)
+                .font(.headline)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: 72, alignment: .top)
+        }
+        .padding(.horizontal, 8)
+    }
+}
+
+/// Video ke hře je soubor `TrainingVideos/<id>.mp4` v aplikaci, třeba `around-clock.mp4`.
+enum TrainingClip {
+    static func url(for id: String) -> URL? {
+        let folders: [String?] = ["TrainingVideos", "Resources/TrainingVideos", nil]
+        for ext in ["mp4", "mov", "m4v"] {
+            for folder in folders {
+                if let folder, let url = Bundle.main.url(forResource: id, withExtension: ext, subdirectory: folder) {
+                    return url
+                }
+                if folder == nil, let url = Bundle.main.url(forResource: id, withExtension: ext) {
+                    return url
+                }
+            }
+        }
+        return nil
+    }
+}
+
+private struct TrainingClipPage: View {
+    var gameID: String
+
+    var body: some View {
+        Group {
+            if let url = TrainingClip.url(for: gameID) {
+                TrainingClipPlayer(url: url)
+            } else {
+                VStack(spacing: 12) {
+                    Image(systemName: "video.fill")
+                        .font(.system(size: 36, weight: .semibold))
+                        .foregroundStyle(.black)
+                        .frame(width: 72, height: 72)
+                        .background(Theme.brand, in: Circle())
+                        .accessibilityHidden(true)
+                    Text("Sem přijde vaše video")
+                        .font(.headline)
+                    Text("Ke každé hře doplníte vlastní vysvětlení. Až ho přidáte, přehraje se tady místo téhle plochy.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .padding(.horizontal, 8)
+                .padding(.bottom, 28)
+            }
+        }
+    }
+}
+
+private struct TrainingClipPlayer: View {
+    var url: URL
+    @State private var player: AVPlayer?
+
+    var body: some View {
+        VideoPlayer(player: player)
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .padding(.horizontal, 8)
+            .padding(.bottom, 28)
+            .onAppear {
+                if player == nil { player = AVPlayer(url: url) }
+                player?.play()
+            }
+            .onDisappear { player?.pause() }
     }
 }
 
 private struct TrainingDemoBeat {
     var darts: [Dart]
     var caption: String
+}
 
-    static func script(_ id: String) -> [TrainingDemoBeat] {
+private struct TrainingLesson {
+    var beats: [TrainingDemoBeat]
+    var steps: [String]
+
+    static func load(_ id: String) -> TrainingLesson {
         switch id {
         case "around-clock":
-            return (1...5).map { TrainingDemoBeat(darts: [Dart($0)], caption: "Tref \($0). Další číslo přijde až po zásahu.") }
+            return TrainingLesson(beats: [
+                TrainingDemoBeat(darts: [Dart(1)], caption: "Začni na 1. Platí single, double i triple."),
+                TrainingDemoBeat(darts: [Dart(2)], caption: "Zásah posune cíl na 2, potom na 3 a dál."),
+                TrainingDemoBeat(darts: [Dart(5)], caption: "Minutí tě nevrací. Zůstáváš na stejném čísle."),
+                TrainingDemoBeat(darts: [Dart(20)], caption: "Po 1 až 19 přijde dvacítka."),
+                TrainingDemoBeat(darts: [Dart(25, 2)], caption: "Kolo uzavře bull. Platí 25 i 50.")
+            ], steps: [
+                "Hoď na číslo 1. Zásah je single, double i triple.",
+                "Po zásahu se cíl posune o jedno číslo výš, až na 20.",
+                "Když mineš, číslo se nemění a házíš na něj znovu.",
+                "Po dvacítce tref střed. Zelená 25 i červená 50 kolo ukončí.",
+                "Hra končí zásahem bullu, nebo když dojde limit šipek."
+            ])
         case "bobs-27":
-            return [
-                TrainingDemoBeat(darts: [Dart(1, 2)], caption: "D1 přičte 2 body."),
-                TrainingDemoBeat(darts: [Dart(16, 2)], caption: "D16 přičte 32. Tři minuly stejnou hodnotu odečtou."),
+            return TrainingLesson(beats: [
+                TrainingDemoBeat(darts: [Dart(1, 2)], caption: "Kolo D1. Zásah přičte 2 body ke startu 27."),
+                TrainingDemoBeat(darts: [Dart(1)], caption: "S1 se nepočítá. V kole platí jen double."),
+                TrainingDemoBeat(darts: [Dart(16, 2)], caption: "D16 přičte 32. Každé kolo je další double."),
                 TrainingDemoBeat(darts: [Dart(20, 2)], caption: "Po D20 vyhrává skóre nad nulou.")
-            ]
+            ], steps: [
+                "Začínáš na 27. Kola jdou D1, D2, až D20 a v každém máš tři šipky.",
+                "Trefený double přičte svou hodnotu. D1 přidá 2, D20 přidá 40.",
+                "Single a triple toho čísla jsou minuta a body nepřidají.",
+                "Když v kole mineš všechny tři šipky, stejná hodnota se odečte.",
+                "Nula a méně hru prohrává. Po D20 vyhráváš, jen když zůstanou body nad nulou."
+            ])
         case "shanghai":
-            return [
-                TrainingDemoBeat(darts: [Dart(1)], caption: "Na čísle kola nejdřív single."),
-                TrainingDemoBeat(darts: [Dart(1), Dart(1, 2)], caption: "Pak double stejného čísla."),
-                TrainingDemoBeat(darts: [Dart(1), Dart(1, 2), Dart(1, 3)], caption: "Single, double i triple v jedné návštěvě je výhra.")
-            ]
+            return TrainingLesson(beats: [
+                TrainingDemoBeat(darts: [Dart(1)], caption: "Kolo na 1. První šipka může být single."),
+                TrainingDemoBeat(darts: [Dart(1), Dart(1, 2)], caption: "K ní přidej double stejného čísla."),
+                TrainingDemoBeat(darts: [Dart(1), Dart(1, 2), Dart(1, 3)], caption: "Single, double i triple v jedné návštěvě je Shanghai."),
+                TrainingDemoBeat(darts: [Dart(7)], caption: "Čísla jdou od nejmenšího. Výchozí řada je 1 až 7.")
+            ], steps: [
+                "Každé kolo patří jednomu číslu. Výchozí jsou 1 až 7, od nejmenšího.",
+                "V kole máš tři šipky. Počítá se jen číslo toho kola.",
+                "Když v jedné návštěvě trefíš single, double i triple, hra hned končí výhrou.",
+                "Bez Shanghai se zásahy sčítají. Po posledním čísle stačí skóre nad nulou.",
+                "V pravidlech si čísla zapneš a vypneš. Hraje se jen to, co necháš zapnuté."
+            ])
         case "checkout-40":
-            return [
-                TrainingDemoBeat(darts: [Dart(20, 2)], caption: "40 zavřeš doublem. Nejjistší je D20."),
-                TrainingDemoBeat(darts: [Dart(10, 2), Dart(10, 2)], caption: "Dvě D10 platí taky. Přehoz vrací čtyřicítku.")
-            ]
+            return TrainingLesson(beats: [
+                TrainingDemoBeat(darts: [Dart(20, 2)], caption: "Ze 40 je nejkratší cesta jedna šipka, D20."),
+                TrainingDemoBeat(darts: [Dart(20), Dart(10, 2)], caption: "S20 a D10 je taky přesně 40."),
+                TrainingDemoBeat(darts: [Dart(10, 2), Dart(10, 2)], caption: "Dvě D10 platí. Poslední šipka musí být double."),
+                TrainingDemoBeat(darts: [Dart(20, 3)], caption: "T20 je 60. To je přehoz a čtyřicítka se vrací.")
+            ], steps: [
+                "Na začátku máš 40 a jednu návštěvu, tedy nejvýš tři šipky.",
+                "Na nulu se musíš dostat doublem. Nejkratší hod je D20.",
+                "Platí i jiná přesná cesta, třeba S20 a D10, nebo dvě D10.",
+                "Poslední šipka, která zavře, musí být double. Single ani triple čtyřicítku nezavřou.",
+                "Přehoz vrací skóre na 40. Kolo je splněné, jen když skončíš přesně na nule."
+            ])
         case "treble-20":
-            return [
-                TrainingDemoBeat(darts: [Dart(20, 3)], caption: "Platí jen T20."),
-                TrainingDemoBeat(darts: [Dart(20)], caption: "Single 20 je minuta, i když dá dvacet bodů."),
-                TrainingDemoBeat(darts: [Dart(20, 3), Dart(20, 3)], caption: "Série roste jen z dalších trojitých dvacítek.")
-            ]
+            return TrainingLesson(beats: [
+                TrainingDemoBeat(darts: [Dart(20, 3)], caption: "Jediný platný zásah je T20."),
+                TrainingDemoBeat(darts: [Dart(20)], caption: "S20 je minuta, i když leží na dvacítce."),
+                TrainingDemoBeat(darts: [Dart(20, 2)], caption: "D20 taky neplatí. Chce to trojitý prstenec."),
+                TrainingDemoBeat(darts: [Dart(20, 3), Dart(20, 3), Dart(20, 3)], caption: "Tři T20 jsou čistá návštěva. Jiných 60 bodů se nepočítá.")
+            ], steps: [
+                "Házej na trojitou dvacítku. Počítá se jen T20.",
+                "Single 20 a double 20 jsou minuta, body z nich neber.",
+                "Libovolný jiný součet 60, třeba T19 a S3, zásah není.",
+                "Každé T20 přidá jeden úspěšný hod. Série roste jen z dalších T20.",
+                "Po daném počtu šipek uspěješ, když trefíš požadovaný podíl."
+            ])
+        case "bull-challenge":
+            return TrainingLesson(beats: [
+                TrainingDemoBeat(darts: [Dart(25)], caption: "Zelený střed, 25, je zásah."),
+                TrainingDemoBeat(darts: [Dart(25, 2)], caption: "Červený střed, 50, je taky zásah."),
+                TrainingDemoBeat(darts: [Dart(20)], caption: "Číslo mimo střed se nepočítá."),
+                TrainingDemoBeat(darts: [Dart(25, 2), Dart(25)], caption: "Stačí kterýkoli střed. Sleduje se podíl zásahů.")
+            ], steps: [
+                "Cíl je jen střed terče. Oba kroužky platí.",
+                "Zelená 25 je jeden zásah. Červená 50 je taky jeden zásah.",
+                "Single, double ani triple čísla 1 až 20 se nepočítají.",
+                "Každá šipka je jeden pokus. Minutí sérii úspěšnosti snižuje.",
+                "Po daném počtu šipek uspěješ, když střed trefíš dost často."
+            ])
+        case "cricket-practice":
+            return TrainingLesson(beats: [
+                TrainingDemoBeat(darts: [Dart(20), Dart(20), Dart(20)], caption: "Tři singly zavřou dvacítku."),
+                TrainingDemoBeat(darts: [Dart(20, 3)], caption: "Jedno T20 zavře prázdné číslo najednou."),
+                TrainingDemoBeat(darts: [Dart(19)], caption: "Pak jdou 19, 18, 17, 16 a 15."),
+                TrainingDemoBeat(darts: [Dart(25, 2)], caption: "Nakonec bull. 25 je jedna značka, 50 jsou dvě.")
+            ], steps: [
+                "Zavíráš 20, 19, 18, 17, 16, 15 a bull. Soupeře nemáš.",
+                "Každý zásah čísla je jedna značka. Tři značky číslo zavřou.",
+                "Triple dá tři značky, takže prázdné číslo zavře jednou šipkou.",
+                "Další zásah zavřeného čísla už nic nepřidá. Body se nesbírají.",
+                "Bull bere oba středy. 25 je jedna značka, 50 jsou dvě. Hra končí, když je zavřené všechno."
+            ])
         case "practice-501":
-            return [
-                TrainingDemoBeat(darts: [Dart(20, 3), Dart(20, 3), Dart(20, 3)], caption: "Body se sbírají po třech šipkách. 180 je T20, T20, T20."),
-                TrainingDemoBeat(darts: [Dart(20, 2)], caption: "Leg končí doublem. D20 zavře zbylých 40.")
-            ]
+            return TrainingLesson(beats: [
+                TrainingDemoBeat(darts: [Dart(20, 3), Dart(20, 3), Dart(20, 3)], caption: "Z 501 se odečítá. Tři T20 uberou 180."),
+                TrainingDemoBeat(darts: [Dart(20)], caption: "S20 ubere 20. Počítá se každá šipka návštěvy."),
+                TrainingDemoBeat(darts: [Dart(20, 2)], caption: "Zbylých 40 zavře D20. Na nulu se jde doublem."),
+                TrainingDemoBeat(darts: [Dart(19, 3)], caption: "Přehoz, nebo nula bez doublu, celou návštěvu zahodí.")
+            ], steps: [
+                "Začínáš na 501. Každá šipka od skóre odečte svou hodnotu.",
+                "Návštěva jsou tři šipky. T20, T20 a T20 je 180 a víc v jednom kole nejde.",
+                "Pod nulu se dostat nesmíš. Takový hod je přehoz a vrací skóre z začátku návštěvy.",
+                "Nula platí jen doublem. Zbylých 40 zavře D20, zbylých 32 zavře D16.",
+                "Leg je hotový, když skončíš přesně na nule. Sleduje se průměr a počet šipek."
+            ])
         default:
-            return [TrainingDemoBeat(darts: [Dart(20)], caption: "Tref zvýrazněný segment.")]
+            return TrainingLesson(
+                beats: [TrainingDemoBeat(darts: [Dart(20)], caption: definitionFallback)],
+                steps: ["Tref zvýrazněný segment.", "Postupuj podle popisu hry, dokud ji nesplníš."]
+            )
         }
     }
+
+    private static var definitionFallback: String { "Tref zvýrazněný segment." }
 }

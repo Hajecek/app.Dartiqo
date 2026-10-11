@@ -14,6 +14,7 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 16) {
                 profileRow
                 if store.activeMatch != nil { resumeRow }
+                dailyChallenge
                 actionGrid
                 wideCards
             }
@@ -67,13 +68,22 @@ struct HomeView: View {
                 Avatar(name: store.profile?.name ?? "", size: 76, photo: store.profile?.photoJPEG)
                     .environment(\.colorScheme, .dark)
                     .overlay(Circle().stroke(Theme.brand, lineWidth: 2))
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(store.profile?.name ?? "Hráč")
                         .font(.title3.bold())
                         .foregroundStyle(.white)
-                    Text("Level \(store.level)")
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.72))
+                    HStack(spacing: 8) {
+                        Text("Level \(store.level)")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.white.opacity(0.72))
+                        Label("\(store.trainingStreak)", systemImage: "flame.fill")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(.black)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Theme.brand, in: Capsule())
+                            .accessibilityLabel("\(trainingDayCount(store.trainingStreak)) v řadě")
+                    }
                 }
                 Spacer(minLength: 8)
                 VStack(alignment: .trailing, spacing: 2) {
@@ -98,7 +108,7 @@ struct HomeView: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(store.profile?.name ?? "Hráč"), level \(store.level), průměr \(averageText)")
+        .accessibilityLabel("\(store.profile?.name ?? "Hráč"), level \(store.level), \(trainingDayCount(store.trainingStreak)) v řadě, průměr \(averageText)")
     }
 
     private var averageText: String {
@@ -117,6 +127,62 @@ struct HomeView: View {
         .buttonStyle(.plain)
     }
 
+    private var dailyChallenge: some View {
+        let tasks = TrainingDaily.tasks(in: store.trainingHistory)
+        let done = tasks.filter(\.done).count
+        let next = tasks.first { !$0.done }
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        return Group {
+            if let next, done < tasks.count {
+                NavigationLink {
+                    TrainingHomeView(gameIDs: [next.gameID], marksDaily: true)
+                } label: {
+                    dailyBody(tasks: tasks, done: done, shape: shape)
+                }
+                .buttonStyle(.plain)
+            } else {
+                dailyBody(tasks: tasks, done: done, shape: shape)
+            }
+        }
+    }
+
+    private func dailyBody(tasks: [TrainingDailyTask], done: Int, shape: RoundedRectangle) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Label("Denní výzva", systemImage: "flag.fill")
+                    .font(.headline)
+                Spacer(minLength: 8)
+                Text("\(done)/\(tasks.count)")
+                    .font(.caption.weight(.bold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(.black.opacity(0.12), in: Capsule())
+                Text("+50 XP")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.black.opacity(0.55))
+            }
+            HStack(spacing: 6) {
+                ForEach(tasks) { task in
+                    Label(task.title, systemImage: task.done ? "checkmark.circle.fill" : "circle")
+                        .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .frame(maxWidth: .infinity)
+                        .background(.black.opacity(task.done ? 0.16 : 0.08), in: Capsule())
+                }
+            }
+            ProgressView(value: Double(done), total: Double(max(tasks.count, 1)))
+                .tint(.black)
+        }
+        .foregroundStyle(.black)
+        .padding(16)
+        .background(Theme.brand, in: shape)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Denní výzva, \(done) z \(tasks.count)")
+    }
+
     private var actionGrid: some View {
         VStack(spacing: 12) {
             HStack(spacing: 12) {
@@ -129,10 +195,10 @@ struct HomeView: View {
                         height: 190
                     )
                 }
-                NavigationLink { TrainingHomeView() } label: {
+                NavigationLink { TrainingCenterView() } label: {
                     LobbyCard(
                         title: "Trénovat",
-                        detail: "80 her, výzvy a plán podle hodů",
+                        detail: store.trainingStreak > 0 ? "\(trainingDayCount(store.trainingStreak)) v řadě" : "Přesnost, výzvy a rekordy",
                         symbol: "scope",
                         colors: [Color(red: 1.0, green: 0.72, blue: 0.20), Color(red: 0.95, green: 0.48, blue: 0.08)],
                         height: 190
