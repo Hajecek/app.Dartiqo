@@ -85,6 +85,7 @@ struct MatchView: View {
     @State private var holdPlayer: Int?
     @State private var legCeremony: LegCeremony?
     @State private var boardDetail: BoardDetailSelection?
+    @State private var statsPlayer: BoardDetailSelection?
     @State private var boardZoomed = false
     /// 0 = všechny legy, jinak číslo legu.
     @State private var detailLeg: Int? = 0
@@ -136,6 +137,11 @@ struct MatchView: View {
         .fullScreenCover(item: $boardDetail) { selection in
             if let game = store.activeMatch {
                 boardDetailScreen(game, player: selection.player)
+            }
+        }
+        .sheet(item: $statsPlayer) { selection in
+            if let game = store.activeMatch {
+                playerStatsSheet(game, player: selection.player)
             }
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: isHoldingVisit)
@@ -216,7 +222,7 @@ struct MatchView: View {
     private var botTaskKey: String {
         guard let g = store.activeMatch else { return "none" }
         // isHoldingVisit / legCeremony intentionally omitted — must not cancel mid-throw.
-        return "\(g.id)-\(g.active)-\(g.leg)-\(g.visits.last?.id.uuidString ?? "start")-\(g.currentDarts.map(\.label).joined())-\(paused)-\(showSettings)-\(showLog)-\(showLeave)-\(scenePhase == .active)-\(g.finished)-\(g.legWinner ?? -1)-\(revision)"
+        return "\(g.id)-\(g.active)-\(g.leg)-\(g.visits.last?.id.uuidString ?? "start")-\(g.currentDarts.map(\.label).joined())-\(paused)-\(showSettings)-\(showLog)-\(showLeave)-\(statsPlayer != nil)-\(scenePhase == .active)-\(g.finished)-\(g.legWinner ?? -1)-\(revision)"
     }
     private var botIsThrowing: Bool {
         guard let game = store.activeMatch, !isHoldingVisit, legCeremony == nil else { return false }
@@ -439,6 +445,8 @@ struct MatchView: View {
     private func scoreboard(_ game: Match,shown: Match) -> some View {
         let columns = min(2, game.players.count)
         let rows = stride(from: 0, to: game.players.count, by: columns).map { Array($0..<min($0 + columns, game.players.count)) }
+        let activeIndex = isHoldingVisit ? (holdPlayer ?? game.active) : game.active
+        let rowCount = max(1, rows.count)
         return Grid(horizontalSpacing: 0, verticalSpacing: 0) {
             ForEach(rows, id: \.first) { row in
                 GridRow {
@@ -448,7 +456,18 @@ struct MatchView: View {
                     if row.count < columns { Color.clear.gridCellUnsizedAxes([.horizontal, .vertical]) }
                 }
             }
-        }.clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        }
+        .clipShape(
+            ScoreboardBannerCutout(
+                centerX: ScoreboardBannerCutout.centerX(
+                    activeIndex: activeIndex,
+                    columns: columns
+                ),
+                cutFromTop: activeIndex / columns == 0,
+                rowCount: rowCount
+            )
+        )
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: activeIndex)
     }
     private func playerPanel(_ game: Match, shown: Match, index: Int) -> some View {
         let player = game.players[index]
@@ -458,56 +477,88 @@ struct MatchView: View {
         let value = game.config.mode == .x01 ? "\(state.remaining)" : game.config.mode == .aroundClock ? (state.clockTarget >= 21 ? "BULL" : "\(state.clockTarget)") : "\(state.points)"
         let x01 = game.config.mode == .x01
         let stat = x01 ? String(format: "%.1f", shown.average(for: index)) : "\(game.states[index].rounds)"
-        return VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                Text(player.name).font(AppFont.body(14, weight: .semibold)).lineLimit(1)
-                if player.botLevel != nil {
-                    Image(systemName: "cpu").font(AppFont.caption(11, weight: .semibold))
-                } else if game.isGhost(index) {
-                    Image(systemName: "person.fill.viewfinder").font(AppFont.caption(11, weight: .semibold))
+        return Button {
+            statsPlayer = BoardDetailSelection(player: index)
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(player.name).font(AppFont.body(14, weight: .semibold)).lineLimit(1)
+                    if player.botLevel != nil {
+                        Image(systemName: "cpu").font(AppFont.caption(11, weight: .semibold))
+                    } else if game.isGhost(index) {
+                        Image(systemName: "person.fill.viewfinder").font(AppFont.caption(11, weight: .semibold))
+                    }
+                    Spacer(minLength: 4)
+                    if game.config.playsSets {
+                        Text("\(state.sets)")
+                            .font(AppFont.body(14, weight: .bold))
+                            .foregroundStyle(MatchColors.ink)
+                            .frame(minWidth: 24, minHeight: 24)
+                            .background(.white.opacity(0.85), in: RoundedRectangle(cornerRadius: 7))
+                            .accessibilityLabel("\(state.sets) setů")
+                    }
+                    Text("\(state.legs)").font(AppFont.body(14, weight: .bold)).foregroundStyle(.white).frame(minWidth: 24, minHeight: 24).background(MatchColors.ink, in: RoundedRectangle(cornerRadius: 7)).accessibilityLabel("\(state.legs) vyhraných legů")
                 }
-                Spacer(minLength: 4)
-                if game.config.playsSets {
-                    Text("\(state.sets)")
-                        .font(AppFont.body(14, weight: .bold))
-                        .foregroundStyle(MatchColors.ink)
-                        .frame(minWidth: 24, minHeight: 24)
-                        .background(.white.opacity(0.85), in: RoundedRectangle(cornerRadius: 7))
-                        .accessibilityLabel("\(state.sets) setů")
+                if game.config.hasHandicap {
+                    Text(game.config.ruleLine(for: index))
+                        .font(AppFont.caption(11, weight: .bold))
+                        .opacity(0.65)
+                        .lineLimit(1)
+                        .accessibilityLabel("Handicap \(game.config.ruleLine(for: index))")
                 }
-                Text("\(state.legs)").font(AppFont.body(14, weight: .bold)).foregroundStyle(.white).frame(minWidth: 24, minHeight: 24).background(MatchColors.ink, in: RoundedRectangle(cornerRadius: 7)).accessibilityLabel("\(state.legs) vyhraných legů")
-            }
-            if game.config.hasHandicap {
-                Text(game.config.ruleLine(for: index))
-                    .font(AppFont.caption(11, weight: .bold))
-                    .opacity(0.65)
+                Text(value)
+                    .font(AppFont.display(72, weight: .bold))
+                    .monospacedDigit()
+                    .minimumScaleFactor(0.5)
                     .lineLimit(1)
-                    .accessibilityLabel("Handicap \(game.config.ruleLine(for: index))")
+                    .foregroundStyle(active ? Color.white : MatchColors.ink)
+                    .contentTransition(.numericText(value: Double(x01 ? state.remaining : state.points)))
+                    .frame(maxWidth: .infinity, minHeight: 80, maxHeight: 80, alignment: .leading)
+                HStack(spacing: 4) {
+                    Text(x01 ? "Ø" : "Kola").font(AppFont.caption(12, weight: .heavy)).opacity(0.6)
+                    Text(stat).font(AppFont.body(15, weight: .bold)).monospacedDigit().contentTransition(.numericText())
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(MatchColors.ink.opacity(0.12), in: Capsule())
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(x01 ? "Průměr \(stat)" : "\(stat) kol")
             }
-            Text(value)
-                .font(AppFont.display(72, weight: .bold))
-                .monospacedDigit()
-                .minimumScaleFactor(0.5)
-                .lineLimit(1)
-                .foregroundStyle(active ? Color.white : MatchColors.ink)
-                .contentTransition(.numericText(value: Double(x01 ? state.remaining : state.points)))
-                .frame(maxWidth: .infinity, minHeight: 80, maxHeight: 80, alignment: .leading)
-            HStack(spacing: 4) {
-                Text(x01 ? "Ø" : "Kola").font(AppFont.caption(12, weight: .heavy)).opacity(0.6)
-                Text(stat).font(AppFont.body(15, weight: .bold)).monospacedDigit().contentTransition(.numericText())
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(MatchColors.ink.opacity(0.12), in: Capsule())
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(x01 ? "Průměr \(stat)" : "\(stat) kol")
+            .foregroundStyle(MatchColors.ink)
+            .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(active ? MatchColors.coral : MatchColors.amber)
         }
-        .foregroundStyle(MatchColors.ink)
-        .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(active ? MatchColors.coral : MatchColors.amber)
+        .buttonStyle(.plain)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: active)
-        .accessibilityElement(children: .combine).accessibilityAddTraits(active ? .isSelected : [])
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(active ? [.isSelected, .isButton] : .isButton)
+        .accessibilityHint("Zobrazí statistiky ze zápasu")
+        .accessibilityValue(active ? "Na tahu" : "")
+    }
+
+    private func playerStatsSheet(_ game: Match, player: Int) -> some View {
+        let name = game.players.indices.contains(player) ? game.players[player].name : "Hráč"
+        return NavigationStack {
+            ScrollView {
+                resultPlayerReport(game, index: player)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                    .padding(.bottom, 24)
+            }
+            .scrollIndicators(.hidden)
+            .background(MatchColors.background.ignoresSafeArea())
+            .navigationTitle(name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Hotovo") { statsPlayer = nil }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .preferredColorScheme(.dark)
     }
     /// Current throw: tři šipky, nebo jeden součet kola (hlas / číselný zápis).
     @ViewBuilder
@@ -1620,7 +1671,7 @@ struct MatchView: View {
     }
 
     @MainActor private func throwBotDart() async {
-        guard scenePhase == .active, !paused, !showSettings, !showLog, !showLeave, !isHoldingVisit, legCeremony == nil else { return }
+        guard scenePhase == .active, !paused, !showSettings, !showLog, !showLeave, statsPlayer == nil, !isHoldingVisit, legCeremony == nil else { return }
         guard let game = store.activeMatch, !game.finished, game.legWinner == nil, !game.needsBullOff else { return }
         let auto = game.currentPlayer.botLevel != nil || game.isGhostTurn
         guard auto else { return }
@@ -2437,6 +2488,70 @@ private struct ResultDetailCard: ViewModifier {
 private extension View {
     func detailCard() -> some View {
         modifier(ResultDetailCard())
+    }
+}
+
+/// Banner scoreboardu s výřezem na hraně u hráče na tahu.
+private struct ScoreboardBannerCutout: Shape {
+    /// Relativní střed výřezu na šířku banneru (0…1).
+    var centerX: CGFloat
+    var cutFromTop: Bool
+    var rowCount: Int
+    var corner: CGFloat = 22
+    var cutWidth: CGFloat = 56
+    var cutDepth: CGFloat = 18
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(centerX, cutFromTop ? 0 : 1) }
+        set {
+            centerX = newValue.first
+            cutFromTop = newValue.second < 0.5
+        }
+    }
+
+    static func centerX(activeIndex: Int, columns: Int) -> CGFloat {
+        let cols = max(1, columns)
+        let col = activeIndex % cols
+        return (CGFloat(col) + 0.5) / CGFloat(cols)
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let rows = max(1, rowCount)
+        let cellH = rect.height / CGFloat(rows)
+        let cx = rect.minX + rect.width * min(max(centerX, 0), 1)
+        let half = min(cutWidth, rect.width * 0.34) / 2
+        let depth = min(cutDepth, cellH * 0.24)
+        let left = max(rect.minX + corner + 4, cx - half)
+        let right = min(rect.maxX - corner - 4, cx + half)
+
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX + corner, y: rect.minY))
+        if cutFromTop {
+            path.addLine(to: CGPoint(x: left, y: rect.minY))
+            path.addCurve(
+                to: CGPoint(x: right, y: rect.minY),
+                control1: CGPoint(x: left, y: rect.minY + depth),
+                control2: CGPoint(x: right, y: rect.minY + depth)
+            )
+        }
+        path.addLine(to: CGPoint(x: rect.maxX - corner, y: rect.minY))
+        path.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.minY + corner), control: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - corner))
+        path.addQuadCurve(to: CGPoint(x: rect.maxX - corner, y: rect.maxY), control: CGPoint(x: rect.maxX, y: rect.maxY))
+        if !cutFromTop {
+            path.addLine(to: CGPoint(x: right, y: rect.maxY))
+            path.addCurve(
+                to: CGPoint(x: left, y: rect.maxY),
+                control1: CGPoint(x: right, y: rect.maxY - depth),
+                control2: CGPoint(x: left, y: rect.maxY - depth)
+            )
+        }
+        path.addLine(to: CGPoint(x: rect.minX + corner, y: rect.maxY))
+        path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY - corner), control: CGPoint(x: rect.minX, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + corner))
+        path.addQuadCurve(to: CGPoint(x: rect.minX + corner, y: rect.minY), control: CGPoint(x: rect.minX, y: rect.minY))
+        path.closeSubpath()
+        return path
     }
 }
 
