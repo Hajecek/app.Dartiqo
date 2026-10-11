@@ -3,9 +3,9 @@ import SwiftUI
 /// Lobby ve stylu herní aplikace. Navigace a tab bar zůstávají systémové.
 struct HomeView: View {
     @EnvironmentObject private var store: AppStore
-    @State private var live = false
     @State private var testNotice = false
     @State private var preview: LockedPreview?
+    @State private var showDaily = false
 
     private let canvas = Color.black
 
@@ -13,8 +13,6 @@ struct HomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 profileRow
-                if store.activeMatch != nil { resumeRow }
-                dailyChallenge
                 actionGrid
                 wideCards
             }
@@ -34,7 +32,8 @@ struct HomeView: View {
                     .clipShape(Circle())
                     .accessibilityLabel("Dartiqo")
             }
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                dailyToolbarButton
                 Button {
                     testNotice = true
                 } label: {
@@ -50,14 +49,27 @@ struct HomeView: View {
         } message: {
             Text("Zkušební tlačítko vpravo v liště.")
         }
-        .fullScreenCover(isPresented: $live) {
-            NavigationStack { MatchView() }
-                .environmentObject(store)
-        }
-        .onChange(of: store.homeGeneration) { _, _ in live = false }
         .sheet(item: $preview) { item in
             FeaturePreview(preview: item)
         }
+        .sheet(isPresented: $showDaily) {
+            DailyChallengeSheet()
+                .environmentObject(store)
+        }
+    }
+
+    private var dailyToolbarButton: some View {
+        let tasks = TrainingDaily.tasks(in: store.trainingHistory)
+        let done = tasks.filter(\.done).count
+        let left = tasks.count - done
+        return Button {
+            showDaily = true
+        } label: {
+            Image(systemName: "flag.fill")
+                .badge(left)
+        }
+        .tint(Theme.brand)
+        .accessibilityLabel(left == 0 ? "Denní výzva, splněno" : "Denní výzva, \(done) z \(tasks.count)")
     }
 
     private var profileRow: some View {
@@ -113,74 +125,6 @@ struct HomeView: View {
 
     private var averageText: String {
         store.ownVisits.isEmpty ? "—" : String(format: "%.1f", store.average)
-    }
-
-    private var resumeRow: some View {
-        Button { live = true } label: {
-            Label(store.activeMatch?.finished == true ? "Zobrazit výsledek" : "Pokračovat ve hře", systemImage: "play.circle.fill")
-                .font(.headline)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(16)
-                .foregroundStyle(.black)
-                .background(Theme.brand, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var dailyChallenge: some View {
-        let tasks = TrainingDaily.tasks(in: store.trainingHistory)
-        let done = tasks.filter(\.done).count
-        let next = tasks.first { !$0.done }
-        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
-        return Group {
-            if let next, done < tasks.count {
-                NavigationLink {
-                    TrainingHomeView(gameIDs: [next.gameID], marksDaily: true)
-                } label: {
-                    dailyBody(tasks: tasks, done: done, shape: shape)
-                }
-                .buttonStyle(.plain)
-            } else {
-                dailyBody(tasks: tasks, done: done, shape: shape)
-            }
-        }
-    }
-
-    private func dailyBody(tasks: [TrainingDailyTask], done: Int, shape: RoundedRectangle) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Label("Denní výzva", systemImage: "flag.fill")
-                    .font(.headline)
-                Spacer(minLength: 8)
-                Text("\(done)/\(tasks.count)")
-                    .font(.caption.weight(.bold))
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(.black.opacity(0.12), in: Capsule())
-                Text("+50 XP")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.black.opacity(0.55))
-            }
-            HStack(spacing: 6) {
-                ForEach(tasks) { task in
-                    Label(task.title, systemImage: task.done ? "checkmark.circle.fill" : "circle")
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                        .frame(maxWidth: .infinity)
-                        .background(.black.opacity(task.done ? 0.16 : 0.08), in: Capsule())
-                }
-            }
-            ProgressView(value: Double(done), total: Double(max(tasks.count, 1)))
-                .tint(.black)
-        }
-        .foregroundStyle(.black)
-        .padding(16)
-        .background(Theme.brand, in: shape)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Denní výzva, \(done) z \(tasks.count)")
     }
 
     private var actionGrid: some View {
@@ -366,6 +310,173 @@ private struct LockedPreview: Identifiable {
             ("calendar", "Sezóny", "Žebříček a odměny, které se s novou sezónou obnoví.")
         ]
     )
+}
+
+/// Denní výzva z lišty. Žlutý souhrn a karty úkolů se stavem.
+private struct DailyChallengeSheet: View {
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        let tasks = TrainingDaily.tasks(in: store.trainingHistory)
+        let done = tasks.filter(\.done).count
+        let complete = done == tasks.count && !tasks.isEmpty
+        let nextID = tasks.first { !$0.done }?.id
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    hero(tasks: tasks, done: done, complete: complete)
+                    VStack(spacing: 10) {
+                        ForEach(tasks) { task in
+                            taskCard(task, featured: task.id == nextID)
+                        }
+                    }
+                }
+                .padding(16)
+                .padding(.bottom, 12)
+            }
+            .scrollIndicators(.hidden)
+            .background(Color.black.ignoresSafeArea())
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 30, height: 30)
+                            .background(.white.opacity(0.14), in: Circle())
+                    }
+                    .accessibilityLabel("Zavřít")
+                }
+            }
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+        }
+        .presentationDetents([.large, .medium])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(Color.black)
+        .presentationCornerRadius(28)
+        .preferredColorScheme(.dark)
+    }
+
+    private func hero(tasks: [TrainingDailyTask], done: Int, complete: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Denní výzva")
+                    .font(.caption.weight(.bold))
+                Spacer(minLength: 8)
+                Text("+50 XP")
+                    .font(.caption.weight(.bold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.black.opacity(0.1), in: Capsule())
+            }
+            .foregroundStyle(.black.opacity(0.58))
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(complete ? "Hotovo" : "\(done)")
+                    .font(.system(size: complete ? 42 : 58, weight: .bold, design: .rounded))
+                    .foregroundStyle(.black)
+                if !complete {
+                    Text("/ \(tasks.count)")
+                        .font(.title.weight(.bold))
+                        .foregroundStyle(.black.opacity(0.34))
+                }
+                Spacer(minLength: 0)
+                Image(systemName: complete ? "checkmark.seal.fill" : "flag.fill")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.black.opacity(complete ? 0.9 : 0.22))
+                    .accessibilityHidden(true)
+            }
+
+            HStack(spacing: 6) {
+                ForEach(tasks) { task in
+                    Capsule()
+                        .fill(task.done ? Color.black : Color.black.opacity(0.16))
+                        .frame(height: 7)
+                }
+            }
+            .accessibilityHidden(true)
+
+            Text(complete
+                 ? "Všechny dnešní úkoly jsou hotové. Zítra přijde nová trojice."
+                 : "Splň všechny tři. Za úkol spuštěný odtud přibude 50 XP. Zítra se výzva vynuluje.")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.black.opacity(0.72))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.brand, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(complete ? "Denní výzva hotová" : "Denní výzva, \(done) z \(tasks.count)")
+    }
+
+    private func taskCard(_ task: TrainingDailyTask, featured: Bool) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(task.done || featured ? Theme.brand : Color.white.opacity(0.08))
+                        .frame(width: 48, height: 48)
+                    Image(systemName: task.done ? "checkmark" : task.symbol)
+                        .font(.body.weight(.bold))
+                        .foregroundStyle(task.done || featured ? Color.black : Color.white)
+                }
+                .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(task.title)
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                    Text(task.detail)
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(task.done ? 0.48 : 0.68))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                if task.done {
+                    Text("Hotovo")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Theme.brand, in: Capsule())
+                }
+            }
+            if !task.done {
+                NavigationLink {
+                    TrainingHomeView(gameIDs: [task.gameID], marksDaily: true)
+                } label: {
+                    Text(featured ? "Hrát teď" : "Hrát")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(featured ? Color.black : Theme.brand)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, featured ? 13 : 11)
+                        .background {
+                            if featured {
+                                Capsule().fill(Theme.brand)
+                            } else {
+                                Capsule().strokeBorder(Theme.brand.opacity(0.55), lineWidth: 1.5)
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(14)
+        .background((task.done ? Theme.brand.opacity(0.07) : Color.white.opacity(featured ? 0.07 : 0.04)), in: shape)
+        .overlay(shape.stroke(stroke(done: task.done, featured: featured), lineWidth: featured && !task.done ? 1.5 : 1))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(task.title), \(task.done ? "hotovo" : "zbývá"). \(task.detail)")
+    }
+
+    private func stroke(done: Bool, featured: Bool) -> Color {
+        if done { return Theme.brand.opacity(0.28) }
+        if featured { return Theme.brand.opacity(0.9) }
+        return .white.opacity(0.08)
+    }
 }
 
 /// Náhled uzamčeného režimu. Okno jen říká, co přibude.

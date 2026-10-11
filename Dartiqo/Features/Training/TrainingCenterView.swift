@@ -239,6 +239,8 @@ private struct TrainingGameGroup: Identifiable {
 
 struct TrainingDailyTask: Identifiable {
     var title: String
+    var detail: String
+    var symbol: String
     var gameID: String
     var done: Bool
     var id: String { gameID }
@@ -259,9 +261,9 @@ enum TrainingDaily {
             }
         }
         return [
-            TrainingDailyTask(title: "5× T20", gameID: "treble-20", done: trebles >= 5),
-            TrainingDailyTask(title: "zavři 40", gameID: "checkout-40", done: closed40),
-            TrainingDailyTask(title: "tref bull", gameID: "bull-challenge", done: bull)
+            TrainingDailyTask(title: "5× T20", detail: "Tref dnes pět trojitých dvacítek. Počítá se jen T20.", symbol: "target", gameID: "treble-20", done: trebles >= 5),
+            TrainingDailyTask(title: "Zavři 40", detail: "Dohraj Checkout 40. Nejčistší cesta je D20.", symbol: "flag.checkered", gameID: "checkout-40", done: closed40),
+            TrainingDailyTask(title: "Tref bull", detail: "Tref dnes bull. Platí 25 i 50.", symbol: "scope", gameID: "bull-challenge", done: bull)
         ]
     }
 }
