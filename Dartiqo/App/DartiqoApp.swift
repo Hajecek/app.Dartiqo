@@ -8,6 +8,7 @@ import SwiftUI
         WindowGroup {
             RootView()
                 .environmentObject(store)
+                .scrollIndicators(.hidden)
                 .tint(Theme.action)
                 .preferredColorScheme(store.data.appearance == "system" ? nil : store.data.appearance == "dark" ? .dark : .light)
                 .onChange(of: scenePhase) { _, phase in

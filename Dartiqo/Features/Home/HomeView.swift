@@ -3,9 +3,9 @@ import SwiftUI
 /// Lobby ve stylu herní aplikace. Navigace a tab bar zůstávají systémové.
 struct HomeView: View {
     @EnvironmentObject private var store: AppStore
-    @State private var testNotice = false
     @State private var preview: LockedPreview?
     @State private var showDaily = false
+    @State private var showStreak = false
 
     private let canvas = Color.black
 
@@ -34,21 +34,10 @@ struct HomeView: View {
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 dailyToolbarButton
-                Button {
-                    testNotice = true
-                } label: {
-                    Image(systemName: "bell")
-                }
-                .tint(Theme.brand)
-                .accessibilityLabel("Test")
+                streakToolbarButton
             }
         }
         .toolbarColorScheme(.dark, for: .navigationBar)
-        .alert("Test", isPresented: $testNotice) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Zkušební tlačítko vpravo v liště.")
-        }
         .sheet(item: $preview) { item in
             FeaturePreview(preview: item)
         }
@@ -56,6 +45,22 @@ struct HomeView: View {
             DailyChallengeSheet()
                 .environmentObject(store)
         }
+        .sheet(isPresented: $showStreak) {
+            StreakSheet()
+                .environmentObject(store)
+        }
+    }
+
+    private var streakToolbarButton: some View {
+        let streak = store.trainingStreak
+        return Button {
+            showStreak = true
+        } label: {
+            Image(systemName: "flame.fill")
+                .badge(streak)
+        }
+        .tint(Theme.brand)
+        .accessibilityLabel(streak == 0 ? "Série, žádný den v řadě" : "Série, \(trainingDayCount(streak)) v řadě")
     }
 
     private var dailyToolbarButton: some View {
@@ -84,24 +89,15 @@ struct HomeView: View {
                     Text(store.profile?.name ?? "Hráč")
                         .font(.title3.bold())
                         .foregroundStyle(.white)
-                    HStack(spacing: 8) {
-                        Text("Level \(store.level)")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.white.opacity(0.72))
-                        Label("\(store.trainingStreak)", systemImage: "flame.fill")
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(.black)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Theme.brand, in: Capsule())
-                            .accessibilityLabel("\(trainingDayCount(store.trainingStreak)) v řadě")
-                    }
+                    Text("Level \(store.level)")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.white.opacity(0.72))
                 }
                 Spacer(minLength: 8)
                 VStack(alignment: .trailing, spacing: 2) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Image(systemName: "chart.line.uptrend.xyaxis")
-                            .font(.title3.weight(.semibold))
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text("Ø")
+                            .font(.title2.weight(.bold))
                             .accessibilityHidden(true)
                         Text(averageText)
                             .font(.system(size: 36, weight: .bold, design: .rounded))
@@ -120,7 +116,7 @@ struct HomeView: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(store.profile?.name ?? "Hráč"), level \(store.level), \(trainingDayCount(store.trainingStreak)) v řadě, průměr \(averageText)")
+        .accessibilityLabel("\(store.profile?.name ?? "Hráč"), level \(store.level), průměr \(averageText)")
     }
 
     private var averageText: String {
@@ -477,6 +473,223 @@ private struct DailyChallengeSheet: View {
         if featured { return Theme.brand.opacity(0.9) }
         return .white.opacity(0.08)
     }
+}
+
+/// Série z lišty. Stejné okno jako denní výzva: žlutý souhrn a jak se počítá.
+private struct StreakSheet: View {
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+
+    private var streak: Int { store.trainingStreak }
+    private var todayDone: Bool { trained(on: Date()) }
+    private var days: [StreakDay] { recentDays() }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    hero
+                    VStack(spacing: 10) {
+                        infoCard(
+                            symbol: "flame.fill",
+                            title: "Jeden den, jeden trénink",
+                            detail: "Počítá se dokončená hra. Rozehraný trénink sérii nedrží."
+                        )
+                        infoCard(
+                            symbol: "calendar",
+                            title: "Bez přerušení",
+                            detail: "Den bez tréninku sérii vynuluje. Dnešek máš čas do půlnoci."
+                        )
+                        infoCard(
+                            symbol: "medal.fill",
+                            title: "Sedm dní",
+                            detail: streak >= 7 ? "Odznak Sedm dní v řadě už máš." : "Za sedm dní v řadě získáš odznak."
+                        )
+                    }
+                    if !todayDone {
+                        NavigationLink {
+                            TrainingCenterView()
+                        } label: {
+                            Text(streak == 0 ? "Začít sérii" : "Udržet sérii")
+                                .font(.headline)
+                                .foregroundStyle(.black)
+                                .frame(maxWidth: .infinity, minHeight: 52)
+                                .background(Theme.brand, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(16)
+                .padding(.bottom, 12)
+            }
+            .scrollIndicators(.hidden)
+            .background(Color.black.ignoresSafeArea())
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 30, height: 30)
+                            .background(.white.opacity(0.14), in: Circle())
+                    }
+                    .accessibilityLabel("Zavřít")
+                }
+            }
+            .toolbarBackground(.hidden, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+        }
+        .presentationDetents([.large, .medium])
+        .presentationDragIndicator(.visible)
+        .presentationBackground(Color.black)
+        .presentationCornerRadius(28)
+        .preferredColorScheme(.dark)
+    }
+
+    private var hero: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Série")
+                    .font(.caption.weight(.bold))
+                Spacer(minLength: 8)
+                Text(todayDone ? "Dnes hotovo" : "Dnes chybí")
+                    .font(.caption.weight(.bold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.black.opacity(0.1), in: Capsule())
+            }
+            .foregroundStyle(.black.opacity(0.58))
+
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("\(streak)")
+                    .font(.system(size: 58, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.black)
+                Text(streak == 1 ? "den" : (2...4).contains(streak) ? "dny" : "dní")
+                    .font(.title.weight(.bold))
+                    .foregroundStyle(.black.opacity(0.34))
+                Spacer(minLength: 0)
+                Image(systemName: "flame.fill")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.black.opacity(streak == 0 ? 0.22 : 0.9))
+                    .accessibilityHidden(true)
+            }
+
+            HStack(spacing: 0) {
+                ForEach(days) { day in
+                    VStack(spacing: 6) {
+                        Text(day.label)
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.black.opacity(day.isToday ? 0.9 : 0.42))
+                        Circle()
+                            .fill(day.trained ? Color.black : Color.black.opacity(0.16))
+                            .frame(width: 28, height: 28)
+                            .overlay {
+                                if day.trained {
+                                    Image(systemName: "checkmark")
+                                        .font(.caption2.weight(.bold))
+                                        .foregroundStyle(Theme.brand)
+                                } else if day.isToday {
+                                    Circle()
+                                        .strokeBorder(Color.black.opacity(0.45), lineWidth: 1.5)
+                                }
+                            }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(day.label), \(day.trained ? "trénink hotový" : "bez tréninku")\(day.isToday ? ", dnes" : "")")
+                }
+            }
+
+            Text(summary)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.black.opacity(0.72))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.brand, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(streak == 0 ? "Série, žádný den v řadě" : "Série, \(trainingDayCount(streak)) v řadě")
+    }
+
+    private var summary: String {
+        if streak == 0 {
+            return "Série se počítá za každý den s dokončeným tréninkem. Vynecháš den a začínáš znovu od nuly."
+        }
+        if todayDone {
+            return "Dnešek je v sérii. Zítra navážeš dalším tréninkem."
+        }
+        return "Dnešek ještě chybí. Dokonči trénink a série \(trainingDayCount(streak)) zůstane."
+    }
+
+    private func infoCard(symbol: String, title: String, detail: String) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(Theme.brand)
+                    .frame(width: 48, height: 48)
+                Image(systemName: symbol)
+                    .font(.body.weight(.bold))
+                    .foregroundStyle(.black)
+            }
+            .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.68))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(.white.opacity(0.08), lineWidth: 1))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func trained(on date: Date) -> Bool {
+        let calendar = Calendar.current
+        let day = calendar.startOfDay(for: date)
+        return store.trainingHistory.contains { session in
+            guard session.status == .completed, let finished = session.finishedAt else { return false }
+            return calendar.isDate(finished, inSameDayAs: day)
+        }
+    }
+
+    private func recentDays() -> [StreakDay] {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        return (0..<7).reversed().compactMap { offset in
+            guard let date = calendar.date(byAdding: .day, value: -offset, to: today) else { return nil }
+            return StreakDay(
+                date: date,
+                label: Self.weekday.string(from: date).prefix(2).uppercased(),
+                trained: trained(on: date),
+                isToday: offset == 0
+            )
+        }
+    }
+
+    private static let weekday: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "cs_CZ")
+        formatter.dateFormat = "EE"
+        return formatter
+    }()
+}
+
+private struct StreakDay: Identifiable {
+    var date: Date
+    var label: String
+    var trained: Bool
+    var isToday: Bool
+    var id: Date { date }
 }
 
 /// Náhled uzamčeného režimu. Okno jen říká, co přibude.
