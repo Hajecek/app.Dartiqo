@@ -278,19 +278,11 @@ struct MatchView: View {
     private func frozenHumanSurface(_ game: Match) -> some View {
         switch holdSurface {
         case .board:
-            TouchDartboard(marks: holdDarts, interactive: false) { _ in }
-                .allowsHitTesting(false)
-                .frame(maxWidth: 420)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 4)
+            matchDartboard(marks: holdDarts, interactive: false)
         case .total:
             visitSummaryCard(title: "Součet kola", value: "\(holdDarts.reduce(0) { $0 + $1.score })")
         case .grid:
-            TouchDartboard(marks: holdDarts, interactive: false) { _ in }
-                .allowsHitTesting(false)
-                .frame(maxWidth: 420)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 4)
+            matchDartboard(marks: holdDarts, interactive: false)
                 .opacity(0.96)
         case .camera:
             VStack(spacing: 10) {
@@ -513,6 +505,7 @@ struct MatchView: View {
                 )
             }
         }
+        .frame(height: 88)
         .padding(10)
         .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .accessibilityElement(children: .contain)
@@ -559,7 +552,7 @@ struct MatchView: View {
                     .font(AppFont.caption(12, weight: .bold))
                     .foregroundStyle(MatchColors.ink.opacity(0.65))
             }
-            .frame(maxWidth: .infinity, minHeight: 78)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(MatchColors.ink.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .accessibilityLabel("\(index + 1). šipka \(dart.label)")
         } else if let suggestion {
@@ -586,7 +579,7 @@ struct MatchView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
-            .frame(maxWidth: .infinity, minHeight: 78)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(setup ? MatchColors.setupTip : MatchColors.aiTip, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -609,7 +602,7 @@ struct MatchView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
-            .frame(maxWidth: .infinity, minHeight: 78)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(MatchColors.aiTipSoft.opacity(note != nil ? 0.55 : 0.35), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .accessibilityLabel(note.map { "\(index + 1). šipka, \($0)" } ?? "\(index + 1). šipka volná")
         }
@@ -678,25 +671,24 @@ struct MatchView: View {
     private func botBoard(_ game: Match) -> some View {
         let darts = stripDarts(for: game)
         let name = holdPlayer.map { game.players[$0].name } ?? game.currentPlayer.name
-        return ZStack(alignment: .topLeading) {
-            TouchDartboard(marks: darts, interactive: false) { _ in }
-                .allowsHitTesting(false)
-                .frame(maxWidth: 440)
-                .frame(maxWidth: .infinity)
-        }
-        .padding(.vertical, 4)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(holdingBotVisit ? "\(name) dokončil hod" : "\(name) hází")
-        .accessibilityValue(darts.map(\.label).joined(separator: ", "))
+        return matchDartboard(marks: darts, interactive: false)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(holdingBotVisit ? "\(name) dokončil hod" : "\(name) hází")
+            .accessibilityValue(darts.map(\.label).joined(separator: ", "))
     }
 
     private func boardInput(_ game: Match) -> some View {
-        ZStack(alignment: .topTrailing) {
-            TouchDartboard(marks: game.currentDarts, onHit: { hit($0) })
-                .frame(maxWidth: 420)
-                .frame(maxWidth: .infinity)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        matchDartboard(marks: game.currentDarts, interactive: true, onHit: hit)
+    }
+
+    /// Stejný rám pro živý i zmrazený terč — ať po odhodu neposkočí layout.
+    private func matchDartboard(marks: [Dart], interactive: Bool, onHit: @escaping (Dart) -> Void = { _ in }) -> some View {
+        TouchDartboard(marks: marks, interactive: interactive, onHit: onHit)
+            .allowsHitTesting(interactive)
+            .frame(maxWidth: 420)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 
     private struct CheckoutGuide {
