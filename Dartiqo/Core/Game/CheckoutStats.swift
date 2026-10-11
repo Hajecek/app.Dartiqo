@@ -53,12 +53,16 @@ public struct CheckoutStats: Equatable {
             lhs.percentage == rhs.percentage ? lhs.attempts < rhs.attempts : lhs.percentage < rhs.percentage
         }
     }
-    /// Nejslabší double; při shodě procent vyhrává ten s víc pokusy. `nil`, pokud je jen jeden kandidát.
+    /// Nejslabší double oproti nejlepšímu. `nil`, pokud je jen jeden kandidát nebo mají všichni stejné %.
     public var worstDouble: DoubleStat? {
-        let best = bestDouble?.segment
-        return comparableDoubles.filter { $0.segment != best }.min { lhs, rhs in
-            lhs.percentage == rhs.percentage ? lhs.attempts > rhs.attempts : lhs.percentage < rhs.percentage
-        }
+        guard let best = bestDouble else { return nil }
+        let worst = comparableDoubles
+            .filter { $0.segment != best.segment }
+            .min { lhs, rhs in
+                lhs.percentage == rhs.percentage ? lhs.attempts > rhs.attempts : lhs.percentage < rhs.percentage
+            }
+        guard let worst, worst.percentage < best.percentage else { return nil }
+        return worst
     }
     /// Kolik zavření spadá do pásem 2–40, 41–100 a 101–170.
     public var ranges: [(title: String, count: Int)] {

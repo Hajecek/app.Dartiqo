@@ -74,7 +74,9 @@ struct SetupView: View {
     @State private var bullLaunched = false
     @State private var showCoinToss = false
     @State private var coinLaunched = false
+    @State private var showH2HAfterToss = false
     @State private var coinWinner: Int?
+    @State private var pregameSeries: HeadToHead?
     private let presetScores = [101, 301, 501, 701, 1001]
     private var options: Binding<MatchOptions> { Binding(get: { draft.config.settings }, set: { draft.config.options = $0 }) }
     init(mode: GameMode, preset: SetupDraft? = nil, onHome: (() -> Void)? = nil) {
@@ -200,37 +202,56 @@ struct SetupView: View {
             live = false
             showBullOff = false
             showCoinToss = false
+            showH2HAfterToss = false
+            pregameSeries = nil
         }
         .fullScreenCover(isPresented: $showCoinToss) {
             ZStack {
                 if coinLaunched {
                     MatchLaunchView(intro: true)
                         .transition(.opacity)
+                } else if showH2HAfterToss, let series = pregameSeries {
+                    HeadToHeadPregameView(
+                        series: series,
+                        myName: store.profile?.name ?? "Já",
+                        myPhoto: store.profile?.photoJPEG,
+                        theirPhoto: pregameOpponentPhoto(series),
+                        onContinue: { finishAfterToss() },
+                        onCancel: {
+                            showCoinToss = false
+                            showH2HAfterToss = false
+                            coinLaunched = false
+                            pregameSeries = nil
+                        }
+                    )
+                    .transition(.opacity)
                 } else {
                     CoinTossView(players: coinTossPlayers) { winner in
                         coinWinner = winner
                         opening = .random
                         commitScoreFromField()
-                        if let active = store.activeMatch, !active.finished {
-                            showCoinToss = false
-                            Task { @MainActor in
-                                try? await Task.sleep(nanoseconds: 450_000_000)
-                                replace = true
-                            }
-                        } else if makeMatch() {
-                            withAnimation(.easeInOut(duration: 0.35)) { coinLaunched = true }
+                        ensureFriendIDs()
+                        if let series = makePregameSeries() {
+                            pregameSeries = series
+                            withAnimation(.easeInOut(duration: 0.3)) { showH2HAfterToss = true }
                         } else {
-                            showCoinToss = false
+                            finishAfterToss()
                         }
                     } onCancel: {
                         showCoinToss = false
+                        showH2HAfterToss = false
                         coinLaunched = false
+                        pregameSeries = nil
                     }
                     .transition(.opacity)
                 }
             }
             .environmentObject(store)
-            .onAppear { coinLaunched = false }
+            .onAppear {
+                coinLaunched = false
+                showH2HAfterToss = false
+                pregameSeries = nil
+            }
         }
         .fullScreenCover(isPresented: $showBullOff) {
             ZStack {
@@ -2005,11 +2026,59 @@ struct SetupView: View {
         launchIntro = true; live = true
     }
 
-    private func makeMatch() -> Bool {
-        guard let profile = store.profile, canContinue else { return false }
+    private func finishAfterToss() {
+        if let active = store.activeMatch, !active.finished {
+            showCoinToss = false
+            showH2HAfterToss = false
+            pregameSeries = nil
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 450_000_000)
+                replace = true
+            }
+        } else if makeMatch() {
+            withAnimation(.easeInOut(duration: 0.35)) { coinLaunched = true }
+        } else {
+            showCoinToss = false
+            showH2HAfterToss = false
+            pregameSeries = nil
+        }
+    }
+
+    private func ensureFriendIDs() {
         for i in draft.seats.indices where !isMe(i) && !draft.seats[i].isBot && !draft.seats[i].ghostSeat && draft.seats[i].friendID == nil {
             draft.seats[i].friendID = store.addFriend(draft.seats[i].name)?.id
         }
+    }
+
+    /// H2H před startem — jen 1v1, kde hraješ ty.
+    private func makePregameSeries() -> HeadToHead? {
+        guard let me = store.profile?.id,
+              draft.seats.count == 2,
+              let myIndex = draft.seats.indices.first(where: isMe),
+              let other = draft.seats.indices.first(where: { $0 != myIndex })
+        else { return nil }
+        let seat = draft.seats[other]
+        guard let key = RivalKey.from(seat: seat, ghostKind: draft.ghostKind) else { return nil }
+        let name = seatName(other)
+        if let series = HeadToHead.series(from: store.matches, me: me, key: key) {
+            return series
+        }
+        return .empty(
+            key: key,
+            name: name,
+            botLevel: seat.isBot ? seat.level : nil,
+            isGhost: seat.ghostSeat
+        )
+    }
+
+    private func pregameOpponentPhoto(_ series: HeadToHead) -> Data? {
+        guard case .person(let id) = series.key.kind else { return nil }
+        return store.photo(for: id)
+    }
+
+    private func makeMatch() -> Bool {
+        guard let profile = store.profile, canContinue else { return false }
+        ensureFriendIDs()
         var players: [Player] = []
         var ghostOffer: GhostOffer?
         var ghostSeat = -1

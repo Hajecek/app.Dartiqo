@@ -31,6 +31,7 @@ struct ProfileView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 playerCard(stats)
+                HeadToHeadProfileEntry()
                 if stats.isEmpty {
                     ContentUnavailableView("Zatím tu nic není",
                                            systemImage: "chart.bar.xaxis",

@@ -21,6 +21,18 @@ final class CheckoutStatsTests: XCTestCase {
         XCTAssertFalse(few.isComparisonReliable)
         XCTAssertEqual(few.bestDouble?.segment, 20)
         XCTAssertNil(few.worstDouble)
+
+        var perfect = CheckoutStats()
+        perfect.doubles[20] = DoubleStat(segment: 20, attempts: 5, hits: 5)
+        perfect.doubles[18] = DoubleStat(segment: 18, attempts: 3, hits: 3)
+        XCTAssertEqual(perfect.bestDouble?.segment, 20)
+        XCTAssertNil(perfect.worstDouble)
+
+        var equalRate = CheckoutStats()
+        equalRate.doubles[20] = DoubleStat(segment: 20, attempts: 4, hits: 2)
+        equalRate.doubles[16] = DoubleStat(segment: 16, attempts: 6, hits: 3)
+        XCTAssertEqual(equalRate.bestDouble?.segment, 16)
+        XCTAssertNil(equalRate.worstDouble)
     }
 
     func testCountsDartsAtDoubleAndHits() throws {

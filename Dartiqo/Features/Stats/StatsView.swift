@@ -534,13 +534,16 @@ struct MatchDetailView: View {
     @Environment(\.dismiss) private var dismiss
     let match: Match
     let profileID: UUID?
+    /// Vypnout odkaz zpět do H2H, ať se nestackuje historie zápas ↔ H2H.
+    var showsHeadToHeadLink = true
     @State private var page: MatchDetailPage = .overview
     @State private var focus: Int
     @State private var confirmDelete = false
 
-    init(match: Match, profileID: UUID?) {
+    init(match: Match, profileID: UUID?, showsHeadToHeadLink: Bool = true) {
         self.match = match
         self.profileID = profileID
+        self.showsHeadToHeadLink = showsHeadToHeadLink
         _focus = State(initialValue: match.players.firstIndex { $0.id == profileID } ?? match.winner ?? 0)
     }
 
@@ -674,6 +677,22 @@ struct MatchDetailView: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .surface()
+            }
+            if showsHeadToHeadLink,
+               match.players.count == 2,
+               let me = profileID,
+               match.players.contains(where: { $0.id == me }),
+               let key = HeadToHead.key(forOpponentIn: match, me: me),
+               let series = HeadToHead.series(from: store.matches, me: me, key: key),
+               series.played > 0 {
+                section("Vzájemně", symbol: "person.2.fill") {
+                    NavigationLink {
+                        HeadToHeadDetailView(rivalKey: key)
+                    } label: {
+                        HeadToHeadPreviewCard(series: series)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             section("Průběh", symbol: "flag.checkered") { legList }
             HStack(spacing: 12) {
