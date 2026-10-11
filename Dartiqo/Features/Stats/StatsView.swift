@@ -3,8 +3,12 @@ import SwiftUI
 private enum HistoryResultFilter: String, CaseIterable, Identifiable {
     case all, wins, losses
     var id: String { rawValue }
-    var title: String {
-        switch self { case .all: return "Všechny"; case .wins: return "Výhry"; case .losses: return "Prohry" }
+    func title(training: Bool) -> String {
+        switch self {
+        case .all: return "Všechny"
+        case .wins: return training ? "Splněné" : "Výhry"
+        case .losses: return training ? "Nesplněné" : "Prohry"
+        }
     }
     var symbol: String {
         switch self { case .all: return "clock.arrow.circlepath"; case .wins: return "checkmark.seal"; case .losses: return "xmark.seal" }
@@ -17,17 +21,78 @@ private enum HistoryOrder: String, CaseIterable, Identifiable {
     var title: String { self == .newest ? "Nejnovější první" : "Nejstarší první" }
 }
 
+private enum HistoryModeFilter: Hashable, Identifiable {
+    case all
+    case game(GameMode)
+    case training
+
+    var id: String {
+        switch self {
+        case .all: return "all"
+        case .game(let mode): return mode.rawValue
+        case .training: return "training"
+        }
+    }
+
+    var menuTitle: String {
+        switch self {
+        case .all: return "Všechny režimy"
+        case .game(let mode): return mode.shortTitle
+        case .training: return "Trénink"
+        }
+    }
+
+    var toolbarTitle: String {
+        switch self {
+        case .all: return "Hra"
+        case .game(let mode): return mode.shortTitle
+        case .training: return "Trénink"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .all: return "slider.horizontal.3"
+        case .game(let mode): return mode.symbol
+        case .training: return "figure.strengthtraining.traditional"
+        }
+    }
+
+    var isTraining: Bool {
+        if case .training = self { return true }
+        return false
+    }
+}
+
+private enum HistoryDeleteTarget: Identifiable, Equatable {
+    case match(UUID)
+    case training(UUID)
+    var id: String {
+        switch self {
+        case .match(let id): return "m-\(id.uuidString)"
+        case .training(let id): return "t-\(id.uuidString)"
+        }
+    }
+}
+
 struct HistoryView: View {
     @EnvironmentObject private var store: AppStore
-    @State private var mode: GameMode?
+    @State private var mode: HistoryModeFilter = .all
     @State private var result: HistoryResultFilter = .all
     @State private var order: HistoryOrder = .newest
-    @State private var pendingDelete: UUID?
+    @State private var pendingDelete: HistoryDeleteTarget?
     @State private var selectedMatch: UUID?
+    @State private var selectedTraining: UUID?
 
     private var matches: [Match] {
         let filtered = store.matches.filter { match in
-            let modeFits = mode == nil || match.config.mode == mode
+            let modeFits: Bool = {
+                switch mode {
+                case .all: return true
+                case .game(let game): return match.config.mode == game
+                case .training: return false
+                }
+            }()
             let outcomeFits: Bool = {
                 switch result {
                 case .all: return true
@@ -40,49 +105,39 @@ struct HistoryView: View {
         return order == .newest ? filtered : filtered.reversed()
     }
 
+    private var trainings: [TrainingSession] {
+        let filtered = store.trainingHistory.filter { session in
+            switch result {
+            case .all: return true
+            case .wins: return session.result?.success == true
+            case .losses: return session.result?.success != true
+            }
+        }
+        return order == .newest ? filtered : filtered.reversed()
+    }
+
+    private var archiveEmpty: Bool {
+        mode.isTraining ? store.trainingHistory.isEmpty : store.matches.isEmpty
+    }
+
     var body: some View {
         List {
-            if store.matches.isEmpty {
+            if archiveEmpty {
                 Section {
                     ContentUnavailableView(
-                        "Zatím žádné zápasy",
-                        systemImage: "clock.arrow.circlepath",
-                        description: Text("Dokončené hry se uloží sem včetně výsledku, statistik a hodů.")
+                        mode.isTraining ? "Zatím žádné tréninky" : "Zatím žádné zápasy",
+                        systemImage: mode.isTraining ? "figure.strengthtraining.traditional" : "clock.arrow.circlepath",
+                        description: Text(mode.isTraining
+                            ? "Dokončené tréninky se uloží sem včetně výsledku a statistik."
+                            : "Dokončené hry se uloží sem včetně výsledku, statistik a hodů.")
                     )
                     .listRowBackground(Color.clear)
                     .listRowSeparator(.hidden)
                 }
+            } else if mode.isTraining {
+                trainingList
             } else {
-                Section {
-                    record
-                        .listRowInsets(EdgeInsets())
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                }
-
-                if let latest = matches.first {
-                    Section(order == .newest ? "Poslední zápas" : "První zápas") {
-                        matchLink(latest, featured: true)
-                    }
-
-                    ForEach(historyGroups(Array(matches.dropFirst()))) { group in
-                        Section(group.title) {
-                            ForEach(group.matches) { match in
-                                matchLink(match)
-                            }
-                        }
-                    }
-                } else {
-                    Section {
-                        ContentUnavailableView(
-                            "Žádný zápas neodpovídá",
-                            systemImage: "line.3.horizontal.decrease.circle",
-                            description: Text("Změň filtry v horní liště.")
-                        )
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                    }
-                }
+                matchList
             }
         }
         .listStyle(.insetGrouped)
@@ -97,16 +152,94 @@ struct HistoryView: View {
                 MatchDetailView(match: match, profileID: store.profile?.id)
             }
         }
+        .navigationDestination(item: $selectedTraining) { id in
+            if let session = store.trainingHistory.first(where: { $0.id == id }) {
+                TrainingSessionDetailView(session: session)
+            }
+        }
         .sensoryFeedback(.selection, trigger: mode)
         .sensoryFeedback(.selection, trigger: result)
-        .alert("Opravdu smazat zápas?", isPresented: deleteDialog) {
-            Button("Smazat zápas", role: .destructive) {
-                if let pendingDelete { store.deleteMatch(pendingDelete) }
+        .alert(deleteAlertTitle, isPresented: deleteDialog) {
+            Button(deleteConfirmTitle, role: .destructive) {
+                if let pendingDelete {
+                    switch pendingDelete {
+                    case .match(let id): store.deleteMatch(id)
+                    case .training(let id): store.deleteTraining(id)
+                    }
+                }
                 pendingDelete = nil
             }
             Button("Zrušit", role: .cancel) { pendingDelete = nil }
         } message: {
-            Text("Zápas, jeho statistiky i všechny hody budou trvale odstraněny.")
+            Text(deleteAlertMessage)
+        }
+    }
+
+    @ViewBuilder
+    private var matchList: some View {
+        Section {
+            record
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+        }
+
+        if let latest = matches.first {
+            Section(order == .newest ? "Poslední zápas" : "První zápas") {
+                matchLink(latest, featured: true)
+            }
+
+            ForEach(historyGroups(Array(matches.dropFirst()))) { group in
+                Section(group.title) {
+                    ForEach(group.matches) { match in
+                        matchLink(match)
+                    }
+                }
+            }
+        } else {
+            Section {
+                ContentUnavailableView(
+                    "Žádný zápas neodpovídá",
+                    systemImage: "line.3.horizontal.decrease.circle",
+                    description: Text("Změň filtry v horní liště.")
+                )
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var trainingList: some View {
+        Section {
+            trainingRecord
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+        }
+
+        if let latest = trainings.first {
+            Section(order == .newest ? "Poslední trénink" : "První trénink") {
+                trainingLink(latest, featured: true)
+            }
+
+            ForEach(trainingGroups(Array(trainings.dropFirst()))) { group in
+                Section(group.title) {
+                    ForEach(group.sessions) { session in
+                        trainingLink(session)
+                    }
+                }
+            }
+        } else {
+            Section {
+                ContentUnavailableView(
+                    "Žádný trénink neodpovídá",
+                    systemImage: "line.3.horizontal.decrease.circle",
+                    description: Text("Změň filtry v horní liště.")
+                )
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            }
         }
     }
 
@@ -115,6 +248,23 @@ struct HistoryView: View {
             get: { pendingDelete != nil },
             set: { if !$0 { pendingDelete = nil } }
         )
+    }
+
+    private var deleteAlertTitle: String {
+        if case .training = pendingDelete { return "Opravdu smazat trénink?" }
+        return "Opravdu smazat zápas?"
+    }
+
+    private var deleteConfirmTitle: String {
+        if case .training = pendingDelete { return "Smazat trénink" }
+        return "Smazat zápas"
+    }
+
+    private var deleteAlertMessage: String {
+        if case .training = pendingDelete {
+            return "Trénink, jeho výsledek i získané XP z tohoto běhu budou trvale odstraněny."
+        }
+        return "Zápas, jeho statistiky i všechny hody budou trvale odstraněny."
     }
 
     @ViewBuilder
@@ -135,7 +285,33 @@ struct HistoryView: View {
         .listRowSeparator(.hidden)
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {
-                pendingDelete = match.id
+                pendingDelete = .match(match.id)
+            } label: {
+                Label("Smazat", systemImage: "trash")
+            }
+            .tint(.red)
+        }
+    }
+
+    @ViewBuilder
+    private func trainingLink(_ session: TrainingSession, featured: Bool = false) -> some View {
+        Button {
+            selectedTraining = session.id
+        } label: {
+            if featured {
+                FeaturedTrainingCard(session: session)
+                    .padding(.vertical, 4)
+            } else {
+                TrainingHistoryRow(session: session)
+            }
+        }
+        .buttonStyle(.plain)
+        .listRowInsets(featured ? EdgeInsets() : EdgeInsets(top: 5, leading: 0, bottom: 5, trailing: 0))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                pendingDelete = .training(session.id)
             } label: {
                 Label("Smazat", systemImage: "trash")
             }
@@ -144,8 +320,10 @@ struct HistoryView: View {
     }
 
     private var filterCaption: String {
-        let title = mode?.shortTitle ?? "Všechny režimy"
-        return "\(title) · \(czechCount(matches.count, "hra", "hry", "her"))"
+        if mode.isTraining {
+            return "\(mode.menuTitle) · \(czechCount(trainings.count, "trénink", "tréninky", "tréninků"))"
+        }
+        return "\(mode.menuTitle) · \(czechCount(matches.count, "hra", "hry", "her"))"
     }
 
     @ToolbarContentBuilder
@@ -154,7 +332,7 @@ struct HistoryView: View {
             Menu {
                 Picker("Výsledek", selection: $result) {
                     ForEach(HistoryResultFilter.allCases) { item in
-                        Label(item.title, systemImage: item.symbol).tag(item)
+                        Label(item.title(training: mode.isTraining), systemImage: item.symbol).tag(item)
                     }
                 }
                 .pickerStyle(.inline)
@@ -166,20 +344,21 @@ struct HistoryView: View {
                     }
                 }
             } label: {
-                Label(result.title, systemImage: result.symbol)
+                Label(result.title(training: mode.isTraining), systemImage: result.symbol)
             }
         }
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
                 Picker("Hra", selection: $mode) {
-                    Label("Všechny režimy", systemImage: "square.grid.2x2").tag(nil as GameMode?)
+                    Label("Všechny režimy", systemImage: "square.grid.2x2").tag(HistoryModeFilter.all)
                     ForEach(GameMode.allCases) { item in
-                        Label(item.shortTitle, systemImage: item.symbol).tag(Optional(item))
+                        Label(item.shortTitle, systemImage: item.symbol).tag(HistoryModeFilter.game(item))
                     }
+                    Label("Trénink", systemImage: "figure.strengthtraining.traditional").tag(HistoryModeFilter.training)
                 }
                 .pickerStyle(.inline)
             } label: {
-                Label(mode?.shortTitle ?? "Hra", systemImage: mode?.symbol ?? "slider.horizontal.3")
+                Label(mode.toolbarTitle, systemImage: mode.symbol)
             }
         }
     }
@@ -257,7 +436,7 @@ struct HistoryView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func winRateGauge(wins: Int, ranked: Int) -> some View {
+    private func winRateGauge(wins: Int, ranked: Int, unit: String = "výher") -> some View {
         let rate = ranked == 0 ? 0 : Double(wins) / Double(ranked)
         return ZStack {
             Circle()
@@ -270,7 +449,7 @@ struct HistoryView: View {
                 Text(winRate(wins: wins, ranked: ranked))
                     .font(.system(.headline, design: .rounded).weight(.bold))
                     .monospacedDigit()
-                Text("výher")
+                Text(unit)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -327,6 +506,77 @@ struct HistoryView: View {
         }
         return keys.map {
             HistoryMonth(id: $0, title: $0.formatted(.dateTime.month(.wide).year()), matches: grouped[$0] ?? [])
+        }
+    }
+
+    private var trainingRecord: some View {
+        let done = trainings.filter { $0.result?.success == true }.count
+        let miss = trainings.count - done
+        let darts = trainings.reduce(0) { $0 + ($1.result?.darts ?? 0) }
+        let seconds = trainings.reduce(0.0) { sum, session in
+            guard let end = session.finishedAt else { return sum }
+            return sum + max(0, end.timeIntervalSince(session.startedAt))
+        }
+        return VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Eyebrow(text: "Trénink")
+                    Text(trainingHeadline(done: done, total: trainings.count))
+                        .font(.title2.bold())
+                    Text(trainings.isEmpty
+                         ? "Zatím bez dokončených tréninků"
+                         : "\(done) splněno · \(miss) nesplněno")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                winRateGauge(wins: done, ranked: trainings.count, unit: "splněno")
+            }
+
+            HStack(spacing: 0) {
+                recordFact("\(done)", "splněno", Theme.positive)
+                Divider().frame(height: 38)
+                recordFact("\(miss)", "nesplněno", .secondary)
+                Divider().frame(height: 38)
+                recordFact("\(darts)", "šipek", .orange)
+            }
+            .padding(.vertical, 10)
+            .background(Theme.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+            HStack {
+                Label("Celkem u terče", systemImage: "clock")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(PlayTime.format(seconds))
+                    .font(.system(.headline, design: .rounded).weight(.bold))
+                    .monospacedDigit()
+            }
+        }
+        .surface()
+    }
+
+    private func trainingHeadline(done: Int, total: Int) -> String {
+        guard total > 0 else { return "Bez tréninků" }
+        if done == total { return "Všechny splněné" }
+        if done > total / 2 { return "Dobrá série" }
+        if done * 2 == total { return "Půl na půl" }
+        return "Je na čem pracovat"
+    }
+
+    private func trainingGroups(_ sessions: [TrainingSession]) -> [TrainingHistoryMonth] {
+        let calendar = Calendar.current
+        var keys: [Date] = []
+        var grouped: [Date: [TrainingSession]] = [:]
+        for session in sessions {
+            let date = session.finishedAt ?? session.startedAt
+            let components = calendar.dateComponents([.year, .month], from: date)
+            guard let month = calendar.date(from: components) else { continue }
+            if grouped[month] == nil { keys.append(month) }
+            grouped[month, default: []].append(session)
+        }
+        return keys.map {
+            TrainingHistoryMonth(id: $0, title: $0.formatted(.dateTime.month(.wide).year()), sessions: grouped[$0] ?? [])
         }
     }
 }
@@ -429,6 +679,291 @@ private struct HistoryMonth: Identifiable {
     let id: Date
     let title: String
     let matches: [Match]
+}
+
+private struct TrainingHistoryMonth: Identifiable {
+    let id: Date
+    let title: String
+    let sessions: [TrainingSession]
+}
+
+private func trainingOutcome(_ session: TrainingSession) -> GameOutcome {
+    session.result?.success == true ? .win : .loss
+}
+
+private func trainingTitle(_ session: TrainingSession) -> String {
+    TrainingCatalog.find(session.definitionID)?.title ?? session.definitionID
+}
+
+private func trainingCategory(_ session: TrainingSession) -> TrainingCategory? {
+    TrainingCatalog.find(session.definitionID)?.category
+}
+
+private func trainingDuration(_ session: TrainingSession) -> TimeInterval {
+    guard let end = session.finishedAt else { return 0 }
+    return max(0, end.timeIntervalSince(session.startedAt))
+}
+
+private struct FeaturedTrainingCard: View {
+    let session: TrainingSession
+
+    private var outcome: GameOutcome { trainingOutcome(session) }
+    private var definitionTitle: String { trainingTitle(session) }
+    private var category: TrainingCategory? { trainingCategory(session) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                Label(category?.title ?? "Trénink", systemImage: category?.symbol ?? "figure.strengthtraining.traditional")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                Text(definitionTitle)
+                    .font(.title2.bold())
+                Text(session.result?.summary.isEmpty == false ? session.result!.summary : (outcome == .win ? "Splněno" : "Nesplněno"))
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.75))
+            }
+            HStack {
+                if let result = session.result, result.darts > 0 {
+                    Text(czechCount(result.darts, "šipka", "šipky", "šipek"))
+                }
+                Spacer()
+                let seconds = trainingDuration(session)
+                if seconds > 0 {
+                    Label(PlayTime.format(seconds), systemImage: "clock")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.white.opacity(0.65))
+        }
+        .foregroundStyle(.white)
+        .padding(18)
+        .background {
+            ZStack {
+                Theme.heroWash
+                LinearGradient(
+                    colors: [outcome.color.opacity(0.42), outcome.color.opacity(0.10), .clear],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                Image(systemName: category?.symbol ?? "figure.strengthtraining.traditional")
+                    .font(.system(size: 150, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.05))
+                    .offset(x: 100, y: 45)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(outcome.color.opacity(0.65), lineWidth: 1)
+        )
+        .overlay(alignment: .topTrailing) {
+            Image(systemName: outcome == .win ? "checkmark.seal.fill" : "xmark.seal.fill")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(outcome.color)
+                .frame(width: 30, height: 30)
+                .background(.black.opacity(0.35), in: Circle())
+                .padding(14)
+                .accessibilityLabel(outcome == .win ? "Splněno" : "Nesplněno")
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Otevře detail tréninku")
+    }
+}
+
+private struct TrainingHistoryRow: View {
+    let session: TrainingSession
+
+    private var outcome: GameOutcome { trainingOutcome(session) }
+    private var date: Date { session.finishedAt ?? session.startedAt }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(spacing: 1) {
+                Text(date.formatted(.dateTime.day()))
+                    .font(.system(.title3, design: .rounded).weight(.bold))
+                    .monospacedDigit()
+                Image(systemName: outcome == .win ? "checkmark" : "xmark")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(outcome.color)
+                    .accessibilityLabel(outcome == .win ? "Splněno" : "Nesplněno")
+            }
+            .frame(width: 40, height: 46)
+            .background(outcome.color.opacity(0.1), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(trainingTitle(session))
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    if let category = trainingCategory(session) {
+                        Label(category.title, systemImage: category.symbol)
+                    } else {
+                        Label("Trénink", systemImage: "figure.strengthtraining.traditional")
+                    }
+                    let seconds = trainingDuration(session)
+                    if seconds > 0 {
+                        Text("·")
+                        Text(PlayTime.format(seconds))
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(scoreText)
+                    .font(.system(.title3, design: .rounded).weight(.bold))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Theme.card)
+                .overlay {
+                    LinearGradient(
+                        colors: [outcome.color.opacity(0.22), outcome.color.opacity(0.06), .clear],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(outcome.color.opacity(0.3), lineWidth: 0.5)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Otevře detail tréninku")
+    }
+
+    private var scoreText: String {
+        guard let result = session.result else { return "—" }
+        if !result.summary.isEmpty, result.summary.count <= 12 { return result.summary }
+        if result.higherIsBetter { return "\(result.score)" }
+        return "\(result.score)"
+    }
+}
+
+private struct TrainingSessionDetailView: View {
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+    let session: TrainingSession
+    @State private var confirmDelete = false
+
+    private var outcome: GameOutcome { trainingOutcome(session) }
+    private var definition: TrainingDefinition? { TrainingCatalog.find(session.definitionID) }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                FeaturedTrainingCard(session: session)
+                if let result = session.result {
+                    stats(result)
+                }
+                meta
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
+        }
+        .screen()
+        .navigationTitle("Detail tréninku")
+        .navigationSubtitle(definition?.title ?? "Trénink")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(role: .destructive) { confirmDelete = true } label: {
+                    Label("Smazat", systemImage: "trash")
+                }
+            }
+        }
+        .alert("Opravdu smazat tento trénink?", isPresented: $confirmDelete) {
+            Button("Smazat trénink", role: .destructive) {
+                store.deleteTraining(session.id)
+                dismiss()
+            }
+            Button("Zrušit", role: .cancel) {}
+        } message: {
+            Text("Výsledek i získané XP z tohoto běhu budou trvale odstraněny.")
+        }
+    }
+
+    private func stats(_ result: TrainingResult) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Výsledek")
+                .font(.headline)
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                detailFact(outcome == .win ? "Splněno" : "Nesplněno", "stav")
+                detailFact("\(result.score)", "skóre")
+                detailFact("\(result.darts)", "šipek")
+                detailFact("\(Int((result.accuracy * 100).rounded())) %", "přesnost")
+                if let average = result.average {
+                    detailFact(String(format: "%.1f", average), "průměr")
+                }
+                if result.oneEighties > 0 {
+                    detailFact("\(result.oneEighties)", "180")
+                }
+                if result.checkoutAttempts > 0 {
+                    detailFact("\(result.checkoutHits)/\(result.checkoutAttempts)", "checkout")
+                }
+                if result.bestStreak > 0 {
+                    detailFact("\(result.bestStreak)", "série")
+                }
+            }
+            if !result.summary.isEmpty {
+                Text(result.summary)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .surface()
+    }
+
+    private var meta: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Průběh")
+                .font(.headline)
+            LabeledContent("Začátek", value: session.startedAt.formatted(date: .abbreviated, time: .shortened))
+            if let finished = session.finishedAt {
+                LabeledContent("Konec", value: finished.formatted(date: .abbreviated, time: .shortened))
+                LabeledContent("Délka", value: PlayTime.format(trainingDuration(session)))
+            }
+            if let category = definition?.category {
+                LabeledContent("Kategorie", value: category.title)
+            }
+            if session.config.isDaily {
+                LabeledContent("Typ", value: "Denní výzva")
+            } else if session.config.isWeekly {
+                LabeledContent("Typ", value: "Týdenní výzva")
+            }
+        }
+        .surface()
+    }
+
+    private func detailFact(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.system(.title3, design: .rounded).weight(.bold))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Theme.background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
 }
 
 private struct MatchHistoryRow: View {

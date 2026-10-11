@@ -198,7 +198,9 @@ struct MatchLaunchView: View {
 
     private func playerBlock(_ player: Player, index: Int, starts: Bool, size: CGFloat = 96) -> some View {
         let look = avatarLook(for: player)
-        return VStack(spacing: 12) {
+        let bot = player.botLevel.map(BotLevel.get)
+        let badge = max(22, size * 0.26)
+        return VStack(spacing: bot == nil ? 12 : 14) {
             Avatar(
                 name: player.name,
                 bot: look.bot,
@@ -210,13 +212,43 @@ struct MatchLaunchView: View {
                 Circle()
                     .strokeBorder(starts ? Theme.brand : Color.white.opacity(0.2), lineWidth: starts ? 3 : 1)
             )
+            .overlay(alignment: .bottom) {
+                if let bot {
+                    Text("\(bot.id)")
+                        .font(AppFont.caption(badge * 0.42, weight: .heavy))
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.onAccent)
+                        .frame(width: badge, height: badge)
+                        .background(
+                            Circle()
+                                .fill(Theme.brand)
+                                .shadow(color: Theme.brand.opacity(0.45), radius: 6, y: 2)
+                        )
+                        .overlay(
+                            Circle()
+                                .strokeBorder(Color.black, lineWidth: 2.5)
+                        )
+                        .offset(y: badge * 0.28)
+                        .accessibilityLabel("Level \(bot.id)")
+                }
+            }
+            .padding(.bottom, bot == nil ? 0 : badge * 0.22)
 
-            VStack(spacing: 4) {
+            VStack(spacing: 5) {
                 Text(player.name)
                     .font(AppFont.title(size > 90 ? 20 : 16, weight: .bold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
+
+                if let bot {
+                    levelMeter(bot.id, width: min(92, size * 0.9))
+                    Text(bot.name)
+                        .font(AppFont.caption(11, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.48))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
 
                 Text(starts ? "první hod" : " ")
                     .font(AppFont.caption(12, weight: .semibold))
@@ -230,6 +262,20 @@ struct MatchLaunchView: View {
             reduceMotion ? nil : .spring(response: 0.55, dampingFraction: 0.86).delay(Double(index) * 0.05),
             value: showContent
         )
+    }
+
+    private func levelMeter(_ level: Int, width: CGFloat) -> some View {
+        let level = min(10, max(1, level))
+        return HStack(spacing: 2.5) {
+            ForEach(1...10, id: \.self) { step in
+                Capsule()
+                    .fill(step <= level ? Theme.brand : Color.white.opacity(0.14))
+                    .frame(height: step == level ? 9 : 5)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .frame(width: width, height: 9)
+        .accessibilityHidden(true)
     }
 
     private func avatarLook(for player: Player) -> (photo: Data?, asset: String?, bot: Bool) {

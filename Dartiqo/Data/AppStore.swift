@@ -216,6 +216,22 @@ enum AppSection: Hashable {
         data.matches.removeAll { $0.id == id }
         save()
     }
+    func deleteTraining(_ id: UUID) {
+        guard let owner = profile?.id else { return }
+        guard data.trainingSessions?.contains(where: { $0.id == id && $0.owner == owner }) == true else { return }
+        data.trainingSessions?.removeAll { $0.id == id && $0.owner == owner }
+        data.xpEvents?.removeAll { $0.sessionID == id && $0.owner == owner }
+        if var plan = data.trainingPlan?[owner.uuidString] {
+            for index in plan.items.indices where plan.items[index].sessionID == id {
+                plan.items[index].sessionID = nil
+            }
+            data.trainingPlan?[owner.uuidString] = plan
+        }
+        if data.activeTraining?[owner.uuidString]?.id == id {
+            data.activeTraining?[owner.uuidString] = nil
+        }
+        save()
+    }
     /// Uloží dohraný zápas a otevře záložku Domů bez rozehrané obrazovky zápasu.
     func returnHome() {
         finish()

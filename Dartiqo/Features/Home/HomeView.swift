@@ -78,20 +78,20 @@ struct HomeView: View {
     }
 
     private var profileRow: some View {
-        NavigationLink {
+        let xpInLevel = store.xp % 500
+        let progress = Double(xpInLevel) / 500
+        return NavigationLink {
             ProfileView()
         } label: {
             HStack(spacing: 14) {
                 Avatar(name: store.profile?.name ?? "", size: 76, photo: store.profile?.photoJPEG)
                     .environment(\.colorScheme, .dark)
                     .overlay(Circle().stroke(Theme.brand, lineWidth: 2))
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 8) {
                     Text(store.profile?.name ?? "Hráč")
                         .font(.title3.bold())
                         .foregroundStyle(.white)
-                    Text("Level \(store.level)")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.white.opacity(0.72))
+                    levelBadge(progress: progress, xpInLevel: xpInLevel)
                 }
                 Spacer(minLength: 8)
                 VStack(alignment: .trailing, spacing: 2) {
@@ -116,7 +116,36 @@ struct HomeView: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(store.profile?.name ?? "Hráč"), level \(store.level), průměr \(averageText)")
+        .accessibilityLabel("\(store.profile?.name ?? "Hráč"), level \(store.level), \(xpInLevel) z 500 XP, průměr \(averageText)")
+    }
+
+    private func levelBadge(progress: Double, xpInLevel: Int) -> some View {
+        HStack(spacing: 8) {
+            Text("\(store.level)")
+                .font(AppFont.body(14, weight: .heavy))
+                .monospacedDigit()
+                .foregroundStyle(Theme.onAccent)
+                .frame(width: 28, height: 28)
+                .background(Theme.brand, in: Circle())
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Level")
+                    .font(AppFont.caption(11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.55))
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.white.opacity(0.14))
+                        Capsule()
+                            .fill(Theme.brand)
+                            .frame(width: max(5, geo.size.width * progress))
+                    }
+                }
+                .frame(width: 72, height: 3)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Level \(store.level), \(xpInLevel) z 500 XP")
     }
 
     private var averageText: String {
