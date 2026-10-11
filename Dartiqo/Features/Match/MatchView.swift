@@ -96,7 +96,7 @@ struct MatchView: View {
     private var screen: some View {
         Group {
             if leavingHome {
-                MatchColors.background
+                MatchSavedSplash()
             } else if let game = store.activeMatch {
                 if game.finished && !isHoldingVisit && legCeremony == nil { result(game) }
                 else { live(game) }
@@ -108,12 +108,12 @@ struct MatchView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(MatchColors.background)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { matchToolbar }
+        .toolbar { if !leavingHome { matchToolbar } }
         .toolbarBackground(MatchColors.background, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .preferredColorScheme(.dark)
         .tint(.white)
-        .toolbar(legCeremony == nil ? .automatic : .hidden, for: .navigationBar)
+        .toolbar(leavingHome || legCeremony != nil ? .hidden : .automatic, for: .navigationBar)
         .fullScreenCover(item: $legCeremony) { ceremony in
             legCeremonyScreen(ceremony)
         }
@@ -135,7 +135,7 @@ struct MatchView: View {
         }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: isHoldingVisit)
         .alert("Přerušit zápas?", isPresented: $showLeave) {
-            Button("Uložit a odejít") { dismiss() }
+            Button("Uložit a odejít") { saveAndLeave() }
             Button("Vymazat zápas", role: .destructive) { store.activeMatch = nil; dismiss() }
             Button("Zrušit", role: .cancel) {}
         } message: { Text("Ukládá se i rozehrané kolo po jedné nebo dvou šipkách.") }
@@ -615,7 +615,7 @@ struct MatchView: View {
         }
     }
 
-    /// Spodní lišta: Zpět, potvrzení součtu a způsob zápisu.
+    /// Spodní lišta: Zpět, potvrzení součtu a způsob zápisu (výběr zůstává i po odeslání kola).
     @ViewBuilder
     private func bottomBar(_ game: Match) -> some View {
         let humanInput = !paused && game.legWinner == nil && !game.needsBullOff && !showingBotBoard && !isHoldingVisit
@@ -643,25 +643,23 @@ struct MatchView: View {
                     Spacer(minLength: 0)
                 }
 
-                if humanInput {
-                    Menu {
-                        Picker("Způsob zápisu", selection: Binding(get: { surface }, set: { changeSurface($0) })) {
-                            ForEach(ScoringSurface.allCases) { item in
-                                if item != .total || canUseTotal(game) {
-                                    Label(item.title, systemImage: item.icon).tag(item)
-                                }
+                Menu {
+                    Picker("Způsob zápisu", selection: Binding(get: { surface }, set: { changeSurface($0) })) {
+                        ForEach(ScoringSurface.allCases) { item in
+                            if item != .total || canUseTotal(game) {
+                                Label(item.title, systemImage: item.icon).tag(item)
                             }
                         }
-                    } label: {
-                        Label(surface.title, systemImage: surface.icon)
-                            .labelStyle(.iconOnly)
-                            .frame(width: 24, height: 24)
                     }
-                    .buttonStyle(.glass)
-                    .buttonBorderShape(.circle)
-                    .accessibilityLabel("Způsob zápisu")
-                    .accessibilityValue(surface.title)
+                } label: {
+                    Label(surface.title, systemImage: surface.icon)
+                        .labelStyle(.iconOnly)
+                        .frame(width: 24, height: 24)
                 }
+                .buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .accessibilityLabel("Způsob zápisu")
+                .accessibilityValue(surface.title)
             }
             .font(.headline)
             .lineLimit(1)
@@ -903,12 +901,19 @@ struct MatchView: View {
         }
         revision = UUID()
     }
-    private func leaveToHome() {
+    private func saveAndLeave() {
         guard !leavingHome else { return }
         leavingHome = true
         flushClock()
-        store.returnHome()
-        dismiss()
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: reduceMotion ? 700_000_000 : 1_400_000_000)
+            store.returnHome()
+            dismiss()
+        }
+    }
+
+    private func leaveToHome() {
+        saveAndLeave()
     }
     private func clockTracking(_ content: some View) -> some View {
         content
@@ -1825,6 +1830,30 @@ struct MatchView: View {
         .padding(.bottom, 6)
         .frame(maxWidth: 780)
         .frame(maxWidth: .infinity)
+    }
+}
+
+/// Krátká obrazovka po uložení — pak návrat domů.
+private struct MatchSavedSplash: View {
+    var body: some View {
+        VStack(spacing: 18) {
+            Spacer()
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 64, weight: .semibold))
+                .foregroundStyle(MatchColors.finish)
+                .symbolRenderingMode(.hierarchical)
+            Text("Hra uložena")
+                .font(AppFont.title(28, weight: .bold))
+                .foregroundStyle(.white)
+            Text("Vracím tě na Domů…")
+                .font(AppFont.body(16))
+                .foregroundStyle(.white.opacity(0.6))
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(MatchColors.background.ignoresSafeArea())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Hra uložena")
     }
 }
 

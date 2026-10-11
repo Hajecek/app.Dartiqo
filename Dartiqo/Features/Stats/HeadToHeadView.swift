@@ -1,5 +1,12 @@
 import SwiftUI
 
+/// Barva bilance: výhra zelená, prohra červená, remíza oranžová.
+private func h2hStandingTint(mine: Int, theirs: Int) -> Color {
+    if mine > theirs { return Theme.positive }
+    if mine < theirs { return Color.red.opacity(0.85) }
+    return .orange
+}
+
 /// Hub vzájemných zápasů — seznam soupeřů a bilancí.
 struct HeadToHeadListView: View {
     @EnvironmentObject private var store: AppStore
@@ -11,74 +18,102 @@ struct HeadToHeadListView: View {
 
     private var totalWins: Int { rivals.reduce(0) { $0 + $1.myWins } }
     private var totalLosses: Int { rivals.reduce(0) { $0 + $1.theirWins } }
+    private var standingTint: Color { h2hStandingTint(mine: totalWins, theirs: totalLosses) }
 
     var body: some View {
-        List {
-            if rivals.isEmpty {
-                Section {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                if rivals.isEmpty {
                     ContentUnavailableView(
                         "Zatím žádné vzájemné zápasy",
                         systemImage: "person.2",
                         description: Text("Až dohraješ proti příteli, botovi nebo ghostovi, uvidíš tu bilanci.")
                     )
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-                }
-            } else {
-                Section {
-                    hubSummary
-                        .listRowInsets(EdgeInsets())
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                }
-
-                Section {
-                    ForEach(rivals) { series in
-                        NavigationLink {
-                            HeadToHeadDetailView(rivalKey: series.key)
-                        } label: {
-                            RivalRow(series: series)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 40)
+                } else {
+                    hubHero
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Soupeři")
+                            .font(.title3.bold())
+                        ForEach(rivals) { series in
+                            NavigationLink {
+                                HeadToHeadDetailView(rivalKey: series.key)
+                            } label: {
+                                RivalRow(series: series)
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                        Text("Bilance jen ze zápasů, kde jsi hrál ty. Boti se sčítají podle úrovně.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 4)
                     }
-                } header: {
-                    Text("Soupeři")
-                } footer: {
-                    Text("Bilance jen ze zápasů, kde jsi hrál ty. Boti se sčítají podle úrovně.")
                 }
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
         }
-        .listStyle(.insetGrouped)
-        .scrollContentBackground(.hidden)
-        .background(Theme.background)
+        .screen()
         .navigationTitle("Head-to-Head")
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private var hubSummary: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Eyebrow(text: "Celkem")
-            Text(rivals.count == 1 ? "1 soupeř" : "\(rivals.count) soupeřů")
-                .font(.title2.bold())
+    private var hubHero: some View {
+        let played = rivals.reduce(0) { $0 + $1.played }
+        let decided = max(totalWins + totalLosses, 1)
+        let winShare = CGFloat(totalWins) / CGFloat(decided)
+        let tied = totalWins == totalLosses
+        return VStack(spacing: 18) {
+            VStack(spacing: 6) {
+                Text("CELKEM")
+                    .font(.caption.weight(.heavy))
+                    .tracking(0.8)
+                    .foregroundStyle(.secondary)
+                Text("\(totalWins) : \(totalLosses)")
+                    .font(.system(size: 48, weight: .heavy, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(standingTint)
+                Text(tied ? "Vyrovnáno" : (totalWins > totalLosses ? "Vedeš" : "Prohráváš"))
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(standingTint)
+                Text(rivals.count == 1 ? "1 soupeř" : "\(rivals.count) soupeřů")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+
+            GeometryReader { geo in
+                HStack(spacing: 3) {
+                    Capsule()
+                        .fill(tied ? Color.orange : Theme.positive)
+                        .frame(width: max(totalWins > 0 ? 8 : 0, geo.size.width * winShare))
+                    Capsule()
+                        .fill(tied ? Color.orange.opacity(0.65) : Color.red.opacity(0.55))
+                }
+            }
+            .frame(height: 10)
+            .clipShape(Capsule())
+            .background(Capsule().fill(Color.primary.opacity(0.06)))
+
             HStack(spacing: 0) {
                 hubFact("\(totalWins)", "výher", Theme.positive)
                 Divider().frame(height: 36)
-                hubFact("\(totalLosses)", "proher", .secondary)
+                hubFact("\(totalLosses)", "proher", Color.red.opacity(0.8))
                 Divider().frame(height: 36)
-                hubFact("\(rivals.reduce(0) { $0 + $1.played })", "zápasů", Theme.accent)
+                hubFact("\(played)", "zápasů", Theme.accent)
             }
-            .padding(.vertical, 10)
-            .background(Theme.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(.vertical, 12)
+            .background(Theme.background, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .padding(20)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(Theme.stroke, lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .strokeBorder(standingTint.opacity(0.35), lineWidth: 1.2)
         )
-        .padding(.horizontal, 16)
-        .padding(.top, 4)
     }
 
     private func hubFact(_ value: String, _ label: String, _ tint: Color) -> some View {
@@ -398,7 +433,11 @@ struct HeadToHeadStandingView: View {
                 Divider().frame(height: 32).overlay(style == .ceremony ? Color.white.opacity(0.12) : Color.primary.opacity(0.1))
                 metric("\(series.theirWins)", "proher", tint: series.theirWins > 0 ? lossRed : nil)
                 Divider().frame(height: 32).overlay(style == .ceremony ? Color.white.opacity(0.12) : Color.primary.opacity(0.1))
-                metric(winRateLabel, "úspěšnost", tint: isBehind ? lossRed : (isAhead ? Theme.positive : nil))
+                metric(
+                    winRateLabel,
+                    "úspěšnost",
+                    tint: series.myWins + series.theirWins > 0 ? myTint : nil
+                )
             }
             .padding(.vertical, 10)
             .background(
@@ -410,14 +449,15 @@ struct HeadToHeadStandingView: View {
         .background(cardFill, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(headerStroke, lineWidth: isBehind || isAhead ? 1.2 : (style == .ceremony ? 1 : 0.5))
+                .strokeBorder(headerStroke, lineWidth: style == .ceremony && !isBehind && !isAhead ? 1 : 1.2)
         )
     }
 
     private var headerStroke: Color {
         if isBehind { return lossRed.opacity(style == .ceremony ? 0.55 : 0.28) }
         if isAhead { return Theme.positive.opacity(style == .ceremony ? 0.45 : 0.28) }
-        return style == .ceremony ? Color.white.opacity(0.08) : Theme.stroke
+        if style == .ceremony { return Color.white.opacity(0.08) }
+        return Color.orange.opacity(0.4)
     }
 
     private var winRateLabel: String {
@@ -471,8 +511,13 @@ struct HeadToHeadStandingView: View {
         let total = max(series.myWins + series.theirWins + series.draws, 1)
         let mine = CGFloat(series.myWins) / CGFloat(total)
         let draws = CGFloat(series.draws) / CGFloat(total)
+        let tied = !isAhead && !isBehind && series.myWins + series.theirWins > 0
         let myColor: Color = isBehind ? lossRed : (isAhead ? Theme.positive : leadAmber)
-        let theirColor: Color = isBehind ? Theme.positive : Color.white.opacity(style == .ceremony ? 0.28 : 0.2)
+        let theirColor: Color = {
+            if isBehind { return Theme.positive }
+            if tied { return leadAmber.opacity(0.7) }
+            return style == .ceremony ? Color.white.opacity(0.28) : Color.red.opacity(0.45)
+        }()
         return GeometryReader { geo in
             HStack(spacing: 3) {
                 Capsule().fill(myColor).frame(width: max(geo.size.width * mine, series.myWins > 0 ? 8 : 0))
@@ -532,7 +577,7 @@ struct HeadToHeadStandingView: View {
                     .font(.subheadline)
                     .foregroundStyle(secondaryText)
             } else if style == .light {
-                VStack(spacing: 12) {
+                VStack(spacing: 10) {
                     if hasAvg {
                         duelRow(
                             title: "Průměr",
@@ -551,6 +596,26 @@ struct HeadToHeadStandingView: View {
                             theirs: theirCheck.percentage.map { "\(Int($0.rounded())) %" } ?? "—",
                             mineValue: myCheck.percentage ?? 0,
                             theirValue: theirCheck.percentage ?? 0
+                        )
+                    }
+                    if myCheck.hasData || theirCheck.hasData {
+                        duelRow(
+                            title: "Zásahy na double",
+                            symbol: "scope",
+                            mine: "\(myCheck.hits)/\(myCheck.attempts)",
+                            theirs: "\(theirCheck.hits)/\(theirCheck.attempts)",
+                            mineValue: myCheck.attempts > 0 ? Double(myCheck.hits) / Double(myCheck.attempts) : 0,
+                            theirValue: theirCheck.attempts > 0 ? Double(theirCheck.hits) / Double(theirCheck.attempts) : 0
+                        )
+                    }
+                    if myCheck.highest > 0 || theirCheck.highest > 0 {
+                        duelRow(
+                            title: "Nejvyšší checkout",
+                            symbol: "trophy.fill",
+                            mine: myCheck.highest > 0 ? "\(myCheck.highest)" : "—",
+                            theirs: theirCheck.highest > 0 ? "\(theirCheck.highest)" : "—",
+                            mineValue: Double(myCheck.highest),
+                            theirValue: Double(theirCheck.highest)
                         )
                     }
                 }
@@ -790,63 +855,106 @@ struct HeadToHeadStandingView: View {
 // MARK: - Seznam / náhledy
 
 private struct RivalRow: View {
+    @EnvironmentObject private var store: AppStore
     let series: HeadToHead
 
+    private var tint: Color { h2hStandingTint(mine: series.myWins, theirs: series.theirWins) }
+    private var tied: Bool { series.myWins == series.theirWins }
+
+    private var opponentPhoto: Data? {
+        guard case .person(let id) = series.key.kind else { return nil }
+        return store.photo(for: id)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                ZStack(alignment: .bottomTrailing) {
-                    Avatar(
-                        name: series.opponentName,
-                        bot: series.opponentBotLevel != nil || series.isGhost,
-                        size: 48,
-                        asset: series.opponentBotLevel.map { BotLevel.get($0).photo }
-                    )
-                    if let level = series.opponentBotLevel {
-                        Text("\(level)")
-                            .font(.system(size: 10, weight: .bold, design: .rounded))
-                            .foregroundStyle(.black)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(Theme.brand, in: Capsule())
-                            .offset(x: 4, y: 4)
+        HStack(spacing: 14) {
+            ZStack(alignment: .bottomTrailing) {
+                Avatar(
+                    name: series.opponentName,
+                    bot: series.opponentBotLevel != nil || series.isGhost,
+                    size: 56,
+                    photo: opponentPhoto,
+                    asset: series.opponentBotLevel.map { BotLevel.get($0).photo }
+                )
+                .overlay(Circle().strokeBorder(tint.opacity(0.5), lineWidth: 2.5))
+                if let level = series.opponentBotLevel {
+                    Text("Lv.\(level)")
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Theme.brand, in: Capsule())
+                        .offset(x: 4, y: 4)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(series.opponentName)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                formDots
+
+                let total = max(series.myWins + series.theirWins, 1)
+                GeometryReader { geo in
+                    HStack(spacing: 2) {
+                        Capsule()
+                            .fill(tied ? Color.orange : Theme.positive)
+                            .frame(width: max(series.myWins > 0 ? 6 : 0, geo.size.width * CGFloat(series.myWins) / CGFloat(total)))
+                        Capsule()
+                            .fill(tied ? Color.orange.opacity(0.65) : Color.red.opacity(0.5))
                     }
                 }
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(series.opponentName)
-                        .font(.headline)
-                        .lineLimit(1)
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 8)
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(series.recordLine)
-                        .font(.title3.weight(.bold))
-                        .monospacedDigit()
-                    Text(series.standingTitle.lowercased())
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(series.myWins >= series.theirWins ? Theme.positive : .red)
-                }
+                .frame(height: 5)
+                .clipShape(Capsule())
+                .background(Capsule().fill(Color.primary.opacity(0.06)))
             }
 
-            let total = max(series.myWins + series.theirWins, 1)
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.primary.opacity(0.08))
-                    Capsule()
-                        .fill(Theme.positive)
-                        .frame(width: geo.size.width * CGFloat(series.myWins) / CGFloat(total))
-                }
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(series.recordLine)
+                    .font(.title2.weight(.heavy))
+                    .monospacedDigit()
+                    .foregroundStyle(tint)
+                Text(series.standingTitle)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(tint)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+                    .padding(.top, 2)
             }
-            .frame(height: 5)
-            .clipShape(Capsule())
         }
-        .padding(.vertical, 2)
+        .padding(16)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(tint.opacity(0.28), lineWidth: 1)
+        )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(series.opponentName), \(series.myWins) ku \(series.theirWins)")
+        .accessibilityLabel("\(series.opponentName), \(series.myWins) ku \(series.theirWins), \(series.standingTitle)")
+    }
+
+    private var formDots: some View {
+        let outcomes = Array(series.outcomesChronological(me: store.profile?.id ?? UUID()).suffix(5))
+        return HStack(spacing: 4) {
+            ForEach(Array(outcomes.enumerated()), id: \.offset) { _, outcome in
+                Circle()
+                    .fill(dot(outcome))
+                    .frame(width: 7, height: 7)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func dot(_ outcome: H2HOutcome) -> Color {
+        switch outcome {
+        case .win: return Theme.positive
+        case .loss: return Color.red.opacity(0.8)
+        case .draw: return .orange
+        }
     }
 
     private var subtitle: String {
@@ -861,6 +969,8 @@ private struct RivalRow: View {
 struct HeadToHeadPreviewCard: View {
     let series: HeadToHead
 
+    private var tint: Color { h2hStandingTint(mine: series.myWins, theirs: series.theirWins) }
+
     var body: some View {
         HStack(spacing: 14) {
             Avatar(
@@ -874,8 +984,8 @@ struct HeadToHeadPreviewCard: View {
                     .font(.headline)
                     .lineLimit(1)
                 Text("\(series.standingTitle) · \(series.recordLine)")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(tint)
             }
             Spacer()
             Image(systemName: "chevron.right")
@@ -886,7 +996,7 @@ struct HeadToHeadPreviewCard: View {
         .background(Theme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Theme.stroke, lineWidth: 0.5)
+                .stroke(tint.opacity(0.28), lineWidth: 1)
         )
     }
 }
@@ -900,31 +1010,33 @@ struct HeadToHeadProfileEntry: View {
         return HeadToHead.rivals(from: store.matches, me: me)
     }
 
+    private var totalWins: Int { rivals.reduce(0) { $0 + $1.myWins } }
+    private var totalLosses: Int { rivals.reduce(0) { $0 + $1.theirWins } }
+    private var standingTint: Color { h2hStandingTint(mine: totalWins, theirs: totalLosses) }
+
     var body: some View {
         NavigationLink {
             HeadToHeadListView()
         } label: {
-            HStack(spacing: 14) {
+            HStack(spacing: 12) {
                 Image(systemName: "person.2.fill")
                     .font(.title3.weight(.semibold))
-                    .foregroundStyle(Theme.onAccent)
+                    .foregroundStyle(.black)
                     .frame(width: 44, height: 44)
-                    .background(Theme.brandBlack, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .background(Theme.brand, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Head-to-Head")
-                        .font(.headline)
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if let top = rivals.first {
-                    Text(top.recordLine)
-                        .font(.title3.weight(.bold))
+                Text("Head-to-Head")
+                    .font(.headline)
+
+                Spacer(minLength: 8)
+
+                if !rivals.isEmpty {
+                    Text("\(totalWins) : \(totalLosses)")
+                        .font(.title3.weight(.heavy))
                         .monospacedDigit()
-                        .foregroundStyle(Theme.accent)
+                        .foregroundStyle(standingTint)
                 }
+
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
@@ -937,11 +1049,12 @@ struct HeadToHeadProfileEntry: View {
             )
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityHint("Otevře vzájemné bilance")
     }
 
-    private var subtitle: String {
-        if rivals.isEmpty { return "S kým jak stojíš" }
-        if rivals.count == 1 { return "1 soupeř · \(rivals[0].opponentName)" }
-        return "\(rivals.count) soupeřů · bilance a grafy"
+    private var accessibilityLabel: String {
+        if rivals.isEmpty { return "Head-to-Head" }
+        return "Head-to-Head, \(totalWins) ku \(totalLosses)"
     }
 }

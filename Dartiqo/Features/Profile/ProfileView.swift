@@ -32,6 +32,7 @@ struct ProfileView: View {
             VStack(alignment: .leading, spacing: 28) {
                 playerCard(stats)
                 HeadToHeadProfileEntry()
+                playTime
                 if stats.isEmpty {
                     ContentUnavailableView("Zatím tu nic není",
                                            systemImage: "chart.bar.xaxis",
@@ -51,7 +52,6 @@ struct ProfileView: View {
                     records(stats)
                     career(stats)
                 }
-                playTime
                 milestones
             }
             .padding(.horizontal, 16)
@@ -277,12 +277,19 @@ struct ProfileView: View {
     // MARK: Skórování
 
     private func scoring(_ stats: PlayerStats) -> some View {
-        let low = max(0, stats.visits - stats.n180 - stats.n140 - stats.n100 - stats.n60)
         let bands: [(String, Int, Color)] = [
-            ("180", stats.n180, .red), ("140+", stats.n140, .orange), ("100+", stats.n100, .yellow),
-            ("60+", stats.n60, Theme.positive), ("pod 60", low, Color.secondary.opacity(0.35))
+            ("180", stats.n180, Color(red: 0.95, green: 0.28, blue: 0.28)),
+            ("140+", stats.n140, .orange),
+            ("100+", stats.n100, Color(red: 0.95, green: 0.78, blue: 0.15)),
+            ("80+", stats.n80, Color(red: 0.55, green: 0.85, blue: 0.35)),
+            ("60+", stats.n60, Theme.positive),
+            ("40+", stats.n40, Color(red: 0.25, green: 0.72, blue: 0.78)),
+            ("20+", stats.n20, Color(red: 0.35, green: 0.52, blue: 0.92)),
+            ("pod 20", stats.nUnder20, Color.secondary.opacity(0.4)),
         ]
         let total = max(1, stats.visits)
+        let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8),
+                       GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
         return block("Skórování", symbol: "chart.bar.fill", trailing: "\(stats.visits) kol") {
             VStack(alignment: .leading, spacing: 14) {
                 GeometryReader { proxy in
@@ -291,7 +298,7 @@ struct ProfileView: View {
                             if band.1 > 0 {
                                 Rectangle()
                                     .fill(band.2)
-                                    .frame(width: max(4, (proxy.size.width - 8) * CGFloat(band.1) / CGFloat(total)))
+                                    .frame(width: max(3, (proxy.size.width - CGFloat(bands.count)) * CGFloat(band.1) / CGFloat(total)))
                             }
                         }
                     }
@@ -299,19 +306,27 @@ struct ProfileView: View {
                 }
                 .frame(height: 14)
                 .accessibilityHidden(true)
-                HStack(spacing: 0) {
+
+                LazyVGrid(columns: columns, spacing: 10) {
                     ForEach(bands, id: \.0) { band in
-                        VStack(spacing: 2) {
+                        VStack(spacing: 3) {
                             Text("\(band.1)")
-                                .font(.system(.headline, design: .rounded))
+                                .font(.system(.headline, design: .rounded).weight(.bold))
                                 .monospacedDigit()
                             HStack(spacing: 4) {
                                 Circle().fill(band.2).frame(width: 7, height: 7)
-                                Text(band.0).font(.caption).foregroundStyle(.secondary)
+                                Text(band.0)
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.8)
                             }
                         }
                         .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                         .accessibilityElement(children: .combine)
+                        .accessibilityLabel("\(band.0): \(band.1)")
                     }
                 }
             }
@@ -439,14 +454,62 @@ struct ProfileView: View {
 
     // MARK: Čas
 
+    private var playTimeSoloSegments: [PlayTime.SoloSegment] {
+        store.trainingHistory.compactMap { session in
+            guard let end = session.finishedAt else { return nil }
+            let seconds = max(0, end.timeIntervalSince(session.startedAt))
+            guard seconds > 0 else { return nil }
+            let title = TrainingCatalog.find(session.definitionID)?.title ?? session.definitionID
+            return PlayTime.SoloSegment(id: session.id, endedAt: end, seconds: seconds, title: "Trénink · \(title)")
+        }
+    }
+
     @ViewBuilder
     private var playTime: some View {
         if let id = store.profile?.id {
             let range = period.range(from: customFrom, to: customTo)
-            let time = PlayTime.make(matches: store.matches, playerID: id, range: range)
-            if time.matchCount > 0 {
-                block("Čas u terče", symbol: "clock.fill", trailing: "všechny režimy") {
-                    PlayTimeCard(time: time, range: range, periodTitle: periodTitle)
+            let solo = playTimeSoloSegments
+            let time = PlayTime.make(matches: store.matches, playerID: id, range: range, solo: solo)
+            let yearStart = Calendar.current.date(byAdding: .year, value: -1, to: Date()) ?? Date()
+            let yearTime = PlayTime.make(
+                matches: store.matches,
+                playerID: id,
+                range: yearStart..<Date().addingTimeInterval(86_400),
+                solo: solo
+            )
+            if time.matchCount > 0 || yearTime.matchCount > 0 {
+                let shown = time.matchCount > 0 ? time : yearTime
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 10) {
+                        Label("Čas u terče", systemImage: "clock.fill")
+                            .font(.headline)
+                            .labelStyle(BlockLabelStyle())
+                        Spacer(minLength: 8)
+                        Text("všechny režimy")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        NavigationLink {
+                            PlayTimeDetailView(
+                                time: shown,
+                                yearTime: yearTime,
+                                range: range,
+                                periodTitle: periodTitle
+                            )
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text("Detail")
+                                    .font(.subheadline.weight(.semibold))
+                                Image(systemName: "chevron.right")
+                                    .font(.caption.weight(.bold))
+                            }
+                            .foregroundStyle(Theme.accent)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Theme.accent.opacity(0.12), in: Capsule())
+                        }
+                        .accessibilityLabel("Detail času u terče")
+                    }
+                    PlayTimeCard(time: shown, periodTitle: periodTitle)
                 }
             }
         }
@@ -513,40 +576,36 @@ struct ProfileView: View {
     }
 }
 
-/// Čas u terče: celkem, podíl podle soupeřů a průběh po dnech.
+private func playTimeTint(_ kind: PlayTime.Kind) -> Color {
+    switch kind {
+    case .training: return Theme.positive
+    case .bots: return .orange
+    case .friends: return .blue
+    }
+}
+
+private func playTimeWindow(range: Range<Date>?, maxDays: Int = 31) -> (end: Date, count: Int) {
+    let now = Date()
+    guard let range, range.upperBound < .distantFuture else { return (now, min(maxDays, 14)) }
+    let end = min(now, range.upperBound.addingTimeInterval(-1))
+    let days = Calendar.current.dateComponents([.day], from: range.lowerBound, to: range.upperBound).day ?? 14
+    return (end, min(maxDays, max(7, days)))
+}
+
+/// Náhled času u terče v profilu (detail je přes tlačítko v hlavičce sekce).
 private struct PlayTimeCard: View {
     var time: PlayTime
-    var range: Range<Date>?
     var periodTitle: String
-
-    private func tint(_ kind: PlayTime.Kind) -> Color {
-        switch kind {
-        case .training: return Theme.positive
-        case .bots: return .orange
-        case .friends: return .blue
-        }
-    }
-
-    /// Konec a délka grafu. Krátká období ukážou celý rozsah, dlouhá posledních 14 dní.
-    private var window: (end: Date, count: Int) {
-        let now = Date()
-        guard let range, range.upperBound < .distantFuture else { return (now, 14) }
-        let end = min(now, range.upperBound.addingTimeInterval(-1))
-        let days = (Calendar.current.dateComponents([.day], from: range.lowerBound, to: range.upperBound).day ?? 14)
-        return (end, min(31, max(7, days)))
-    }
 
     var body: some View {
         let kinds = PlayTime.Kind.allCases.filter { (time.seconds[$0] ?? 0) > 0 }
-        let window = window
-        let days = time.days(ending: window.end, count: window.count)
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .center, spacing: 18) {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 16) {
                 ZStack {
                     Chart(kinds) { kind in
                         SectorMark(angle: .value("Čas", time.seconds[kind] ?? 0), innerRadius: .ratio(0.68), angularInset: 2)
                             .cornerRadius(4)
-                            .foregroundStyle(tint(kind))
+                            .foregroundStyle(playTimeTint(kind))
                     }
                     VStack(spacing: 0) {
                         Text(PlayTime.format(time.total))
@@ -556,106 +615,568 @@ private struct PlayTimeCard: View {
                             .minimumScaleFactor(0.6)
                         Text("celkem").font(.caption2).foregroundStyle(.secondary)
                     }
-                    .padding(.horizontal, 18)
+                    .padding(.horizontal, 14)
                 }
-                .frame(width: 128, height: 128)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Celkem \(PlayTime.format(time.total))")
+                .frame(width: 104, height: 104)
+                .accessibilityHidden(true)
 
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: 8) {
                     ForEach(PlayTime.Kind.allCases) { kind in
                         let seconds = time.seconds[kind] ?? 0
                         HStack(spacing: 8) {
-                            Circle().fill(tint(kind).opacity(seconds > 0 ? 1 : 0.25)).frame(width: 10, height: 10)
-                            VStack(alignment: .leading, spacing: 0) {
-                                Text(kind.title).font(.subheadline.weight(.semibold))
-                                Text("\(time.matches[kind] ?? 0) her · \(Int((time.share(kind) * 100).rounded())) %")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                    .monospacedDigit()
-                            }
+                            Circle().fill(playTimeTint(kind).opacity(seconds > 0 ? 1 : 0.25)).frame(width: 8, height: 8)
+                            Text(kind.title).font(.subheadline.weight(.semibold))
                             Spacer(minLength: 4)
                             Text(PlayTime.format(seconds))
                                 .font(.system(.subheadline, design: .rounded).weight(.bold))
                                 .monospacedDigit()
                                 .foregroundStyle(seconds > 0 ? .primary : .secondary)
                         }
-                        .accessibilityElement(children: .combine)
                     }
                 }
             }
 
             HStack(spacing: 0) {
-                fact(PlayTime.format(time.perMatch), "na hru")
-                Divider().frame(height: 30)
-                fact(PlayTime.format(time.longest), "nejdelší hra")
-                Divider().frame(height: 30)
-                fact("\(time.activeDays)", time.activeDays == 1 ? "den u terče" : "dní u terče")
+                playTimeFact(PlayTime.format(time.perMatch), "na hru")
+                Divider().frame(height: 28)
+                playTimeFact(PlayTime.format(time.longest), "nejdelší")
+                Divider().frame(height: 28)
+                playTimeFact("\(time.activeDays)", time.activeDays == 1 ? "den" : "dní")
             }
-            .padding(.vertical, 10)
-            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(.vertical, 8)
+            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .surface()
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Čas u terče \(PlayTime.format(time.total)), \(periodTitle)")
+    }
+}
 
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Po dnech").font(.subheadline.weight(.semibold))
-                    Spacer()
-                    Text("posledních \(window.count) dní").font(.caption).foregroundStyle(.secondary)
+/// Kompletní přehled času u terče za zvolené období.
+private struct PlayTimeDetailView: View {
+    var time: PlayTime
+    var yearTime: PlayTime
+    var range: Range<Date>?
+    var periodTitle: String
+
+    private var window: (end: Date, count: Int) { playTimeWindow(range: range, maxDays: 60) }
+
+    private var weekdayRows: [(name: String, seconds: TimeInterval)] {
+        let symbols = Calendar.current.shortWeekdaySymbols
+        // Calendar: 1 = neděle … přeuspořádat na po–ne.
+        let order = Array(2...7) + [1]
+        return order.compactMap { day in
+            guard day - 1 < symbols.count else { return nil }
+            return (symbols[day - 1].capitalized, time.byWeekday[day] ?? 0)
+        }
+    }
+
+    var body: some View {
+        let kinds = PlayTime.Kind.allCases.filter { (time.seconds[$0] ?? 0) > 0 }
+        let days = time.days(ending: window.end, count: window.count)
+        let modes = GameMode.allCases.filter { (time.byMode[$0] ?? 0) > 0 }
+        let yearGrid = yearTime.contributionGrid(weeks: 53)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                hero(kinds: kinds)
+
+                PlayTimeActivityCalendar(grid: yearGrid)
+
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                    detailMetric(PlayTime.format(time.perMatch), "Průměr na hru", "clock")
+                    detailMetric(PlayTime.format(time.perActiveDay), "Průměr na den", "sun.max.fill")
+                    detailMetric(PlayTime.format(time.longest), "Nejdelší hra", "arrow.up.right")
+                    detailMetric(PlayTime.format(time.shortest), "Nejkratší hra", "arrow.down.right")
+                    detailMetric("\(time.matchCount)", time.matchCount == 1 ? "Hra" : "Her", "flag.fill")
+                    detailMetric("\(time.activeDays)", time.activeDays == 1 ? "Den u terče" : "Dní u terče", "calendar")
                 }
-                Chart(days) { day in
-                    BarMark(x: .value("Den", day.date, unit: .day), y: .value("Minuty", day.seconds / 60))
-                        .foregroundStyle(tint(day.kind))
-                        .cornerRadius(3)
+
+                if let busy = time.busiestDay {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Nejrušnější den", systemImage: "flame.fill")
+                            .font(.headline)
+                        Text("\(busy.date.formatted(date: .complete, time: .omitted)) · \(PlayTime.format(busy.seconds))")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .surface()
                 }
-                .chartLegend(.hidden)
-                .chartYAxis {
-                    AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
-                        AxisGridLine()
-                        AxisValueLabel { if let minutes = value.as(Double.self) { Text("\(Int(minutes)) min") } }
+
+                kindBreakdown
+
+                if !modes.isEmpty {
+                    modeBreakdown(modes)
+                }
+
+                weekdayBreakdown
+
+                dailyChart(days: days)
+
+                if !time.longestMatches.isEmpty {
+                    longestList
+                }
+
+                Text("\(periodTitle). Čas běží, dokud máš otevřenou hru. Pauza, odchod ze hry a appka na pozadí se nepočítají.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(16)
+            .frame(maxWidth: 700)
+            .frame(maxWidth: .infinity)
+        }
+        .screen()
+        .navigationTitle("Čas u terče")
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationSubtitle(periodTitle)
+    }
+
+    private func hero(kinds: [PlayTime.Kind]) -> some View {
+        HStack(spacing: 18) {
+            ZStack {
+                Chart(kinds) { kind in
+                    SectorMark(angle: .value("Čas", time.seconds[kind] ?? 0), innerRadius: .ratio(0.7), angularInset: 2)
+                        .cornerRadius(4)
+                        .foregroundStyle(playTimeTint(kind))
+                }
+                VStack(spacing: 2) {
+                    Text(PlayTime.format(time.total))
+                        .font(.system(.title2, design: .rounded).weight(.heavy))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.55)
+                    Text("celkem")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 20)
+            }
+            .frame(width: 140, height: 140)
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Jak hraješ")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .textCase(.uppercase)
+                ForEach(PlayTime.Kind.allCases) { kind in
+                    let seconds = time.seconds[kind] ?? 0
+                    HStack(spacing: 8) {
+                        Circle().fill(playTimeTint(kind).opacity(seconds > 0 ? 1 : 0.25)).frame(width: 9, height: 9)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(kind.title).font(.subheadline.weight(.semibold))
+                            Text(kind.detail)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 4)
+                        Text("\(Int((time.share(kind) * 100).rounded())) %")
+                            .font(.caption.weight(.bold))
+                            .monospacedDigit()
+                            .foregroundStyle(seconds > 0 ? .primary : .secondary)
                     }
                 }
-                .chartXAxis {
-                    AxisMarks(values: .stride(by: .day, count: window.count > 14 ? 7 : 2)) { _ in
-                        AxisValueLabel(format: .dateTime.day().month(.defaultDigits))
-                    }
-                }
-                .frame(height: 130)
-                .accessibilityLabel("Čas po dnech za posledních \(window.count) dní")
             }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Theme.stroke, lineWidth: 0.5)
+        )
+    }
 
-            let modes = GameMode.allCases.filter { (time.byMode[$0] ?? 0) > 0 }
-            if modes.count > 1 {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(modes) { mode in
-                            Label("\(mode.shortTitle) \(PlayTime.format(time.byMode[mode] ?? 0))", systemImage: mode.symbol)
-                                .font(.caption.weight(.semibold))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(Color.primary.opacity(0.06), in: Capsule())
+    private var kindBreakdown: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Podle soupeře").font(.headline)
+            ForEach(PlayTime.Kind.allCases) { kind in
+                let seconds = time.seconds[kind] ?? 0
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Label(kind.title, systemImage: kind.symbol)
+                            .font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Text(PlayTime.format(seconds))
+                            .font(.subheadline.weight(.bold))
+                            .monospacedDigit()
+                    }
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.primary.opacity(0.08))
+                            Capsule()
+                                .fill(playTimeTint(kind))
+                                .frame(width: seconds > 0 ? max(6, geo.size.width * time.share(kind)) : 0)
                         }
                     }
+                    .frame(height: 8)
+                    Text("\(time.matches[kind] ?? 0) her · \(Int((time.share(kind) * 100).rounded())) %")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
-
-            Text("\(periodTitle). Čas běží, dokud máš otevřenou hru. Pauza, odchod ze hry a appka na pozadí se nepočítají.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
         .surface()
     }
 
-    private func fact(_ value: String, _ label: String) -> some View {
-        VStack(spacing: 2) {
+    private func modeBreakdown(_ modes: [GameMode]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Podle režimu").font(.headline)
+            ForEach(modes) { mode in
+                let seconds = time.byMode[mode] ?? 0
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Label(mode.shortTitle, systemImage: mode.symbol)
+                            .font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Text(PlayTime.format(seconds))
+                            .font(.subheadline.weight(.bold))
+                            .monospacedDigit()
+                    }
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.primary.opacity(0.08))
+                            Capsule()
+                                .fill(Theme.accent)
+                                .frame(width: max(6, geo.size.width * time.share(mode: mode)))
+                        }
+                    }
+                    .frame(height: 8)
+                    Text("\(time.matchesByMode[mode] ?? 0) her · \(Int((time.share(mode: mode) * 100).rounded())) %")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .surface()
+    }
+
+    private var weekdayBreakdown: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Podle dne v týdnu").font(.headline)
+            Chart(weekdayRows, id: \.name) { row in
+                BarMark(
+                    x: .value("Den", row.name),
+                    y: .value("Minuty", row.seconds / 60)
+                )
+                .foregroundStyle(row.seconds > 0 ? Theme.positive : Color.primary.opacity(0.08))
+                .cornerRadius(4)
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let minutes = value.as(Double.self) { Text("\(Int(minutes)) min") }
+                    }
+                }
+            }
+            .frame(height: 150)
+            .accessibilityLabel("Čas podle dne v týdnu")
+
+            if let top = weekdayRows.max(by: { $0.seconds < $1.seconds }), top.seconds > 0 {
+                Text("Nejvíc hraješ \(top.name.lowercased()) · \(PlayTime.format(top.seconds))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .surface()
+    }
+
+    private func dailyChart(days: [PlayTime.Day]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("Po dnech").font(.headline)
+                Spacer()
+                Text("posledních \(window.count) dní")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Chart(days) { day in
+                BarMark(x: .value("Den", day.date, unit: .day), y: .value("Minuty", day.seconds / 60))
+                    .foregroundStyle(playTimeTint(day.kind))
+                    .cornerRadius(3)
+            }
+            .chartLegend(.hidden)
+            .chartYAxis {
+                AxisMarks(position: .leading, values: .automatic(desiredCount: 3)) { value in
+                    AxisGridLine()
+                    AxisValueLabel {
+                        if let minutes = value.as(Double.self) { Text("\(Int(minutes)) min") }
+                    }
+                }
+            }
+            .chartXAxis {
+                AxisMarks(values: .stride(by: .day, count: window.count > 21 ? 7 : (window.count > 10 ? 3 : 2))) { _ in
+                    AxisValueLabel(format: .dateTime.day().month(.defaultDigits))
+                }
+            }
+            .frame(height: 160)
+            .accessibilityLabel("Čas po dnech za posledních \(window.count) dní")
+        }
+        .surface()
+    }
+
+    private var longestList: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Nejdelší hry").font(.headline)
+            ForEach(Array(time.longestMatches.enumerated()), id: \.element.id) { index, item in
+                HStack(spacing: 12) {
+                    Text("\(index + 1)")
+                        .font(.caption.weight(.heavy))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.title)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(1)
+                        Text(item.date.formatted(date: .abbreviated, time: .shortened))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    Text(PlayTime.format(item.seconds))
+                        .font(.subheadline.weight(.bold))
+                        .monospacedDigit()
+                }
+                if index < time.longestMatches.count - 1 {
+                    Divider().opacity(0.5)
+                }
+            }
+        }
+        .surface()
+    }
+
+    private func detailMetric(_ value: String, _ title: String, _ symbol: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: symbol)
+                .font(.title3)
+                .foregroundStyle(Theme.accent)
             Text(value)
-                .font(.system(.headline, design: .rounded).weight(.bold))
+                .font(.system(.title3, design: .rounded).weight(.bold))
                 .monospacedDigit()
                 .lineLimit(1)
-                .minimumScaleFactor(0.6)
-            Text(label).font(.caption2).foregroundStyle(.secondary)
+                .minimumScaleFactor(0.7)
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .surface()
         .accessibilityElement(children: .combine)
+    }
+}
+
+private func playTimeFact(_ value: String, _ label: String) -> some View {
+    VStack(spacing: 2) {
+        Text(value)
+            .font(.system(.headline, design: .rounded).weight(.bold))
+            .monospacedDigit()
+            .lineLimit(1)
+            .minimumScaleFactor(0.6)
+        Text(label).font(.caption2).foregroundStyle(.secondary)
+    }
+    .frame(maxWidth: .infinity)
+    .accessibilityElement(children: .combine)
+}
+
+/// Mapa aktivity u terče — čitelné čtverce, měsíce jako skupiny, vejde se do šířky.
+private struct PlayTimeActivityCalendar: View {
+    var grid: PlayTime.ContributionGrid
+
+    private let cell: CGFloat = 12
+    private let gap: CGFloat = 3
+    private let gutter: CGFloat = 28
+    private var stride: CGFloat { cell + gap }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Aktivita u terče")
+                        .font(.headline)
+                    Text("Každé políčko je jeden den")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text("\(grid.activeDays)")
+                    .font(.system(.title2, design: .rounded).weight(.bold))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.positive)
+                + Text(" dní")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            GeometryReader { geo in
+                let available = max(0, geo.size.width - gutter)
+                let fit = max(12, Int(floor((available + gap) / stride)))
+                let weeks = Array(grid.weeks.suffix(min(fit, grid.weeks.count)))
+                let offset = grid.weeks.count - weeks.count
+                heatmap(weeks: weeks, indexOffset: offset)
+                    .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+            }
+            .frame(height: 18 + cell * 7 + gap * 6)
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Aktivita u terče, \(grid.activeDays) aktivních dní")
+
+            monthBars
+
+            HStack(spacing: 5) {
+                Text("Méně")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                ForEach(0..<5, id: \.self) { level in
+                    RoundedRectangle(cornerRadius: 2, style: .continuous)
+                        .fill(fill(level))
+                        .frame(width: 12, height: 12)
+                }
+                Text("Více")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+                Text("zobrazeno \(visibleHint)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Theme.stroke, lineWidth: 0.5)
+        )
+    }
+
+    private var visibleHint: String {
+        "poslední týdny"
+    }
+
+    /// Součet minut po měsících za celý rok v mřížce.
+    private var monthBars: some View {
+        let rows = yearMonthTotals
+        let maxSeconds = max(rows.map(\.seconds).max() ?? 1, 1)
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Po měsících")
+                .font(.subheadline.weight(.semibold))
+            HStack(alignment: .bottom, spacing: 4) {
+                ForEach(rows, id: \.title) { row in
+                    VStack(spacing: 4) {
+                        Capsule()
+                            .fill(row.seconds > 0 ? Theme.positive : Color.primary.opacity(0.08))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: max(4, 56 * CGFloat(row.seconds / maxSeconds)))
+                        Text(row.title)
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .accessibilityLabel("\(row.title): \(PlayTime.format(row.seconds))")
+                }
+            }
+            .frame(height: 78)
+        }
+    }
+
+    private var yearMonthTotals: [(title: String, seconds: TimeInterval)] {
+        let names = ["led", "úno", "bře", "dub", "kvě", "čvn", "čvc", "srp", "zář", "říj", "lis", "pro"]
+        var totals = Array(repeating: TimeInterval(0), count: 12)
+        let calendar = Calendar.current
+        for week in grid.weeks {
+            for day in week.days where day.seconds > 0 {
+                let month = calendar.component(.month, from: day.date)
+                if (1...12).contains(month) { totals[month - 1] += day.seconds }
+            }
+        }
+        guard let first = grid.weeks.first?.days.first?.date else {
+            return (0..<12).map { (names[$0], totals[$0]) }
+        }
+        let startMonth = calendar.component(.month, from: first)
+        return (0..<12).map { offset in
+            let index = (startMonth - 1 + offset) % 12
+            return (names[index], totals[index])
+        }
+    }
+
+    private func heatmap(weeks: [PlayTime.ContributionWeek], indexOffset: Int) -> some View {
+        let groups = monthGroups(weeks: weeks, indexOffset: indexOffset)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 0) {
+                Color.clear.frame(width: gutter)
+                HStack(spacing: 0) {
+                    ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+                        Text(group.title)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: CGFloat(group.count) * stride - gap, alignment: .leading)
+                    }
+                }
+            }
+            .frame(height: 16)
+
+            HStack(alignment: .top, spacing: gap) {
+                VStack(spacing: gap) {
+                    ForEach(["Po", "Út", "St", "Čt", "Pá", "So", "Ne"], id: \.self) { label in
+                        Text(["Po", "St", "Pá"].contains(label) ? label : "")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .frame(width: gutter - gap, height: cell, alignment: .trailing)
+                    }
+                }
+                HStack(spacing: gap) {
+                    ForEach(weeks) { week in
+                        VStack(spacing: gap) {
+                            ForEach(week.days) { day in
+                                RoundedRectangle(cornerRadius: 2.5, style: .continuous)
+                                    .fill(fill(day.level))
+                                    .frame(width: cell, height: cell)
+                                    .accessibilityLabel(dayLabel(day))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private struct MonthGroup: Equatable {
+        var title: String
+        var count: Int
+    }
+
+    private func monthGroups(weeks: [PlayTime.ContributionWeek], indexOffset: Int) -> [MonthGroup] {
+        let lookup = Dictionary(uniqueKeysWithValues: grid.monthLabels.map { ($0.weekIndex, $0.title) })
+        var groups: [MonthGroup] = []
+        for i in weeks.indices {
+            let absolute = indexOffset + i
+            if let title = lookup[absolute] {
+                groups.append(MonthGroup(title: title, count: 1))
+            } else if var last = groups.last {
+                last.count += 1
+                groups[groups.count - 1] = last
+            } else {
+                groups.append(MonthGroup(title: "", count: 1))
+            }
+        }
+        return groups
+    }
+
+    private func fill(_ level: Int) -> Color {
+        switch level {
+        case 1: return Theme.positive.opacity(0.3)
+        case 2: return Theme.positive.opacity(0.5)
+        case 3: return Theme.positive.opacity(0.75)
+        case 4: return Theme.positive
+        default: return Color.primary.opacity(0.08)
+        }
+    }
+
+    private func dayLabel(_ day: PlayTime.ContributionCell) -> String {
+        let date = day.date.formatted(date: .abbreviated, time: .omitted)
+        if day.seconds <= 0 { return "\(date): bez hry" }
+        return "\(date): \(PlayTime.format(day.seconds))"
     }
 }
 

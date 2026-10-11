@@ -332,6 +332,10 @@ public struct Match: Codable, Identifiable {
         guard let completedAt else { return 0 }
         return min(max(0, completedAt.timeIntervalSince(createdAt)), 2 * 3600)
     }
+    /// Sólo / sám proti sobě nepatří do bilance výher a proher.
+    public var countsForCompetitiveRecord: Bool {
+        Set(players.map(\.id)).count >= 2
+    }
     public init(config: GameConfig, players: [Player], firstPlayer: Int = 0) {
         precondition((1...4).contains(players.count))
         self.config = config; self.players = players

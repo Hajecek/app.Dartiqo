@@ -124,7 +124,11 @@ enum AppSection: Hashable {
         set { guard let id = profile?.id.uuidString else { return }; data.activeMatches[id] = newValue; save() }
     }
     var xp: Int {
-        let played = matches.reduce(0) { sum, match in sum + 50 + ((match.winner.map { match.players[$0].id == profile?.id } ?? false) ? 50 : 0) }
+        let played = matches.reduce(0) { sum, match in
+            let winBonus = match.countsForCompetitiveRecord
+                && (match.winner.map { match.players[$0].id == profile?.id } ?? false)
+            return sum + 50 + (winBonus ? 50 : 0)
+        }
         let trained = (data.xpEvents ?? []).filter { $0.owner == profile?.id }.reduce(0) { $0 + $1.amount }
         return played + trained
     }
@@ -144,7 +148,12 @@ enum AppSection: Hashable {
         let darts = ownVisits.reduce(0) { $0 + $1.darts.count }
         return darts == 0 ? 0 : Double(ownVisits.reduce(0) { $0 + $1.credited }) * 3 / Double(darts)
     }
-    var wins: Int { matches.filter { m in m.winner.map { m.players[$0].id == profile?.id } ?? false }.count }
+    var wins: Int {
+        matches.filter { match in
+            guard match.countsForCompetitiveRecord, let winner = match.winner else { return false }
+            return match.players[winner].id == profile?.id
+        }.count
+    }
     var n180: Int { ownVisits.filter { $0.credited == 180 }.count }
     func recoveryDocument() throws -> JSONDocument { JSONDocument(data: try Data(contentsOf: file)) }
     func resetAfterRecovery() {

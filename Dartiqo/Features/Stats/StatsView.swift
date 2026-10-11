@@ -185,22 +185,23 @@ struct HistoryView: View {
     }
 
     private var record: some View {
-        let wins = matches.filter { outcome($0) == .win }.count
-        let losses = matches.filter { outcome($0) == .loss }.count
-        let draws = matches.filter { outcome($0) == .draw }.count
-        let recent = Array(matches.prefix(8))
+        let ranked = matches.filter(\.countsForCompetitiveRecord)
+        let wins = ranked.filter { outcome($0) == .win }.count
+        let losses = ranked.filter { outcome($0) == .loss }.count
+        let draws = ranked.filter { outcome($0) == .draw }.count
+        let recent = Array(ranked.prefix(8))
         return VStack(alignment: .leading, spacing: 18) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Eyebrow(text: "Bilance")
-                    Text(recordHeadline(wins: wins))
+                    Text(recordHeadline(wins: wins, ranked: ranked.count))
                         .font(.title2.bold())
-                    Text(recordDetail(wins: wins, losses: losses))
+                    Text(recordDetail(wins: wins, losses: losses, ranked: ranked))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                winRateGauge(wins: wins)
+                winRateGauge(wins: wins, ranked: ranked.count)
             }
 
             HStack(spacing: 0) {
@@ -223,7 +224,7 @@ struct HistoryView: View {
                             let item = outcome(game)
                             Text(item.shortTitle)
                                 .font(.caption2.weight(.heavy))
-                                .foregroundStyle(item == .loss ? Color.primary : Color.white)
+                                .foregroundStyle(item == .loss || item == .practice ? Color.primary : Color.white)
                                 .frame(width: 24, height: 24)
                                 .background(item.color, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                         }
@@ -256,8 +257,8 @@ struct HistoryView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func winRateGauge(wins: Int) -> some View {
-        let rate = matches.isEmpty ? 0 : Double(wins) / Double(matches.count)
+    private func winRateGauge(wins: Int, ranked: Int) -> some View {
+        let rate = ranked == 0 ? 0 : Double(wins) / Double(ranked)
         return ZStack {
             Circle()
                 .stroke(Theme.stroke, lineWidth: 7)
@@ -266,7 +267,7 @@ struct HistoryView: View {
                 .stroke(Theme.positive, style: StrokeStyle(lineWidth: 7, lineCap: .round))
                 .rotationEffect(.degrees(-90))
             VStack(spacing: 0) {
-                Text(winRate(wins: wins))
+                Text(winRate(wins: wins, ranked: ranked))
                     .font(.system(.headline, design: .rounded).weight(.bold))
                     .monospacedDigit()
                 Text("výher")
@@ -276,19 +277,19 @@ struct HistoryView: View {
         }
         .frame(width: 74, height: 74)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Úspěšnost \(winRate(wins: wins))")
+        .accessibilityLabel("Úspěšnost \(winRate(wins: wins, ranked: ranked))")
     }
 
-    private func recordHeadline(wins: Int) -> String {
-        guard !matches.isEmpty else { return "Bez odehraných her" }
-        if wins == matches.count { return "Bez porážky" }
-        if wins > matches.count / 2 { return "Kladná bilance" }
-        if wins * 2 == matches.count { return "Vyrovnaná bilance" }
+    private func recordHeadline(wins: Int, ranked: Int) -> String {
+        guard ranked > 0 else { return "Bez soutěžních her" }
+        if wins == ranked { return "Bez porážky" }
+        if wins > ranked / 2 { return "Kladná bilance" }
+        if wins * 2 == ranked { return "Vyrovnaná bilance" }
         return "Je na čem pracovat"
     }
 
-    private func recordDetail(wins: Int, losses: Int) -> String {
-        if let streak = currentStreak {
+    private func recordDetail(wins: Int, losses: Int, ranked: [Match]) -> String {
+        if let streak = currentStreak(in: ranked) {
             return streak.count == 1
                 ? "Poslední zápas: \(streak.outcome.title.lowercased())"
                 : "\(streak.count)× \(streak.outcome == .win ? "výhra" : streak.outcome == .loss ? "prohra" : "remíza") v řadě"
@@ -296,20 +297,21 @@ struct HistoryView: View {
         return "\(wins) výher · \(losses) proher"
     }
 
-    private var currentStreak: (outcome: GameOutcome, count: Int)? {
-        guard let first = matches.first.map(outcome) else { return nil }
-        let count = matches.prefix { outcome($0) == first }.count
+    private func currentStreak(in ranked: [Match]) -> (outcome: GameOutcome, count: Int)? {
+        guard let first = ranked.first.map(outcome), first != .practice else { return nil }
+        let count = ranked.prefix { outcome($0) == first }.count
         return (first, count)
     }
 
     private func outcome(_ match: Match) -> GameOutcome {
+        guard match.countsForCompetitiveRecord else { return .practice }
         guard let winner = match.winner else { return .draw }
         return match.players[winner].id == store.profile?.id ? .win : .loss
     }
 
-    private func winRate(wins: Int) -> String {
-        guard !matches.isEmpty else { return "—" }
-        return "\(Int((Double(wins) / Double(matches.count) * 100).rounded())) %"
+    private func winRate(wins: Int, ranked: Int) -> String {
+        guard ranked > 0 else { return "—" }
+        return "\(Int((Double(wins) / Double(ranked) * 100).rounded())) %"
     }
 
     private func historyGroups(_ games: [Match]) -> [HistoryMonth] {
@@ -330,18 +332,38 @@ struct HistoryView: View {
 }
 
 private enum GameOutcome {
-    case win, loss, draw
+    case win, loss, draw, practice
     var title: String {
-        switch self { case .win: return "Vítězství"; case .loss: return "Prohra"; case .draw: return "Remíza" }
+        switch self {
+        case .win: return "Vítězství"
+        case .loss: return "Prohra"
+        case .draw: return "Remíza"
+        case .practice: return "Trénink"
+        }
     }
     var symbol: String {
-        switch self { case .win: return "trophy.fill"; case .loss: return "xmark"; case .draw: return "equal" }
+        switch self {
+        case .win: return "trophy.fill"
+        case .loss: return "xmark"
+        case .draw: return "equal"
+        case .practice: return "figure.walk"
+        }
     }
     var color: Color {
-        switch self { case .win: return Theme.positive; case .loss: return .red; case .draw: return .orange }
+        switch self {
+        case .win: return Theme.positive
+        case .loss: return .red
+        case .draw: return .orange
+        case .practice: return Theme.stroke
+        }
     }
     var shortTitle: String {
-        switch self { case .win: return "V"; case .loss: return "P"; case .draw: return "R" }
+        switch self {
+        case .win: return "V"
+        case .loss: return "P"
+        case .draw: return "R"
+        case .practice: return "T"
+        }
     }
 }
 
@@ -1069,6 +1091,7 @@ private struct HistoryLabelStyle: LabelStyle {
 }
 
 private func outcome(_ match: Match, profileID: UUID?) -> GameOutcome {
+    guard match.countsForCompetitiveRecord else { return .practice }
     guard let winner = match.winner else { return .draw }
     return match.players[winner].id == profileID ? .win : .loss
 }
