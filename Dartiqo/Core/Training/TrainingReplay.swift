@@ -137,6 +137,8 @@ private final class TrainingRun {
     var summary = ""
     var trackAverage = false
     var bogeys: [Int] = []
+    var boardMarks: [Int: Int] = [:]
+    var boardNumbers: [Int] = []
 
     init(session: TrainingSession, now: Date) {
         actions = session.actions
@@ -259,6 +261,8 @@ private final class TrainingRun {
         projection.score = record
         projection.higherIsBetter = higher
         projection.ideal = waiting ? ideal : nil
+        projection.boardMarks = boardMarks
+        projection.boardNumbers = boardNumbers
         if finished { projection.result = makeResult() }
         return projection
     }
@@ -413,6 +417,10 @@ private final class TrainingRun {
     func cricket(numbers: [Int], limit: Int) -> TrainingProjection {
         var marks: [Int: Int] = [:]
         func closed(_ number: Int) -> Bool { marks[number, default: 0] >= 3 }
+        func publish() {
+            boardNumbers = numbers
+            boardMarks = marks
+        }
         var thrown = 0
         while thrown < limit && !numbers.allSatisfy(closed) {
             let next = numbers.first { !closed($0) } ?? numbers[0]
@@ -422,6 +430,7 @@ private final class TrainingRun {
             target = hint.label
             dartsLeft = limit - thrown
             mark(numbers.filter(closed).count, of: numbers.count)
+            publish()
             guard let thrownDart = dart(hint) else { return pause() }
             thrown += 1
             _ = absorb(thrownDart, aim: Aim.segment(next, nil))
@@ -433,6 +442,7 @@ private final class TrainingRun {
         let won = numbers.allSatisfy(closed)
         record = thrown
         higher = false
+        publish()
         return finish(won, won ? "Zavřeno na \(thrown) šipek." : "Na zavření nestačil limit.")
     }
 

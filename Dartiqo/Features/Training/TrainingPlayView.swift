@@ -93,6 +93,14 @@ struct TrainingPlayView: View {
                         }
                     }
                 } else {
+                    if !projection.boardNumbers.isEmpty {
+                        CricketMarksCard(
+                            names: session?.names.isEmpty == false ? (session?.names ?? ["Hráč"]) : ["Hráč"],
+                            marksByPlayer: [projection.boardMarks],
+                            numbers: projection.boardNumbers,
+                            active: 0
+                        )
+                    }
                     throwStrip
                     input
                 }
@@ -178,36 +186,21 @@ struct TrainingPlayView: View {
         HStack(spacing: 8) {
             ForEach(0..<3, id: \.self) { index in
                 let dart = visitDarts.indices.contains(index) ? visitDarts[index] : nil
-                VStack(spacing: 4) {
-                    Text("\(index + 1)")
-                        .font(AppFont.caption(10, weight: .bold))
-                        .foregroundStyle(TrainingColors.ink.opacity(0.4))
-                    Text(dart.map { "\($0.score)" } ?? "—")
-                        .font(AppFont.display(26, weight: .bold))
-                        .monospacedDigit()
-                        .foregroundStyle(dart == nil ? TrainingColors.ink.opacity(0.22) : TrainingColors.ink)
-                    Text(dart?.label ?? "\(index + 1). šipka")
-                        .font(AppFont.caption(12, weight: .bold))
-                        .foregroundStyle(TrainingColors.ink.opacity(dart == nil ? 0.4 : 0.65))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                }
-                .frame(maxWidth: .infinity, minHeight: 78)
-                .background(TrainingColors.ink.opacity(dart == nil ? 0.04 : 0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                ThrowSlotFace(index: index, dart: dart)
             }
         }
+        .frame(height: 88)
         .padding(10)
         .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Aktuální hod")
     }
 
     @ViewBuilder
     private var input: some View {
         switch surface {
         case .board:
-            TouchDartboard { dart in _ = throwDart(dart) }
-                .frame(maxWidth: 420)
-                .frame(maxWidth: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            ScoringDartboard(marks: visitDarts, interactive: true) { dart in _ = throwDart(dart) }
         case .camera:
             if let calibration = store.boardCalibration, cameraReady {
                 CameraScoreView(calibration: calibration, labels: visitDarts.map(\.label), dartCount: session?.actions.count ?? 0) { dart, _ in
@@ -216,7 +209,9 @@ struct TrainingPlayView: View {
                 .frame(minHeight: 420)
             }
         case .grid:
-            dartGrid
+            ManualScorePad(multiplier: $multiplier, onSelect: { store.selectionHaptic() }) { dart in
+                _ = throwDart(dart)
+            }
         }
         if !projection.detail.isEmpty || projection.hint != nil || projection.ghost != nil || !projection.bogeys.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
@@ -232,51 +227,6 @@ struct TrainingPlayView: View {
             .foregroundStyle(.white.opacity(0.8))
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-    }
-
-    private var dartGrid: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                ForEach(1...3, id: \.self) { value in
-                    Button { multiplier = value } label: {
-                        Text(["Single", "Double", "Triple"][value - 1])
-                            .font(AppFont.caption(12, weight: .semibold))
-                            .frame(maxWidth: .infinity, minHeight: 47)
-                            .overlay(alignment: .bottom) {
-                                Rectangle().fill(multiplier == value ? TrainingColors.coral : .clear).frame(height: 3)
-                            }
-                    }
-                    .accessibilityAddTraits(multiplier == value ? .isSelected : [])
-                }
-                Button { _ = throwDart(Dart(25, 2)) } label: {
-                    VStack(spacing: 2) { Text("Bull").font(AppFont.caption(12, weight: .bold)); Text("50").font(AppFont.caption(12)) }
-                        .frame(maxWidth: .infinity, minHeight: 47)
-                }
-                Button { _ = throwDart(Dart(25)) } label: {
-                    VStack(spacing: 2) { Text("Outer").font(AppFont.caption(12, weight: .bold)); Text("25").font(AppFont.caption(12)) }
-                        .frame(maxWidth: .infinity, minHeight: 47)
-                }
-                Button { _ = throwDart(.miss) } label: {
-                    VStack(spacing: 2) { Text("Mimo").font(AppFont.caption(12, weight: .bold)); Text("0").font(AppFont.caption(12)) }
-                        .frame(maxWidth: .infinity, minHeight: 47)
-                }
-                .accessibilityLabel("Mimo terč, 0 bodů")
-            }
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 1), count: 5), spacing: 1) {
-                ForEach(1...20, id: \.self) { number in
-                    Button { _ = throwDart(Dart(number, multiplier)) } label: {
-                        Text("\(number)")
-                            .font(AppFont.display(26, weight: .bold))
-                            .frame(maxWidth: .infinity, minHeight: 46)
-                            .background(TrainingColors.background)
-                    }
-                    .accessibilityLabel("\(multiplier == 3 ? "Triple" : multiplier == 2 ? "Double" : "Single") \(number)")
-                }
-            }
-            .padding(.vertical, 1)
-            .background(.white.opacity(0.13))
-        }
-        .foregroundStyle(.white)
     }
 
     private func promptCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {

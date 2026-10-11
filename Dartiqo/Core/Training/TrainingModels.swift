@@ -336,6 +336,9 @@ struct TrainingProjection: Equatable {
     var higherIsBetter = true
     var result: TrainingResult?
     var ideal: TrainingAction?
+    /// Cricket a podobné hry: čísla a značky pro stejnou tabulku jako v zápase.
+    var boardMarks: [Int: Int] = [:]
+    var boardNumbers: [Int] = []
 }
 
 struct XPEvent: Codable, Identifiable, Equatable {
