@@ -36,10 +36,14 @@ struct SettingsView: View {
                 }
                 HStack { TextField("Přezdívka", text: $name).textContentType(.nickname); Button("Uložit") { store.rename(name); store.feedback() }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
             } header: { Text("Hráčský profil") } footer: { Text("Místní profil na tomto zařízení. Bez online účtu a synchronizace.") }
-            Section("Přizpůsobení") {
+            Section {
                 Picker("Vzhled", selection: $store.data.appearance) { Text("Tmavý").tag("dark"); Text("Světlý").tag("light"); Text("Podle systému").tag("system") }
                 Toggle("Haptická odezva", isOn: $store.data.haptics).tint(Theme.mint)
                 Toggle("Hlasové hlášení skóre", isOn: $store.data.voice).tint(Theme.mint)
+            } header: {
+                Text("Přizpůsobení")
+            } footer: {
+                Text("Hlášení čte dosažené skóre nahlas. Hlasový zápis (mikrofon v zápase) je zvlášť — řekneš šipku nebo součet kola.")
             }
             Section {
                 NavigationLink {
@@ -110,7 +114,15 @@ struct SettingsView: View {
 struct RulesView: View {
     var body: some View {
         List {
-            Section("Zápis") { Text("U X01 můžeš zapisovat součet kola. Při zavření potvrdíš počet šipek i správné pravidlo out. Tlačítko BUST zapíše přehoz s vybraným počtem šipek. Způsob zápisu změníš v nabídce zápasu. U součtů historie neuvádí domyšlené segmenty.\n\nPro přesný zápis vyber Single, Double nebo Triple a číslo, nebo klepni na pole terče. Skóre se ihned změní. Pro 25 a bull použij samostatná tlačítka. VEDLE je šipka bez bodů. Třetí šipka, přehoz nebo zavření automaticky ukončí návštěvu."); Text("Zpět vrátí poslední lidskou šipku a odstraní i případnou odpověď bota. Odchod přes křížek může rozehraný zápas uložit. Uložení konečného výsledku přidá zápas do historie a přidělí XP.") }
+            Section("Zápis") {
+                Text("U X01 můžeš zapisovat součet kola. Při zavření potvrdíš počet šipek i správné pravidlo out. Tlačítko BUST zapíše přehoz s vybraným počtem šipek. Způsob zápisu změníš v nabídce zápasu. U součtů historie neuvádí domyšlené segmenty.\n\nPro přesný zápis vyber Single, Double nebo Triple a číslo, nebo klepni na pole terče. Skóre se ihned změní. Pro 25 a bull použij samostatná tlačítka. VEDLE je šipka bez bodů. Třetí šipka, přehoz nebo zavření automaticky ukončí návštěvu.")
+                Text("Zpět vrátí poslední lidskou šipku a odstraní i případnou odpověď bota. Odchod přes křížek může rozehraný zápas uložit. Uložení konečného výsledku přidá zápas do historie a přidělí XP.")
+            }
+            Section("Hlasový zápis") {
+                Text("V zápase zvol způsob zápisu Hlas — poslech běží sám. Mezi hodama udělej krátkou pauzu, šipka nebo součet se zapíše automaticky. Funguje jen na fyzickém iPhonu (ne v simulátoru), ideálně s internetem.")
+                Text("Šipky: „trojitá dvacet“, „dvojitá šestnáct“, „T20“, „bull“, „mimo“. Více šipek: „dvacet a dvacet a pět“ nebo „t20 t20 t20“.")
+                Text("Součet: „sto osmdesát“, „sto čtyřicet“, „dvacet šest“, „180“. „Přehoz“ nebo „bust“ nabídne zápis přehozu.")
+            }
             Section("X01") { Text("Odečítej ze 101, 301, 501, 701 nebo 1001 přesně na nulu. Double out vyžaduje poslední šipku double nebo bull 50. Master out umožňuje i triple. Straight out libovolný zásah. Přehoz vrací skóre na začátek návštěvy. U double/master out je i zůstatek 1 přehoz. Double in započítává body až od prvního doublu.") }
             Section("Cricket") { Text("Hraje se na 15 až 20 a bull. Single je jeden zásah, double dva, triple tři. Tři zásahy zavřou číslo. Nadbytečné zásahy přidají body, pokud alespoň jeden soupeř číslo ještě nezavřel. Pro výhru musíš zavřít všechna čísla a nemít méně bodů než kterýkoli soupeř. Ve variantě bez bodů vyhrává první, kdo vše zavře.") }
             Section("Kolem hodin") { Text("Tref postupně 1, 2, …, 20. Volba pouze double / triple přijímá na číslech jen zvolený násobek, na konci vyžaduje bull 50. U libovolných zásahů stačí i outer bull 25. Násobek nepřeskakuje čísla. Správný zásah okamžitě posune další cíl, i uprostřed návštěvy.") }

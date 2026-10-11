@@ -220,9 +220,25 @@ enum AppSection: Hashable {
         section = .home
         homeGeneration += 1
     }
-    func feedback(_ score: Int? = nil) {
-        if data.haptics { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
-        if data.voice, let score { speaker.stopSpeaking(at: .immediate); let line = AVSpeechUtterance(string: "\(score)"); line.voice = AVSpeechSynthesisVoice(language: "cs-CZ"); speaker.speak(line) }
+    func feedback(_ score: Int? = nil, announce: Bool = true) {
+        tapHaptic(.light)
+        // Při hlasovém zápisu nemluvit — TTS bojuje s mikrofonem a AVAudioSession.
+        guard announce, data.voice, let score else { return }
+        speaker.stopSpeaking(at: .immediate)
+        let line = AVSpeechUtterance(string: "\(score)")
+        line.voice = AVSpeechSynthesisVoice(language: "cs-CZ")
+        speaker.speak(line)
+    }
+
+    /// Krátká odezva na stisk tlačítka (čísla, double/triple, součet…).
+    func tapHaptic(_ style: UIImpactFeedbackGenerator.FeedbackStyle = .light) {
+        guard data.haptics else { return }
+        UIImpactFeedbackGenerator(style: style).impactOccurred()
+    }
+
+    func selectionHaptic() {
+        guard data.haptics else { return }
+        UISelectionFeedbackGenerator().selectionChanged()
     }
     private var authInFlight = false
 

@@ -23,13 +23,14 @@ private enum MatchColors {
     static let setupTip = Color(red: 0.42, green: 0.24, blue: 0.02)
 }
 private enum ScoringSurface: String, CaseIterable, Identifiable {
-    case grid, board, total, camera
+    case grid, board, total, voice, camera
     var id: String { rawValue }
     var title: String {
         switch self {
         case .grid: return "Čísla"
         case .board: return "Terč"
         case .total: return "Součet"
+        case .voice: return "Hlas"
         case .camera: return "Kamera"
         }
     }
@@ -38,6 +39,7 @@ private enum ScoringSurface: String, CaseIterable, Identifiable {
         case .grid: return "square.grid.3x3.fill"
         case .board: return "target"
         case .total: return "number"
+        case .voice: return "mic.fill"
         case .camera: return "camera.fill"
         }
     }
@@ -92,6 +94,9 @@ struct MatchView: View {
     @State private var leavingHome = false
     /// Začátek právě běžícího úseku hry. Stopky stojí při pauze, mimo hru a na pozadí.
     @State private var clockStart: Date?
+    @StateObject private var voice = VoiceScoreListener()
+    /// Šipky po jedné, nebo součet celého kola.
+    @State private var voiceMode: VoiceScoreMode = .darts
     var body: some View { clockTracking(screen) }
     private var screen: some View {
         Group {
@@ -175,8 +180,16 @@ struct MatchView: View {
             syncClock()
         }
         .onDisappear {
+            voice.stop()
             flushClock()
             UIApplication.shared.isIdleTimerDisabled = false
+        }
+        .onChange(of: voice.lastError) { _, message in
+            // Hlášky o nedostupnosti zůstávají v řádku Hlas; alert jen u opakovaných selhání.
+            if let message { error = message }
+        }
+        .onChange(of: isHoldingVisit) { _, holding in
+            if holding { voice.stop() }
         }
     }
 
@@ -244,33 +257,40 @@ struct MatchView: View {
                     currentThrowStrip(game, shown: shown)
                     // Keep bot board on one view identity so the 3rd dart / hold does not remount and flash.
                     Group {
-                    if showingBotBoard {
+                    if surface == .voice {
+                        voiceInput(game)
+                        if showingBotBoard {
+                            botBoard(game)
+                        }
+                    } else if showingBotBoard {
                         botBoard(game)
                     } else if isHoldingVisit {
-                        frozenHumanSurface(game)
-                    } else {
-                        if surface == .total && canUseTotal(game) {
-                            totalInput(game)
-                        } else if surface == .board {
-                            boardInput(game)
-                        } else if surface == .camera {
-                            CameraScoreView(
-                                calibration: store.boardCalibration,
-                                labels: game.currentDarts.map(\.label),
-                                dartCount: game.currentDarts.count,
-                                onDart: { dart, point in recordCameraHit(dart, point: point) },
-                                onCorrect: cameraHits.count == game.currentDarts.count ? { correcting = $0 } : nil
-                            )
-                        } else {
-                            dartGrid
+                        // Součet už je v horním stripu — druhé okno by jen žralo místo.
+                        if holdSurface != .total {
+                            frozenHumanSurface(game)
                         }
+                    } else if surface == .total && canUseTotal(game) {
+                        totalInput(game)
+                    } else if surface == .board {
+                        boardInput(game)
+                    } else if surface == .camera {
+                        CameraScoreView(
+                            calibration: store.boardCalibration,
+                            labels: game.currentDarts.map(\.label),
+                            dartCount: game.currentDarts.count,
+                            onDart: { dart, point in recordCameraHit(dart, point: point) },
+                            onCorrect: cameraHits.count == game.currentDarts.count ? { correcting = $0 } : nil
+                        )
+                    } else {
+                        dartGrid
                     }
                     }
-                    .padding(.top, 14)
+                    .padding(.top, surface == .grid ? 8 : 14)
                 }
-            }.padding(.horizontal, 16).padding(.vertical, 10).frame(maxWidth: 780)
+            }.padding(.horizontal, 16).padding(.vertical, surface == .grid ? 6 : 10).frame(maxWidth: 780)
         }
         .scrollIndicators(.hidden)
+        .scrollDisabled(surface == .grid && !paused && !showingBotBoard && !isHoldingVisit)
         .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar(game) }
     }
 
@@ -280,10 +300,12 @@ struct MatchView: View {
         case .board:
             matchDartboard(marks: holdDarts, interactive: false)
         case .total:
-            visitSummaryCard(title: "Součet kola", value: "\(holdDarts.reduce(0) { $0 + $1.score })")
+            EmptyView()
         case .grid:
             matchDartboard(marks: holdDarts, interactive: false)
                 .opacity(0.96)
+        case .voice:
+            visitSummaryCard(title: "Hlasové kolo", value: holdDarts.map(\.label).joined(separator: " · "))
         case .camera:
             VStack(spacing: 10) {
                 Text("Kamera").font(AppFont.caption(13, weight: .semibold)).foregroundStyle(MatchColors.ink.opacity(0.55))
@@ -487,29 +509,100 @@ struct MatchView: View {
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: active)
         .accessibilityElement(children: .combine).accessibilityAddTraits(active ? .isSelected : [])
     }
-    /// Current throw: thrown / AI tip / empty as three distinct tiles.
+    /// Current throw: tři šipky, nebo jeden součet kola (hlas / číselný zápis).
+    @ViewBuilder
     private func currentThrowStrip(_ game: Match, shown: Match) -> some View {
-        let darts = stripDarts(for: game)
-        let guide = checkoutGuide(game, shown: shown, thrown: darts.count)
-        return HStack(spacing: 8) {
-            ForEach(0..<3, id: \.self) { i in
-                let filled = darts.count > i
-                let suggested = (!filled && guide.route.indices.contains(i - darts.count)) ? guide.route[i - darts.count] : nil
-                let note = (!filled && suggested == nil && i == darts.count) ? guide.note : nil
-                throwSlotTile(
-                    index: i,
-                    dart: filled ? darts[i] : nil,
-                    suggestion: suggested,
-                    note: note,
-                    setupLeave: suggested == nil ? nil : guide.setupLeave
-                )
+        if let total = heldTotalScore(game) {
+            totalScoreStrip(value: "\(total)", filled: true)
+        } else if showsTotalScoreStrip(game) {
+            let display = liveTotalDisplay()
+            totalScoreStrip(value: display, filled: display != "—")
+        } else {
+            let darts = stripDarts(for: game)
+            let guide = checkoutGuide(game, shown: shown, thrown: darts.count)
+            HStack(spacing: 8) {
+                ForEach(0..<3, id: \.self) { i in
+                    let filled = darts.count > i
+                    let suggested = (!filled && guide.route.indices.contains(i - darts.count)) ? guide.route[i - darts.count] : nil
+                    let note = (!filled && suggested == nil && i == darts.count) ? guide.note : nil
+                    throwSlotTile(
+                        index: i,
+                        dart: filled ? darts[i] : nil,
+                        suggestion: suggested,
+                        note: note,
+                        setupLeave: suggested == nil ? nil : guide.setupLeave
+                    )
+                }
             }
+            .frame(height: 88)
+            .padding(10)
+            .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Aktuální hod")
         }
+    }
+
+    /// Hlas·Součet nebo číselný součet kola — ne tři sloty šipek.
+    private func showsTotalScoreStrip(_ game: Match) -> Bool {
+        guard !botIsThrowing, !holdingBotVisit else { return false }
+        if surface == .total { return true }
+        if surface == .voice, effectiveVoiceMode(for: game) == .total { return true }
+        return false
+    }
+
+    private func liveTotalDisplay() -> String {
+        if !sumText.isEmpty { return sumText }
+        if surface == .voice, let label = voice.lastCommandLabel, label.hasPrefix("Součet ") {
+            return String(label.dropFirst("Součet ".count))
+        }
+        return "—"
+    }
+
+    /// Součet zadaný hlasem / číslem — ne syntetické T20 (60·60·60).
+    private func heldTotalScore(_ game: Match) -> Int? {
+        guard isHoldingVisit else { return nil }
+        if holdSurface == .total {
+            if let visit = game.visits.last,
+               visit.enteredAsTotal == true,
+               visit.player == holdPlayer {
+                return visit.credited
+            }
+            return holdDarts.reduce(0) { $0 + $1.score }
+        }
+        if let visit = game.visits.last,
+           visit.enteredAsTotal == true,
+           visit.player == holdPlayer {
+            return visit.credited
+        }
+        return nil
+    }
+
+    private func totalScoreStrip(value: String, filled: Bool) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("SOUČET KOLA")
+                    .font(AppFont.caption(11, weight: .heavy))
+                    .tracking(1.0)
+                    .foregroundStyle(MatchColors.ink.opacity(0.45))
+                Text(value)
+                    .font(AppFont.display(40, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundStyle(filled ? MatchColors.ink : MatchColors.ink.opacity(0.28))
+                    .contentTransition(.numericText())
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "sum")
+                .font(.system(size: 28, weight: .bold))
+                .foregroundStyle(Theme.brand.opacity(filled ? 1 : 0.45))
+                .frame(width: 56, height: 56)
+                .background(MatchColors.ink.opacity(0.06), in: Circle())
+        }
+        .padding(.horizontal, 18)
+        .frame(maxWidth: .infinity)
         .frame(height: 88)
         .padding(10)
         .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Aktuální hod")
+        .accessibilityLabel(filled ? "Součet kola \(value)" : "Součet kola")
     }
 
     private func matchProgressStrip(_ game: Match) -> some View {
@@ -530,6 +623,9 @@ struct MatchView: View {
         let round = isHoldingVisit ? max(1, completedRounds) : completedRounds + 1
         let heldDarts = isHoldingVisit ? holdDarts.count : game.currentDarts.count
         let dartsInVisit = min(3, heldDarts)
+        if showsTotalScoreStrip(game) || (isHoldingVisit && holdSurface == .total) {
+            return "Leg \(game.leg) · Kolo \(round) · Součet"
+        }
         if game.config.mode == .x01, let limit = game.config.settings.dartLimit {
             let used = min(limit, isHoldingVisit ? completedRounds * 3 : completedRounds * 3 + heldDarts)
             return "Leg \(game.leg) · Kolo \(round) · Šipky \(used)/\(limit)"
@@ -608,58 +704,68 @@ struct MatchView: View {
         }
     }
 
-    /// Spodní lišta: Zpět, potvrzení součtu a způsob zápisu (výběr zůstává i po odeslání kola).
+    /// Spodní lišta: Liquid Glass — Zpět, režim hlasu a způsob zápisu.
     @ViewBuilder
     private func bottomBar(_ game: Match) -> some View {
         let humanInput = !paused && game.legWinner == nil && !game.needsBullOff && !showingBotBoard && !isHoldingVisit
         let canUndo = isHoldingVisit || !game.currentDarts.isEmpty || !game.visits.isEmpty
         if !paused && legCeremony == nil && (game.legWinner == nil || isHoldingVisit) {
-            HStack(spacing: 10) {
-                Button { undo() } label: {
-                    Label("Zpět", systemImage: "arrow.uturn.backward")
-                }
-                .buttonStyle(.glass)
-                .disabled(!canUndo)
-                .accessibilityHint("Vrátí poslední šipku, včetně hodů bota")
-
-                if humanInput && surface == .total && canUseTotal(game) {
-                    Button { resolveTotal(game) } label: {
-                        Label(sumText.isEmpty ? "Potvrdit" : "Potvrdit \(sumText)", systemImage: "checkmark")
-                            .frame(maxWidth: .infinity)
-                            .contentTransition(.numericText())
+            GlassEffectContainer(spacing: 10) {
+                HStack(spacing: 10) {
+                    Button { undo() } label: {
+                        Label("Zpět", systemImage: "arrow.uturn.backward")
+                            .font(.headline)
+                            .labelStyle(.titleAndIcon)
+                            .foregroundStyle(.primary)
+                            .padding(.horizontal, 16)
+                            .frame(minHeight: 52)
+                            .contentShape(Capsule())
                     }
-                    .buttonStyle(.glassProminent)
-                    .tint(MatchColors.finish)
-                    .disabled(sumText.isEmpty)
-                    .accessibilityHint("Odečte zadaný součet kola")
-                } else {
-                    Spacer(minLength: 0)
-                }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: Capsule())
+                    .disabled(!canUndo)
+                    .opacity(canUndo ? 1 : 0.45)
+                    .accessibilityHint("Vrátí poslední šipku, včetně hodů bota")
 
-                Menu {
-                    Picker("Způsob zápisu", selection: Binding(get: { surface }, set: { changeSurface($0) })) {
-                        ForEach(ScoringSurface.allCases) { item in
-                            if item != .total || canUseTotal(game) {
-                                Label(item.title, systemImage: item.icon).tag(item)
-                            }
+                    if humanInput && surface == .total && canUseTotal(game) {
+                        Button { resolveTotal(game) } label: {
+                            Label(sumText.isEmpty ? "Potvrdit" : "Potvrdit \(sumText)", systemImage: "checkmark")
+                                .font(.headline)
+                                .foregroundStyle(sumText.isEmpty ? Color.secondary : Theme.onAccent)
+                                .frame(maxWidth: .infinity, minHeight: 52)
+                                .contentShape(Capsule())
+                                .contentTransition(.numericText())
                         }
+                        .buttonStyle(.plain)
+                        .glassEffect(
+                            sumText.isEmpty ? .regular : .regular.tint(MatchColors.finish).interactive(),
+                            in: Capsule()
+                        )
+                        .disabled(sumText.isEmpty)
+                        .accessibilityHint("Odečte zadaný součet kola")
+                    } else {
+                        Spacer(minLength: 0)
                     }
-                } label: {
-                    Label(surface.title, systemImage: surface.icon)
-                        .labelStyle(.iconOnly)
-                        .frame(width: 24, height: 24)
+
+                    if surface == .voice, canUseTotal(game) {
+                        voiceModeBottomToggle(game)
+                    }
+
+                    Menu {
+                        scoringSurfaceMenu(game)
+                    } label: {
+                        Image(systemName: surface.icon)
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .frame(width: 52, height: 52)
+                            .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: Circle())
+                    .accessibilityLabel("Způsob zápisu")
+                    .accessibilityValue(surfaceMenuTitle(game))
                 }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
-                .accessibilityLabel("Způsob zápisu")
-                .accessibilityValue(surface.title)
             }
-            .font(.headline)
-            .lineLimit(1)
-            .labelStyle(.titleAndIcon)
-            .controlSize(.large)
-            .buttonBorderShape(.capsule)
-            .tint(.white)
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 6)
@@ -718,31 +824,488 @@ struct MatchView: View {
         return CheckoutGuide()
     }
     private var dartGrid: some View {
-        VStack(spacing:0) {
-            HStack(spacing:0) {
-                ForEach(1...3,id:\.self) { n in
-                    Button { multiplier = n } label:{ Text(["Single","Double","Triple"][n-1]).font(AppFont.caption(12, weight: .semibold)).frame(maxWidth:.infinity,minHeight:47).overlay(alignment:.bottom) { Rectangle().fill(multiplier == n ? MatchColors.coral : .clear).frame(height:3) } }.accessibilityAddTraits(multiplier == n ? .isSelected : [])
-                }
-                Button { hit(Dart(25,2)) } label:{ VStack(spacing:2) { Text("Bull").font(AppFont.caption(12, weight: .bold)); Text("50").font(AppFont.caption(12)) }.frame(maxWidth:.infinity,minHeight:47) }
-                Button { hit(Dart(25)) } label:{ VStack(spacing:2) { Text("Outer").font(AppFont.caption(12, weight: .bold)); Text("25").font(AppFont.caption(12)) }.frame(maxWidth:.infinity,minHeight:47) }
-                Button { hit(.miss) } label:{ VStack(spacing:2) { Text("Mimo").font(AppFont.caption(12, weight: .bold)); Text("0").font(AppFont.caption(12)) }.frame(maxWidth:.infinity,minHeight:47) }
-                    .accessibilityLabel("Mimo terč, 0 bodů")
+        let accent: Color = {
+            switch multiplier {
+            case 2: return MatchColors.coral
+            case 3: return MatchColors.green
+            default: return .white
             }
-            LazyVGrid(columns:Array(repeating:GridItem(.flexible(),spacing:1),count:5),spacing:1) {
-                ForEach(1...20,id:\.self) { n in
-                    Button { hit(Dart(n,multiplier)) } label:{ Text("\(n)").font(AppFont.display(26, weight: .bold)).frame(maxWidth:.infinity,minHeight:46).background(MatchColors.background) }
-                        .accessibilityLabel("\(multiplier == 3 ? "Triple" : multiplier == 2 ? "Double" : "Single") \(n), zapíše se ihned")
+        }()
+        let bullDisabled = multiplier == 3
+        return VStack(spacing: 8) {
+            LazyVGrid(
+                columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5),
+                spacing: 6
+            ) {
+                ForEach(1...20, id: \.self) { n in
+                    Button { hit(Dart(n, multiplier)) } label: {
+                        Text("\(n)")
+                            .font(AppFont.display(24, weight: .bold))
+                            .foregroundStyle(accent)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .background(
+                                Color.white.opacity(0.08),
+                                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(multiplier == 3 ? "Triple" : multiplier == 2 ? "Double" : "Single") \(n)")
                 }
-            }.padding(.vertical,1).background(.white.opacity(0.13))
+            }
+
+            HStack(spacing: 6) {
+                Button {
+                    guard !bullDisabled else { return }
+                    hit(Dart(25, min(max(multiplier, 1), 2)))
+                } label: {
+                    Text(multiplier == 2 ? "50" : "25")
+                        .font(AppFont.display(24, weight: .bold))
+                        .foregroundStyle(bullDisabled ? Color.white.opacity(0.22) : accent)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(
+                            Color.white.opacity(bullDisabled ? 0.03 : 0.08),
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(bullDisabled)
+                .accessibilityLabel(multiplier == 2 ? "Bull 50" : "Outer 25")
+                .accessibilityHint(bullDisabled ? "Triple bull neexistuje" : "")
+
+                // Při Triple je 0 stejně zašedlé a neaktivní jako 25.
+                Button {
+                    guard !bullDisabled else { return }
+                    hit(.miss)
+                } label: {
+                    Text("0")
+                        .font(AppFont.display(24, weight: .bold))
+                        .foregroundStyle(bullDisabled ? Color.white.opacity(0.22) : .white)
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(
+                            Color.white.opacity(bullDisabled ? 0.03 : 0.08),
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(bullDisabled)
+                .accessibilityLabel("Mimo terč, 0 bodů")
+            }
+
+            GlassEffectContainer(spacing: 8) {
+                HStack(spacing: 8) {
+                    Button {
+                        store.selectionHaptic()
+                        multiplier = multiplier == 2 ? 1 : 2
+                    } label: {
+                        Text("Double")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(multiplier == 2 ? Theme.onAccent : .white)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(
+                        .regular.tint(MatchColors.coral.opacity(multiplier == 2 ? 1 : 0.62)).interactive(),
+                        in: Capsule()
+                    )
+                    .accessibilityAddTraits(multiplier == 2 ? .isSelected : [])
+                    .accessibilityLabel("Double")
+
+                    Button {
+                        store.selectionHaptic()
+                        multiplier = multiplier == 3 ? 1 : 3
+                    } label: {
+                        Text("Triple")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(multiplier == 3 ? Theme.onAccent : .white)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(
+                        .regular.tint(MatchColors.green.opacity(multiplier == 3 ? 1 : 0.62)).interactive(),
+                        in: Capsule()
+                    )
+                    .accessibilityAddTraits(multiplier == 3 ? .isSelected : [])
+                    .accessibilityLabel("Triple")
+                }
+            }
         }
     }
     private func canUseTotal(_ game: Match) -> Bool { game.config.mode == .x01 && !game.config.anyDoubleIn(players: game.players.count) }
+
+    /// Mikrofon smí běžet jen při tvém zápisu — ne během bota, holdu ani pauzy.
+    private func isVoiceArmed(_ game: Match) -> Bool {
+        surface == .voice
+            && !paused
+            && !isHoldingVisit
+            && legCeremony == nil
+            && game.legWinner == nil
+            && !game.needsBullOff
+            && !game.finished
+            && game.currentPlayer.botLevel == nil
+            && !game.isGhostTurn
+    }
+
+    private var voiceSyncKey: String {
+        guard let game = store.activeMatch else { return "none" }
+        return "\(surface.rawValue)-\(game.active)-\(isHoldingVisit)-\(paused)-\(game.finished)-\(game.legWinner ?? -1)-\(game.needsBullOff)-\(botIsThrowing)"
+    }
+
+    private func effectiveVoiceMode(for game: Match) -> VoiceScoreMode {
+        guard canUseTotal(game), game.currentDarts.isEmpty else { return .darts }
+        return voiceMode
+    }
+
+    private func voiceInput(_ game: Match) -> some View {
+        let armed = isVoiceArmed(game)
+        let live = voice.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        let listening = armed && voice.isListening
+        let recognizing = armed && voice.phase == .recognizing
+        let mode = effectiveVoiceMode(for: game)
+        let unavailable: String? = {
+            if case .unavailable(let message) = voice.phase { return message }
+            return nil
+        }()
+        let headline: String = {
+            if unavailable != nil { return "Nedostupné" }
+            if isHoldingVisit { return holdSurface == .total ? "Součet zapsán" : "Kolo hotovo" }
+            if botIsThrowing || holdingBotVisit { return "Vypnuto" }
+            if paused { return "Pauza" }
+            if recognizing { return "Zapisuju" }
+            if listening { return "Poslouchám" }
+            return "Připraven"
+        }()
+        let detail: String? = {
+            if let unavailable { return unavailable }
+            if isHoldingVisit {
+                if holdSurface == .total {
+                    return "Součet \(holdDarts.reduce(0) { $0 + $1.score })"
+                }
+                let labels = holdDarts.map(\.label).joined(separator: " · ")
+                return labels.isEmpty ? nil : labels
+            }
+            if botIsThrowing || holdingBotVisit {
+                let name = holdPlayer.map { game.players[$0].name } ?? game.currentPlayer.name
+                return name
+            }
+            if paused { return nil }
+            if recognizing { return live.isEmpty ? nil : live }
+            if let command = voice.lastCommandLabel { return command }
+            switch voice.phase {
+            case .listening:
+                if live.isEmpty || live == "Poslouchám…" || live == "Slyším…" { return nil }
+                return live
+            case .askingPermission, .preparing:
+                return "Zapínám…"
+            case .idle:
+                return voice.lastHeard.isEmpty ? nil : voice.lastHeard
+            case .unavailable(let message):
+                return message
+            case .recognizing:
+                return live.isEmpty ? nil : live
+            }
+        }()
+
+        return VStack(spacing: 0) {
+            HStack(alignment: .center, spacing: 16) {
+                voiceMicBadge(armed: armed, listening: listening, recognizing: recognizing, unavailable: unavailable != nil)
+                    .accessibilityLabel(listening ? "Mikrofon zapnutý" : "Mikrofon vypnutý")
+                    .accessibilityValue(headline)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Text(headline.uppercased())
+                            .font(AppFont.caption(11, weight: .heavy))
+                            .tracking(1.0)
+                            .foregroundStyle(listening ? MatchColors.ink.opacity(0.5) : MatchColors.ink.opacity(0.32))
+                        if armed && listening && !recognizing {
+                            Text("ŽIVĚ")
+                                .font(AppFont.caption(10, weight: .heavy))
+                                .foregroundStyle(MatchColors.coral)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(MatchColors.coral.opacity(0.14), in: Capsule())
+                        }
+                        Text(mode.title)
+                            .font(AppFont.caption(10, weight: .bold))
+                            .foregroundStyle(MatchColors.ink.opacity(0.4))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(MatchColors.ink.opacity(0.06), in: Capsule())
+                    }
+                    if let detail {
+                        Text(detail)
+                            .font(AppFont.body(16, weight: .semibold))
+                            .foregroundStyle(MatchColors.ink.opacity(armed || unavailable != nil ? 1 : 0.5))
+                            .lineLimit(2)
+                            .minimumScaleFactor(0.82)
+                            .contentTransition(.opacity)
+                            .animation(.easeOut(duration: 0.16), value: detail)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 18)
+            .padding(.bottom, armed ? 12 : 16)
+
+            if armed {
+                voiceLevelMeter(level: voice.inputLevel, active: listening && !recognizing)
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 16)
+            } else if unavailable == nil {
+                Text(botIsThrowing || holdingBotVisit ? "Zapne se na tvoje hody" : "Čekám")
+                    .font(AppFont.caption(12, weight: .semibold))
+                    .foregroundStyle(MatchColors.ink.opacity(0.38))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 18)
+                    .padding(.bottom, 16)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: listening
+                            ? [Color.white, Theme.brand.opacity(0.12)]
+                            : [Color.white, Color.white],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .strokeBorder(
+                            listening ? Theme.brand.opacity(0.65) : MatchColors.ink.opacity(0.06),
+                            lineWidth: listening ? 1.5 : 1
+                        )
+                }
+        )
+        .opacity(unavailable != nil ? 0.92 : (armed ? 1 : 0.86))
+        .animation(.easeInOut(duration: 0.22), value: armed)
+        .animation(.easeInOut(duration: 0.22), value: listening)
+        .onAppear {
+            syncVoiceMode(for: game)
+            syncVoiceListening(for: game)
+        }
+        .onChange(of: voiceSyncKey) { _, _ in
+            if let live = store.activeMatch {
+                syncVoiceMode(for: live)
+                syncVoiceListening(for: live)
+            }
+        }
+        .onChange(of: voiceMode) { _, _ in
+            voice.updateMode(effectiveVoiceMode(for: game))
+        }
+        .onChange(of: game.currentDarts.count) { _, _ in
+            syncVoiceMode(for: game)
+            voice.updateMode(effectiveVoiceMode(for: game))
+        }
+        .onDisappear { voice.stop() }
+    }
+
+    private func syncVoiceMode(for game: Match) {
+        if !canUseTotal(game) || !game.currentDarts.isEmpty, voiceMode == .total {
+            voiceMode = .darts
+        }
+    }
+
+    private func voiceMicBadge(armed: Bool, listening: Bool, recognizing: Bool, unavailable: Bool) -> some View {
+        let size: CGFloat = armed ? 76 : 58
+        let symbol = unavailable || !armed ? "mic.slash.fill" : (recognizing ? "waveform" : "mic.fill")
+        return ZStack {
+            if listening && !recognizing && !reduceMotion {
+                Circle()
+                    .stroke(Theme.brand.opacity(0.35), lineWidth: 2)
+                    .frame(width: size + 18 + voice.inputLevel * 16, height: size + 18 + voice.inputLevel * 16)
+                    .opacity(0.55)
+            }
+            Circle()
+                .fill(
+                    listening
+                        ? (recognizing ? MatchColors.amber : Theme.brand)
+                        : (armed ? MatchColors.ink.opacity(0.08) : Color.black.opacity(0.05))
+                )
+                .frame(width: size, height: size)
+                .shadow(color: listening ? Theme.brand.opacity(0.4) : .clear, radius: 14, y: 5)
+                .overlay {
+                    Image(systemName: symbol)
+                        .font(.system(size: armed ? 28 : 22, weight: .bold))
+                        .foregroundStyle(
+                            listening ? MatchColors.ink : MatchColors.ink.opacity(armed ? 0.48 : 0.22)
+                        )
+                        .symbolEffect(.pulse, options: .repeating, isActive: listening && !recognizing && !reduceMotion)
+                }
+        }
+        .frame(width: armed ? 96 : 64, height: armed ? 96 : 64)
+    }
+
+    private func voiceLevelMeter(level: CGFloat, active: Bool) -> some View {
+        HStack(spacing: 3) {
+            ForEach(0..<12, id: \.self) { i in
+                let threshold = CGFloat(i) / 12
+                let on = active && level > threshold
+                RoundedRectangle(cornerRadius: 2, style: .continuous)
+                    .fill(on ? Theme.brand : MatchColors.ink.opacity(0.08))
+                    .frame(height: 6 + CGFloat(i) * 1.4)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 28, alignment: .bottom)
+        .opacity(active ? 1 : 0.45)
+        .animation(.easeOut(duration: 0.08), value: level)
+    }
+
+    private func syncVoiceListening(for game: Match) {
+#if targetEnvironment(simulator)
+        if case .unavailable = voice.phase { return }
+        voice.start(mode: .darts) { _ in }
+        return
+#endif
+        guard isVoiceArmed(game) else {
+            if voice.isListening || voice.phase != .idle {
+                if case .unavailable = voice.phase { return }
+                voice.stop()
+            }
+            return
+        }
+        if voice.isListening {
+            voice.updateMode(effectiveVoiceMode(for: game))
+            return
+        }
+        startVoiceListening(for: game)
+    }
+
+    private func startVoiceListening(for game: Match) {
+        let mode = effectiveVoiceMode(for: game)
+        voice.start(mode: mode) { command in
+            guard let live = store.activeMatch, isVoiceArmed(live) else { return }
+            applyVoiceCommand(command, gameCanTotal: canUseTotal(live))
+            if let updated = store.activeMatch {
+                voice.updateMode(effectiveVoiceMode(for: updated))
+            }
+        }
+    }
+
+    private func applyVoiceCommand(_ command: VoiceScoreCommand, gameCanTotal: Bool) {
+        guard !paused, !isHoldingVisit, legCeremony == nil else { return }
+        switch command {
+        case .bust:
+            guard gameCanTotal else {
+                error = "Přehoz hlasem jde jen u X01 bez double-in."
+                return
+            }
+            bustPrompt = true
+        case .total(let score):
+            guard gameCanTotal else {
+                error = "Součet \(score) hlasem jde jen v X01 bez double-in."
+                return
+            }
+            guard let game = store.activeMatch else { return }
+            if !game.currentDarts.isEmpty {
+                error = "Součet jde jen na začátku kola. Dokonči nebo vrať šipky."
+                return
+            }
+            sumText = "\(score)"
+            resolveTotal(game)
+            // Zobraz „180“, ne syntetické T20 (60·60·60).
+            if isHoldingVisit { holdSurface = .total }
+        case .darts(let darts):
+            for dart in darts {
+                if isHoldingVisit { break }
+                hit(dart)
+            }
+        }
+    }
+
+    private func surfaceMenuTitle(_ game: Match) -> String {
+        if surface == .voice {
+            return "Hlas · \(effectiveVoiceMode(for: game).title)"
+        }
+        return surface.title
+    }
+
+    /// Vedle mikrofonu: Šipky / Součet jako liquid glass pilulky.
+    private func voiceModeBottomToggle(_ game: Match) -> some View {
+        let mode = effectiveVoiceMode(for: game)
+        let totalLocked = !game.currentDarts.isEmpty
+        return HStack(spacing: 8) {
+            ForEach(VoiceScoreMode.allCases) { item in
+                let selected = mode == item
+                let locked = item == .total && totalLocked
+                Button {
+                    guard !locked else { return }
+                    selectVoiceMode(item)
+                } label: {
+                    Text(item.title)
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(selected ? Theme.onAccent : (locked ? Color.secondary.opacity(0.45) : .primary))
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 52)
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .glassEffect(
+                    selected ? .regular.tint(Theme.brand).interactive() : .regular.interactive(),
+                    in: Capsule()
+                )
+                .disabled(locked)
+                .opacity(locked ? 0.55 : 1)
+                .accessibilityAddTraits(selected ? .isSelected : [])
+                .accessibilityLabel(item.title)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Režim hlasu")
+        .accessibilityValue(mode.title)
+    }
+
+    @ViewBuilder
+    private func scoringSurfaceMenu(_ game: Match) -> some View {
+        surfaceMenuButton(.grid, selected: surface == .grid)
+        surfaceMenuButton(.board, selected: surface == .board)
+        if canUseTotal(game) {
+            surfaceMenuButton(.total, selected: surface == .total, disabled: !game.currentDarts.isEmpty)
+        }
+        surfaceMenuButton(.voice, selected: surface == .voice)
+        surfaceMenuButton(.camera, selected: surface == .camera)
+    }
+
+    private func surfaceMenuButton(_ item: ScoringSurface, selected: Bool, disabled: Bool = false) -> some View {
+        Button {
+            changeSurface(item)
+        } label: {
+            Label(item.title, systemImage: selected ? "checkmark" : item.icon)
+        }
+        .disabled(disabled)
+    }
+
+    private func selectVoiceMode(_ mode: VoiceScoreMode) {
+        store.selectionHaptic()
+        voiceMode = mode
+        if surface != .voice {
+            changeSurface(.voice)
+        }
+        if let game = store.activeMatch {
+            voice.updateMode(effectiveVoiceMode(for: game))
+        }
+    }
+
     private func changeSurface(_ value: ScoringSurface) {
         guard var game = store.activeMatch else { return }
-        if value == .total && !game.currentDarts.isEmpty { error = "Součet lze zapnout na začátku kola. Dokonči nebo vrať rozehrané šipky."; return }
-        surface = value; sumText = ""
-        var options = game.config.settings; options.entry = value == .total ? .total : .darts
-        game.config.options = options; store.activeMatch = game
+        if value == .total && !game.currentDarts.isEmpty {
+            error = "Součet lze zapnout na začátku kola. Dokonči nebo vrať rozehrané šipky."
+            return
+        }
+        if surface == .voice, value != .voice { voice.stop() }
+        if surface != value { store.selectionHaptic() }
+        surface = value
+        sumText = ""
+        var options = game.config.settings
+        options.entry = value == .total ? .total : .darts
+        game.config.options = options
+        store.activeMatch = game
     }
     private func hit(_ dart: Dart) {
         guard !paused, !isHoldingVisit, legCeremony == nil, var game = store.activeMatch, game.currentPlayer.botLevel == nil, !game.finished, game.legWinner == nil, !game.needsBullOff else { return }
@@ -752,10 +1315,11 @@ struct MatchView: View {
             try game.recordDart(dart)
             let visitFinished = game.visits.count > count
             if visitFinished, let visit = game.visits.last {
-                store.feedback(visit.credited)
+                store.feedback(visit.credited, announce: surface != .voice)
                 multiplier = 1
                 applyVisitHold(game: game, darts: visit.darts, player: thrower, fromBot: false)
             } else {
+                store.tapHaptic(.light)
                 withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) { store.activeMatch = game }
             }
         } catch { self.error = error.localizedDescription }
@@ -779,6 +1343,7 @@ struct MatchView: View {
     }
     private func undo() {
         guard legCeremony == nil, var game = store.activeMatch else { return }
+        store.tapHaptic(.soft)
         if isHoldingVisit {
             isHoldingVisit = false
             holdPlayer = nil
@@ -1089,20 +1654,27 @@ struct MatchView: View {
         } catch { self.error = error.localizedDescription }
     }
     private func totalInput(_ game: Match) -> some View {
+        // Číslo součtu je jen v horním stripu — tady jen klávesnice.
         VStack(spacing:10) {
-            HStack { Text(sumText.isEmpty ? "Součet kola" : sumText).font(AppFont.display(26, weight: .bold)).foregroundStyle(MatchColors.ink); Spacer(); Button { if !sumText.isEmpty { sumText.removeLast() } } label:{ Image(systemName:"delete.left").frame(width:44,height:44) }.foregroundStyle(MatchColors.ink) }.padding(.horizontal,18).frame(height:58).background(.white,in:Capsule())
             HStack(spacing:5) {
                 ForEach([26,41,60,100,140,180],id:\.self) { score in
-                    Button { sumText = "\(score)"; resolveTotal(game) } label:{ Text("\(score)").font(AppFont.caption(12, weight: .bold)).frame(maxWidth:.infinity,minHeight:44).background(.white.opacity(0.08),in:RoundedRectangle(cornerRadius:10)) }.accessibilityLabel("Odečíst \(score) bodů ihned")
+                    Button {
+                        store.tapHaptic(.medium)
+                        sumText = "\(score)"
+                        resolveTotal(game)
+                    } label:{ Text("\(score)").font(AppFont.caption(12, weight: .bold)).frame(maxWidth:.infinity,minHeight:44).background(.white.opacity(0.08),in:RoundedRectangle(cornerRadius:10)) }.accessibilityLabel("Odečíst \(score) bodů ihned")
                 }
             }
             LazyVGrid(columns:Array(repeating:GridItem(.flexible(),spacing:1),count:3),spacing:1) {
-                ForEach(["1","2","3","4","5","6","7","8","9","C","0","BUST"],id:\.self) { key in
+                ForEach(["1","2","3","4","5","6","7","8","9","⌫","0","BUST"],id:\.self) { key in
                     Button {
-                        if key == "C" { sumText = "" }
-                        else if key == "BUST" { bustPrompt = true }
+                        store.tapHaptic(.light)
+                        if key == "⌫" {
+                            if !sumText.isEmpty { sumText.removeLast() }
+                        } else if key == "BUST" { bustPrompt = true }
                         else if sumText.count < 3 { sumText = sumText == "0" ? key : sumText + key }
-                    } label:{ Text(key).font(key == "BUST" ? AppFont.caption(14, weight: .bold) : AppFont.display(24, weight: .bold)).frame(maxWidth:.infinity,minHeight:48).background(MatchColors.background) }
+                    } label:{ Text(key).font(key == "BUST" || key == "⌫" ? AppFont.caption(14, weight: .bold) : AppFont.display(24, weight: .bold)).frame(maxWidth:.infinity,minHeight:48).background(MatchColors.background) }
+                        .accessibilityLabel(key == "⌫" ? "Smazat" : key)
                 }
             }.padding(1).background(.white.opacity(0.13))
         }
@@ -1118,10 +1690,12 @@ struct MatchView: View {
             try game.submitTotal(score, checkoutDarts: darts)
             if let visit = game.visits.last {
                 sumText = ""
-                store.feedback(score)
+                store.feedback(score, announce: surface != .voice)
                 applyVisitHold(game: game, darts: visit.darts, player: thrower, fromBot: false)
+                // Vždy součet jako jedno číslo — ne tři syntetické šipky.
+                holdSurface = .total
             } else {
-                store.activeMatch = game; sumText = ""; store.feedback(score)
+                store.activeMatch = game; sumText = ""; store.feedback(score, announce: surface != .voice)
             }
         } catch { self.error = error.localizedDescription }
     }
@@ -1132,10 +1706,10 @@ struct MatchView: View {
             try game.recordBust(darts: count)
             if let visit = game.visits.last {
                 sumText = ""
-                store.feedback(0)
+                store.feedback(0, announce: surface != .voice)
                 applyVisitHold(game: game, darts: visit.darts, player: thrower, fromBot: false)
             } else {
-                store.activeMatch = game; sumText = ""; store.feedback(0)
+                store.activeMatch = game; sumText = ""; store.feedback(0, announce: surface != .voice)
             }
         } catch { self.error = error.localizedDescription }
     }
