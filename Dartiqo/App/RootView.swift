@@ -43,7 +43,7 @@ struct MainTabView: View {
                 .tabItem { Label("Profil", systemImage: "person.crop.circle") }
                 .tag(AppSection.profile)
         }
-        .tabViewBottomAccessory(isEnabled: store.activeMatch != nil) {
+        .tabViewBottomAccessory(isEnabled: store.activeMatch != nil && store.section != .play && !store.localSetupCoversBar) {
             if let match = store.activeMatch {
                 MatchTabAccessory(match: match) {
                     store.tapHaptic()
@@ -55,14 +55,17 @@ struct MainTabView: View {
             NavigationStack { MatchView() }
                 .environmentObject(store)
         }
-        .onChange(of: store.homeGeneration) { _, _ in resumeMatch = false }
+        .onChange(of: store.homeGeneration) { _, _ in
+            resumeMatch = false
+            store.localSetupCoversBar = false
+        }
         .onChange(of: store.activeMatch == nil) { _, gone in
             if gone { resumeMatch = false }
         }
     }
 }
 
-/// Plovoucí stav rozehraného zápasu nad tab barem. Po sbalení lišty se smrští dovnitř.
+/// Plovoucí stav rozehraného zápasu nad tab barem. V nové hře i u Hrát lokálně je schovaný — návrat je v horní liště.
 private struct MatchTabAccessory: View {
     @Environment(\.tabViewBottomAccessoryPlacement) private var placement
     var match: Match
@@ -97,6 +100,7 @@ private struct MatchTabAccessory: View {
                 Text(detail)
                     .font(AppFont.caption(12))
                     .foregroundStyle(.secondary)
+                    .monospacedDigit()
                     .lineLimit(1)
             }
 
@@ -145,12 +149,24 @@ private struct MatchTabAccessory: View {
             }
             return "Zápas skončil"
         }
-        let mode = match.config.mode == .x01 ? "\(match.config.startingScore)" : match.config.mode.title
-        return "\(mode) · Na tahu \(match.currentPlayer.name)"
+        if match.players.count == 1 { return "Skóre \(liveScore)" }
+        return "\(liveScore) · na tahu \(match.currentPlayer.name)"
     }
 
     private var scoreText: String {
-        let state = match.currentState
+        figure(match.currentState)
+    }
+
+    /// Skóre všech hráčů v pořadí sestavy. U dvou hráčů jako „321 : 180“.
+    private var liveScore: String {
+        let values = match.states.map(figure)
+        if match.players.count <= 2 {
+            return values.joined(separator: " : ")
+        }
+        return match.players.indices.map { "\(match.players[$0].name) \(values[$0])" }.joined(separator: " · ")
+    }
+
+    private func figure(_ state: PlayerState) -> String {
         switch match.config.mode {
         case .x01:
             return "\(state.remaining)"
@@ -163,7 +179,7 @@ private struct MatchTabAccessory: View {
 
     private var accessibilityLabel: String {
         if match.finished { return "\(matchup). \(detail). Zobrazit výsledek." }
-        return "Rozehraný zápas. \(matchup). \(detail). Skóre \(scoreText). Pokračovat ve hře."
+        return "Rozehraný zápas. \(matchup). \(detail). Pokračovat ve hře."
     }
 }
 

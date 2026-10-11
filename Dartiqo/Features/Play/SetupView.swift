@@ -41,6 +41,7 @@ struct SetupView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
     private let onHome: (() -> Void)?
+    private let coversLiveBar: Bool
     @State private var draft: SetupDraft
     @State private var step = 0
     @State private var live = false
@@ -79,8 +80,9 @@ struct SetupView: View {
     @State private var pregameSeries: HeadToHead?
     private let presetScores = [101, 301, 501, 701, 1001]
     private var options: Binding<MatchOptions> { Binding(get: { draft.config.settings }, set: { draft.config.options = $0 }) }
-    init(mode: GameMode, preset: SetupDraft? = nil, onHome: (() -> Void)? = nil) {
+    init(mode: GameMode, preset: SetupDraft? = nil, onHome: (() -> Void)? = nil, coversLiveBar: Bool = false) {
         self.onHome = onHome
+        self.coversLiveBar = coversLiveBar
         _draft = State(initialValue: preset ?? SetupDraft(mode: mode))
     }
     private var canContinue: Bool {
@@ -168,12 +170,35 @@ struct SetupView: View {
                     .accessibilityLabel("Předchozí krok")
                 }
             }
+            if let match = store.activeMatch {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        store.tapHaptic()
+                        launchIntro = false
+                        live = true
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: match.finished ? "flag.checkered" : "play.fill")
+                            Text(liveMark(match))
+                                .monospacedDigit()
+                        }
+                        .font(AppFont.caption(14, weight: .bold))
+                    }
+                    .tint(Theme.brand)
+                    .accessibilityLabel(resumeAccessibility(match))
+                }
+            }
         }
         .sensoryFeedback(.selection, trigger: step)
         .onAppear {
             scoreText = "\(draft.config.startingScore)"
             if !presetScores.contains(draft.config.startingScore) { scoreExact = true }
+            syncLiveBar()
         }
+        .onDisappear {
+            if coversLiveBar { store.localSetupCoversBar = false }
+        }
+        .onChange(of: store.section) { _, _ in syncLiveBar() }
         .onChange(of: showsOpening) { _, shown in
             if !shown, step > 3 { setStep(3) }
         }
@@ -308,6 +333,29 @@ struct SetupView: View {
     }
 
     private var canAdvance: Bool { isLastStep ? canPlay : (step == 0 || canContinue) }
+
+    private func liveMark(_ match: Match) -> String {
+        if match.finished { return "Výsledek" }
+        let state = match.currentState
+        switch match.config.mode {
+        case .x01:
+            return "\(state.remaining)"
+        case .cricket, .countUp:
+            return "\(state.points)"
+        case .aroundClock:
+            return state.clockTarget > 20 ? "Bull" : "\(state.clockTarget)"
+        }
+    }
+
+    private func syncLiveBar() {
+        guard coversLiveBar else { return }
+        store.localSetupCoversBar = store.section == .home
+    }
+
+    private func resumeAccessibility(_ match: Match) -> String {
+        if match.finished { return "Zápas skončil. Zobrazit výsledek." }
+        return "Rozehraný zápas. Skóre \(liveMark(match)). Pokračovat ve hře."
+    }
 
     private var setupBar: some View {
         GlassEffectContainer(spacing: 10) {

@@ -58,6 +58,8 @@ enum AppSection: Hashable {
     @Published var storageError: String?
     @Published var authError: String?
     @Published var section: AppSection = .home
+    /// Průvodce z karty Hrát lokálně zakryje spodní lištu rozehraného zápasu.
+    @Published var localSetupCoversBar = false
     /// Nová hodnota zavře zápas i průvodce a vrátí čistou domovskou obrazovku.
     @Published private(set) var homeGeneration = 0
     private let speaker = AVSpeechSynthesizer()
