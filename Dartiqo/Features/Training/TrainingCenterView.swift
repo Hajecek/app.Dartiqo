@@ -120,7 +120,7 @@ struct TrainingCenterView: View {
 
     private var metrics: some View {
         let accuracy = store.trainingAccuracy.map { "\(Int(($0 * 100).rounded())) %" } ?? "—"
-        let tasks = TrainingDaily.tasks(in: store.trainingHistory)
+        let tasks = TrainingDaily.tasks(in: store.trainingHistory, profile: store.profile?.id)
         let done = tasks.filter(\.done).count
         let next = tasks.first { !$0.done }
         return VStack(alignment: .leading, spacing: 10) {
@@ -247,24 +247,26 @@ struct TrainingDailyTask: Identifiable {
 }
 
 enum TrainingDaily {
-    static func tasks(in sessions: [TrainingSession], now: Date = Date()) -> [TrainingDailyTask] {
-        let start = Calendar.current.startOfDay(for: now)
+    /// Trojice her podle dne a profilu. Stejný den drží stejné úkoly, zítra přijde nová sada.
+    static func tasks(
+        in sessions: [TrainingSession],
+        profile: UUID? = nil,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> [TrainingDailyTask] {
+        let start = calendar.startOfDay(for: now)
         let today = sessions.filter { $0.status == .completed && ($0.finishedAt ?? $0.startedAt) >= start }
-        let trebles = today.reduce(0) { sum, session in
-            sum + (session.result?.tallies.first { $0.key == "T20" }?.hits ?? 0)
+        return TrainingCoach.dailyGameIDs(on: now, profile: profile, calendar: calendar).compactMap { gameID in
+            guard let game = TrainingCatalog.find(gameID) else { return nil }
+            let done = today.contains { $0.definitionID == gameID && $0.result?.success == true }
+            return TrainingDailyTask(
+                title: game.title,
+                detail: game.summary,
+                symbol: game.category.symbol,
+                gameID: gameID,
+                done: done
+            )
         }
-        let closed40 = today.contains { $0.definitionID == "checkout-40" && $0.result?.success == true }
-        let bull = today.contains { session in
-            session.actions.contains { action in
-                if case .dart(let dart) = action { return dart.segment == 25 }
-                return false
-            }
-        }
-        return [
-            TrainingDailyTask(title: "5× T20", detail: "Tref dnes pět trojitých dvacítek. Počítá se jen T20.", symbol: "target", gameID: "treble-20", done: trebles >= 5),
-            TrainingDailyTask(title: "Zavři 40", detail: "Dohraj Checkout 40. Nejčistší cesta je D20.", symbol: "flag.checkered", gameID: "checkout-40", done: closed40),
-            TrainingDailyTask(title: "Tref bull", detail: "Tref dnes bull. Platí 25 i 50.", symbol: "scope", gameID: "bull-challenge", done: bull)
-        ]
     }
 }
 

@@ -83,7 +83,7 @@ struct SettingsView: View {
             } header: { Text("Tvoje data") }
             Section {
                 NavigationLink("Pravidla a ovládání") { RulesView() }
-                NavigationLink("XP a level") { XPInfoView() }
+                NavigationLink("Za co dostávám XP") { XPInfoView() }
                 LabeledContent("Verze", value: "1.2.0")
                 LabeledContent("Provoz", value: "Offline")
             }
@@ -133,24 +133,49 @@ struct RulesView: View {
                 Text("Namiř kameru tak, aby byl celý terč ve snímku. Kruh zezelená, jakmile pozná okraj. Čísla na terči sama určí segmenty a otočení.")
                 Text("V zápasu zvol způsob zápisu Kamera. Ukáže se živý obraz a nová šipka se zapíše, jakmile zůstane v terči. Šipku mimo terč doplň tlačítkem Mimo. Telefon po kalibraci nepřemisťuj.")
             }
-            Section("XP a level") {
-                Text("Level stoupá každých 500 XP. Body dávají dokončené zápasy a uložené tréninky.")
-                NavigationLink("Podrobnosti o XP") { XPInfoView() }
+            Section("XP") {
+                Text("Body dávají dokončené zápasy a uložené tréninky.")
+                NavigationLink("Za co dostávám XP") { XPInfoView() }
             }
         }.navigationTitle("Jak hrát").navigationBarTitleDisplayMode(.inline)
     }
 }
 
-/// Kde se bere XP a jak roste level.
+/// Za co se dává XP — jen zdroje bodů, bez křivky levelů.
 struct XPInfoView: View {
     var body: some View {
         List {
-            Section {
-                Text("Level stoupá každých 500 XP. Body se sčítají ze zápasů a z uložených tréninků.")
+            Section("Zápas — výsledek") {
+                Label("+40 XP za dohraný zápas", systemImage: "flag.checkered")
+                Label("+50 XP výhra · +15 remíza · −25 prohra", systemImage: "trophy.fill")
+                Text("Prohra bere XP schválně — ať je důvod vyhrát.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
-            Section("Zápas") {
-                Label("50 XP za dohraný zápas", systemImage: "target")
-                Label("Dalších 50 XP za výhru", systemImage: "trophy.fill")
+            Section("Průměr (X01)") {
+                ForEach(MatchRewards.averageBands, id: \.label) { band in
+                    Label("\(band.label) = +\(band.xp) XP", systemImage: "chart.line.uptrend.xyaxis")
+                }
+            }
+            Section("Zavírání % (X01)") {
+                ForEach(MatchRewards.checkoutRateBands, id: \.label) { band in
+                    Label("\(band.label) % = +\(band.xp) XP", systemImage: "percent")
+                }
+            }
+            Section("Checkout skóre (X01)") {
+                ForEach(MatchRewards.checkoutScoreBands, id: \.label) { band in
+                    Label("\(band.label) = +\(band.xp) XP", systemImage: "flag.fill")
+                }
+            }
+            Section("Nejlepší kolo (X01)") {
+                ForEach(MatchRewards.bestVisitBands, id: \.label) { band in
+                    Label("\(band.label) = +\(band.xp) XP", systemImage: "bolt.fill")
+                }
+                Label("+8 XP za vyhraný leg (max 24)", systemImage: "rectangle.split.3x1.fill")
+            }
+            Section("Zápas — ostatní režimy") {
+                Label("Cricket / Count-Up: pásma bodů 20–49 / 50–99 / 100–149 / 150–199 / 200+", systemImage: "number")
+                Label("Around the Clock: pásma postupu 5–9 / 10–14 / 15–19 / 20 / hotovo", systemImage: "clock.fill")
             }
             Section("Trénink") {
                 Text("XP se započítá až po uložení dokončené hry, ve které padla aspoň jedna šipka. Restart, přerušení a prázdná hra nic nedají. Stejná hra se nezapočítá dvakrát.")
@@ -165,8 +190,88 @@ struct XPInfoView: View {
                 Text("Čtvrté a další dokončení stejné tréninkové hry v jeden den dají jen 10 % základu, bez bonusů. U pokročilé obtížnosti to znamená 4 XP.")
             }
         }
-        .navigationTitle("XP a level")
+        .navigationTitle("Za co dostávám XP")
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// Rozklad XP za právě dohraný zápas.
+struct MatchXPBreakdownSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    var breakdown: MatchXPBreakdown
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(breakdown.total > 0 ? "+\(breakdown.total)" : "\(breakdown.total)")
+                            .font(.system(size: 42, weight: .heavy, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(breakdown.total >= 0 ? Theme.brand : Color.red)
+                        Text("XP")
+                            .font(.title2.weight(.bold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .listRowBackground(Color.clear)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(breakdown.total) XP za zápas")
+                }
+                Section {
+                    Text("Každý řádek je pásmo od–do, nebo výsledek zápasu. Prohra bere XP.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                Section("Rozklad") {
+                    ForEach(breakdown.lines) { line in
+                        HStack(alignment: .top, spacing: 12) {
+                            Image(systemName: line.symbol)
+                                .font(.body.weight(.semibold))
+                                .foregroundStyle(line.amount >= 0 ? Theme.brand : Color.red)
+                                .frame(width: 28, height: 28)
+                                .background((line.amount >= 0 ? Theme.brand : Color.red).opacity(0.15), in: Circle())
+                                .accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(line.title)
+                                    .font(.body.weight(.semibold))
+                                Text(line.detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 8)
+                            Text(line.signedText)
+                                .font(.title3.weight(.bold).monospacedDigit())
+                                .foregroundStyle(line.amount >= 0 ? Theme.brand : Color.red)
+                        }
+                        .padding(.vertical, 2)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("\(line.title), \(line.signedText) XP. \(line.detail)")
+                    }
+                }
+                Section {
+                    HStack {
+                        Text("Celkem")
+                            .font(.headline)
+                        Spacer()
+                        Text("\(breakdown.total > 0 ? "+" : "")\(breakdown.total) XP")
+                            .font(.headline.monospacedDigit())
+                            .foregroundStyle(breakdown.total >= 0 ? Theme.brand : Color.red)
+                    }
+                }
+            }
+            .navigationTitle("XP za zápas")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Hotovo") { dismiss() }
+                        .tint(Theme.brand)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
 }
 

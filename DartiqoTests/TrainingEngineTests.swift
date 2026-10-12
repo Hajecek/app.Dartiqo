@@ -121,6 +121,41 @@ final class TrainingEngineTests: XCTestCase {
         XCTAssertFalse(tip.reason.isEmpty)
     }
 
+    func testDailyChallengesRotateByDayAndStayStable() {
+        let profile = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
+        let calendar = Calendar(identifier: .gregorian)
+        let day = calendar.date(from: DateComponents(year: 2026, month: 10, day: 12))!
+        let next = calendar.date(byAdding: .day, value: 1, to: day)!
+        let first = TrainingCoach.dailyGameIDs(on: day, profile: profile, calendar: calendar)
+        let again = TrainingCoach.dailyGameIDs(on: day, profile: profile, calendar: calendar)
+        let tomorrow = TrainingCoach.dailyGameIDs(on: next, profile: profile, calendar: calendar)
+        XCTAssertEqual(first.count, 3)
+        XCTAssertEqual(Set(first).count, 3)
+        XCTAssertEqual(first, again)
+        XCTAssertNotEqual(first, tomorrow)
+        first.forEach { XCTAssertNotNil(TrainingCatalog.find($0)) }
+
+        let tasks = TrainingDaily.tasks(in: [], profile: profile, now: day, calendar: calendar)
+        XCTAssertEqual(tasks.map(\.gameID), first)
+        XCTAssertTrue(tasks.allSatisfy { !$0.done })
+
+        let won = TrainingSession(
+            owner: profile,
+            definitionID: first[0],
+            config: TrainingConfig(),
+            seed: 1,
+            kind: .checkoutFixed(leaves: [40], visits: 1, need: 1, doubleIn: false),
+            assignment: TrainingAssignment(),
+            startedAt: day,
+            finishedAt: day.addingTimeInterval(3_600),
+            status: .completed,
+            result: TrainingResult(success: true, darts: 3, summary: "ok")
+        )
+        let after = TrainingDaily.tasks(in: [won], profile: profile, now: day, calendar: calendar)
+        XCTAssertEqual(after.first?.done, true)
+        XCTAssertEqual(after.dropFirst().filter(\.done).count, 0)
+    }
+
     func testPlanBuildsAndReacts() {
         var plan = TrainingPlans.make(goal: .checkouts, span: 7, daysPerWeek: 3, minutes: 10, level: .advanced, owner: UUID())
         XCTAssertEqual(plan.items.count, 3)

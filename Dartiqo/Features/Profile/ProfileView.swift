@@ -113,7 +113,7 @@ struct ProfileView: View {
     // MARK: Karta hráče
 
     private func playerCard(_ stats: PlayerStats) -> some View {
-        let progress = Double(store.xp % 500) / 500
+        let progress = store.levelProgress
         return VStack(alignment: .leading, spacing: 18) {
             HStack(spacing: 14) {
                 Avatar(name: store.profile?.name ?? "", size: 64, photo: store.profile?.photoJPEG)
@@ -137,9 +137,9 @@ struct ProfileView: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                ProgressView(value: progress)
+                ProgressView(value: progress.fraction)
                     .tint(Theme.brandBlack)
-                Text("\(store.xp % 500) / 500 XP do levelu \(store.level + 1)")
+                Text("\(progress.intoLevel) / \(progress.needed) XP do levelu \(store.level + 1)")
                     .font(.caption.weight(.medium))
                     .opacity(0.65)
             }

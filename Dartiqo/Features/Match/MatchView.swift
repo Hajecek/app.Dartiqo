@@ -100,6 +100,7 @@ struct MatchView: View {
     @StateObject private var voice = VoiceScoreListener()
     /// Šipky po jedné, nebo součet celého kola.
     @State private var voiceMode: VoiceScoreMode = .darts
+    @State private var showMatchXP = false
     var body: some View { clockTracking(screen) }
     private var screen: some View {
         Group {
@@ -1830,9 +1831,13 @@ struct MatchView: View {
             if game.winner == b { return false }
             return game.states[a].legs > game.states[b].legs
         }
+        let xp = store.matchXP(for: game)
         return ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 resultHeroBanner(game)
+                if xp.hasAward {
+                    resultXPBanner(xp)
+                }
                 Text("Hráči")
                     .font(.title3.bold())
                     .foregroundStyle(.white)
@@ -1854,6 +1859,44 @@ struct MatchView: View {
         .scrollIndicators(.hidden)
         .safeAreaInset(edge: .bottom, spacing: 0) { resultActions(game) }
         .background(MatchColors.background.ignoresSafeArea())
+        .sheet(isPresented: $showMatchXP) {
+            MatchXPBreakdownSheet(breakdown: xp)
+        }
+    }
+
+    private func resultXPBanner(_ xp: MatchXPBreakdown) -> some View {
+        let positive = xp.total >= 0
+        return Button { showMatchXP = true } label: {
+            HStack(spacing: 14) {
+                Image(systemName: positive ? "bolt.fill" : "bolt.slash.fill")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(MatchColors.ink)
+                    .frame(width: 48, height: 48)
+                    .background(MatchColors.ink.opacity(0.12), in: Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(positive ? "+\(xp.total) XP" : "\(xp.total) XP")
+                        .font(.system(.title2, design: .rounded).weight(.heavy))
+                        .monospacedDigit()
+                        .foregroundStyle(MatchColors.ink)
+                    Text("Klepni — pásma od–do a výsledek zápasu")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(MatchColors.ink.opacity(0.62))
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "info.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(MatchColors.ink.opacity(0.55))
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                (positive ? Theme.brand : Color(red: 1, green: 0.45, blue: 0.35)),
+                in: RoundedRectangle(cornerRadius: 22, style: .continuous)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(xp.total) XP")
+        .accessibilityHint("Otevře rozklad pásem a výsledku")
     }
 
     private func resultHeroBanner(_ game: Match) -> some View {

@@ -54,23 +54,59 @@ enum TrainingCoach {
         return TrainingRecommendation(definitionID: "around-clock", reason: "Základ drží. Around the Clock prověří, jestli ti neujíždí kraj terče.", config: TrainingConfig())
     }
 
+    /// Semínko ze dne + profilu. `UUID.hashValue` se mezi spuštěními mění, proto bereme raw byty.
+    static func daySeed(on date: Date = Date(), profile: UUID?, calendar: Calendar = .current) -> UInt64 {
+        let parts = calendar.dateComponents([.year, .month, .day], from: date)
+        let day = UInt64((parts.year ?? 0) * 10_000 + (parts.month ?? 0) * 100 + (parts.day ?? 0))
+        return max(1, day) ^ stableBits(profile) ^ 0xDA17_0001
+    }
+
+    static func weeklySeed(on date: Date = Date(), profile: UUID?, calendar: Calendar = .current) -> UInt64 {
+        let week = calendar.component(.weekOfYear, from: date)
+        let year = calendar.component(.yearForWeekOfYear, from: date)
+        let seed = UInt64(max(1, year * 100 + week))
+        return seed ^ stableBits(profile) ^ 0xEEE7_0001
+    }
+
     static func daily(on date: Date = Date(), profile: UUID, calendar: Calendar = .current) -> (definitionID: String, seed: UInt64) {
-        let start = calendar.startOfDay(for: date)
-        let day = UInt64(start.timeIntervalSince1970 / 86_400)
-        let profileBits = UInt64(bitPattern: Int64(profile.hashValue))
-        var rng = TrainingRNG(seed: day ^ profileBits)
-        let pool = ["daily-9", "around-clock", "shanghai-20", "checkout-40", "treble-20", "high-score", "bobs-27", "bull-challenge"]
-        return (rng.pick(pool), day == 0 ? 1 : day)
+        let seed = daySeed(on: date, profile: profile, calendar: calendar)
+        var rng = TrainingRNG(seed: seed)
+        return (rng.pick(dailyPool), seed)
     }
 
     static func weekly(on date: Date = Date(), profile: UUID, calendar: Calendar = .current) -> (definitionID: String, seed: UInt64) {
-        let week = calendar.component(.weekOfYear, from: date)
-        let year = calendar.component(.yearForWeekOfYear, from: date)
-        let seed = UInt64(year * 100 + week)
-        let profileBits = UInt64(bitPattern: Int64(profile.hashValue))
-        var rng = TrainingRNG(seed: seed ^ profileBits)
+        let seed = weeklySeed(on: date, profile: profile, calendar: calendar)
+        var rng = TrainingRNG(seed: seed)
         let pool = ["checkout-ladder", "consistency", "practice-501", "cricket-practice", "world-tour", "double-hunter"]
-        return (rng.pick(pool), seed == 0 ? 1 : seed)
+        return (rng.pick(pool), seed)
+    }
+
+    /// Tři různé hry na den — stejný den + profil = stejná trojice.
+    static func dailyGameIDs(on date: Date = Date(), profile: UUID?, count: Int = 3, calendar: Calendar = .current) -> [String] {
+        var rng = TrainingRNG(seed: daySeed(on: date, profile: profile, calendar: calendar))
+        let shuffled = rng.shuffle(dailyPool)
+        return Array(shuffled.prefix(max(1, min(count, shuffled.count))))
+    }
+
+    /// Krátké až střední hry vhodné jako denní úkol. Bez adaptivních a ghost režimů.
+    static var dailyPool: [String] {
+        TrainingCatalog.all
+            .filter { $0.minutes <= 12 }
+            .filter { $0.category != .adaptive }
+            .filter { !Self.dailyExcluded.contains($0.id) }
+            .map(\.id)
+    }
+
+    private static let dailyExcluded: Set<String> = [
+        "ghost", "comeback", "endurance-1001", "checkout-1-100", "challenge-9", "challenge-15"
+    ]
+
+    private static func stableBits(_ profile: UUID?) -> UInt64 {
+        guard let profile else { return 0xD1CE_BEEF }
+        var bytes = profile.uuid
+        return withUnsafeBytes(of: &bytes) { raw in
+            raw.load(as: UInt64.self) ^ raw.load(fromByteOffset: 8, as: UInt64.self)
+        }
     }
 
     static func context(matches: [Match], sessions: [TrainingSession], profileID: UUID?) -> TrainingContext {

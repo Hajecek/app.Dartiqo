@@ -64,7 +64,7 @@ struct HomeView: View {
     }
 
     private var dailyToolbarButton: some View {
-        let tasks = TrainingDaily.tasks(in: store.trainingHistory)
+        let tasks = TrainingDaily.tasks(in: store.trainingHistory, profile: store.profile?.id)
         let done = tasks.filter(\.done).count
         let left = tasks.count - done
         return Button {
@@ -78,8 +78,7 @@ struct HomeView: View {
     }
 
     private var profileRow: some View {
-        let xpInLevel = store.xp % 500
-        let progress = Double(xpInLevel) / 500
+        let progress = store.levelProgress
         return NavigationLink {
             ProfileView()
         } label: {
@@ -91,7 +90,7 @@ struct HomeView: View {
                     Text(store.profile?.name ?? "Hráč")
                         .font(.title3.bold())
                         .foregroundStyle(.white)
-                    levelBadge(progress: progress, xpInLevel: xpInLevel)
+                    levelBadge(progress: progress.fraction, xpInLevel: progress.intoLevel, needed: progress.needed)
                 }
                 Spacer(minLength: 8)
                 VStack(alignment: .trailing, spacing: 2) {
@@ -116,10 +115,10 @@ struct HomeView: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(store.profile?.name ?? "Hráč"), level \(store.level), \(xpInLevel) z 500 XP, průměr \(averageText)")
+        .accessibilityLabel("\(store.profile?.name ?? "Hráč"), level \(store.level), \(progress.intoLevel) z \(progress.needed) XP, průměr \(averageText)")
     }
 
-    private func levelBadge(progress: Double, xpInLevel: Int) -> some View {
+    private func levelBadge(progress: Double, xpInLevel: Int, needed: Int) -> some View {
         HStack(spacing: 8) {
             Text("\(store.level)")
                 .font(AppFont.body(14, weight: .heavy))
@@ -145,7 +144,7 @@ struct HomeView: View {
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Level \(store.level), \(xpInLevel) z 500 XP")
+        .accessibilityLabel("Level \(store.level), \(xpInLevel) z \(needed) XP")
     }
 
     private var averageText: String {
@@ -343,7 +342,7 @@ private struct DailyChallengeSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        let tasks = TrainingDaily.tasks(in: store.trainingHistory)
+        let tasks = TrainingDaily.tasks(in: store.trainingHistory, profile: store.profile?.id)
         let done = tasks.filter(\.done).count
         let complete = done == tasks.count && !tasks.isEmpty
         let nextID = tasks.first { !$0.done }?.id
@@ -425,8 +424,8 @@ private struct DailyChallengeSheet: View {
             .accessibilityHidden(true)
 
             Text(complete
-                 ? "Všechny dnešní úkoly jsou hotové. Zítra přijde nová trojice."
-                 : "Splň všechny tři. Za úkol spuštěný odtud přibude 50 XP. Zítra se výzva vynuluje.")
+                 ? "Všechny dnešní úkoly jsou hotové. Zítra přijde úplně nová trojice her."
+                 : "Každý den jiná náhodná trojice. Splň všechny tři — za úkol spuštěný odtud přibude 50 XP.")
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.black.opacity(0.72))
                 .fixedSize(horizontal: false, vertical: true)

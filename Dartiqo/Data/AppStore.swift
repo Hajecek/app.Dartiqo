@@ -137,15 +137,23 @@ enum AppSection: Hashable {
         set { guard let id = profile?.id.uuidString else { return }; data.activeMatches[id] = newValue; save() }
     }
     var xp: Int {
-        let played = matches.reduce(0) { sum, match in
-            let winBonus = match.countsForCompetitiveRecord
-                && (match.winner.map { match.players[$0].id == profile?.id } ?? false)
-            return sum + 50 + (winBonus ? 50 : 0)
-        }
-        let trained = (data.xpEvents ?? []).filter { $0.owner == profile?.id }.reduce(0) { $0 + $1.amount }
-        return played + trained
+        guard let id = profile?.id else { return 0 }
+        let played = matches.reduce(0) { $0 + MatchRewards.award(match: $1, playerID: id).total }
+        let trained = (data.xpEvents ?? []).filter { $0.owner == id }.reduce(0) { $0 + $1.amount }
+        return max(0, played + trained)
     }
-    var level: Int { xp / 500 + 1 }
+
+    /// Rozklad XP za konkrétní zápas pro přihlášený profil.
+    func matchXP(for match: Match) -> MatchXPBreakdown {
+        guard let id = profile?.id else { return MatchXPBreakdown() }
+        return MatchRewards.award(match: match, playerID: id)
+    }
+    var level: Int { PlayerLevel.level(forXP: xp) }
+    /// XP v aktuálním levelu / kolik chce další level / progress 0…1.
+    var levelProgress: (intoLevel: Int, needed: Int, fraction: Double) {
+        let p = PlayerLevel.progress(forXP: xp)
+        return (p.intoLevel, p.needed, p.fraction)
+    }
     var x01Matches: [Match] { matches.filter { $0.config.mode == .x01 } }
     /// Ghost nabídky pro zvolená X01 pravidla.
     func ghostOffers(startingScore: Int, outRule: OutRule) -> [GhostOffer] {
