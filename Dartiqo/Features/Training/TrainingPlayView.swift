@@ -390,21 +390,27 @@ struct TrainingPlayView: View {
             if !finished {
                 Spacer(minLength: 0)
                 Menu {
-                    Picker("Způsob zápisu", selection: $surface) {
-                        ForEach(TrainingSurface.allCases) { item in
-                            if item != .camera || cameraReady {
-                                Label(item.title, systemImage: item.icon).tag(item)
+                    ForEach(TrainingSurface.allCases) { item in
+                        if item != .camera || cameraReady {
+                            Button {
+                                guard surface != item else { return }
+                                store.selectionHaptic()
+                                withAnimation(.snappy(duration: 0.22)) { surface = item }
+                            } label: {
+                                Label(item.title, systemImage: surface == item ? "checkmark" : item.icon)
                             }
                         }
                     }
                 } label: {
-                    Label(surface.title, systemImage: surface.icon)
-                        .labelStyle(.iconOnly)
-                        .frame(width: 24, height: 24)
+                    Image(systemName: surface.icon)
+                        .font(.title3.weight(.semibold))
+                        .frame(width: 52, height: 52)
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.glass)
                 .buttonBorderShape(.circle)
                 .accessibilityLabel("Způsob zápisu")
+                .accessibilityValue(surface.title)
             }
         }
         .font(.headline)

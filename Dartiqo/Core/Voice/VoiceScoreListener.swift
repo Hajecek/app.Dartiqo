@@ -102,7 +102,8 @@ final class VoiceScoreListener: ObservableObject {
                 transcript = "Poslouchám…"
             } catch {
                 guard generation == startGeneration else { return }
-                await tearDown(deactivate: true)
+                await tearDown(deactivate: true, expectedGeneration: generation)
+                guard generation == startGeneration else { return }
                 phase = .unavailable(friendlyError(error))
             }
         }
@@ -110,12 +111,16 @@ final class VoiceScoreListener: ObservableObject {
 
     func stop() {
         startGeneration += 1
-        recognitionTask?.cancel()
-        recognitionTask = nil
-        Task { await tearDown(deactivate: true) }
+        let generation = startGeneration
+        // Synchronní cleanup — ať asynchronní tearDown z předchozího cyklu nesahá na nový recorder.
+        invalidateCapture()
         phase = .idle
         transcript = ""
         inputLevel = 0
+        Task {
+            guard generation == startGeneration else { return }
+            await deactivateSession()
+        }
     }
 
     func updateMode(_ value: VoiceScoreMode) {
@@ -310,7 +315,8 @@ final class VoiceScoreListener: ObservableObject {
                     transcript = "Čekám na řeč…"
                     if consecutiveFailures >= 5 {
                         lastError = "Rozpoznávání řeči není připravené. Zapni internet nebo v Nastavení stáhni hlasové data pro češtinu (Siri)."
-                        await tearDown(deactivate: true)
+                        await tearDown(deactivate: true, expectedGeneration: generation)
+                        guard generation == startGeneration else { return }
                         phase = .idle
                         return
                     }
@@ -324,7 +330,8 @@ final class VoiceScoreListener: ObservableObject {
                     phase = .listening
                 } catch {
                     lastError = friendlyError(error)
-                    await tearDown(deactivate: true)
+                    await tearDown(deactivate: true, expectedGeneration: generation)
+                    guard generation == startGeneration else { return }
                     phase = .idle
                 }
             }
@@ -439,7 +446,7 @@ final class VoiceScoreListener: ObservableObject {
         "180", "140", "100", "60", "45", "26"
     ]
 
-    private func tearDown(deactivate: Bool) async {
+    private func invalidateCapture() {
         stopMeter()
         recognitionTask?.cancel()
         recognitionTask = nil
@@ -457,7 +464,13 @@ final class VoiceScoreListener: ObservableObject {
         heardSpeech = false
         silenceTicks = 0
         inputLevel = 0
+    }
+
+    private func tearDown(deactivate: Bool, expectedGeneration: Int? = nil) async {
+        if let expectedGeneration, expectedGeneration != startGeneration { return }
+        invalidateCapture()
         if deactivate {
+            if let expectedGeneration, expectedGeneration != startGeneration { return }
             await deactivateSession()
         }
     }

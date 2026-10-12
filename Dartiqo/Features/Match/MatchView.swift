@@ -69,6 +69,8 @@ struct MatchView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var surface = ScoringSurface.grid
+    /// `onAppear` může proběhnout vícenásobně — výchozí režim nastavíme jen jednou.
+    @State private var didSeedSurface = false
     @State private var multiplier = 1
     @State private var paused = false
     @State private var showLeave = false
@@ -173,12 +175,15 @@ struct MatchView: View {
         .task(id: botTaskKey) { await throwBotDart() }
         .onAppear {
             if let game = store.activeMatch {
-                if game.currentDarts.isEmpty && canUseTotal(game) && game.config.settings.entry == .total {
-                    surface = .total
-                } else if game.config.settings.entry == .darts {
-                    surface = .board
-                } else {
-                    surface = .grid
+                if !didSeedSurface {
+                    didSeedSurface = true
+                    if game.currentDarts.isEmpty && canUseTotal(game) && game.config.settings.entry == .total {
+                        surface = .total
+                    } else if game.config.settings.entry == .darts {
+                        surface = .board
+                    } else {
+                        surface = .grid
+                    }
                 }
                 UIApplication.shared.isIdleTimerDisabled = game.config.settings.keepAwake
                 if game.currentPlayer.botLevel != nil || game.isGhostTurn { holdDarts = game.currentDarts }
@@ -785,68 +790,72 @@ struct MatchView: View {
     private func bottomBar(_ game: Match) -> some View {
         let humanInput = !paused && game.legWinner == nil && !game.needsBullOff && !showingBotBoard && !isHoldingVisit
         let canUndo = isHoldingVisit || !game.currentDarts.isEmpty || !game.visits.isEmpty
+        let showTotalConfirm = humanInput && surface == .total && canUseTotal(game)
+        let showVoiceModes = surface == .voice && canUseTotal(game) && !isHoldingVisit
         if !paused && legCeremony == nil && (game.legWinner == nil || isHoldingVisit) {
-            GlassEffectContainer(spacing: 10) {
-                HStack(spacing: 10) {
-                    Button { undo() } label: {
-                        Label("Zpět", systemImage: "arrow.uturn.backward")
-                            .font(.headline)
-                            .labelStyle(.titleAndIcon)
-                            .foregroundStyle(.primary)
-                            .padding(.horizontal, 16)
-                            .frame(minHeight: 52)
-                            .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .glassEffect(.regular.interactive(), in: Capsule())
-                    .disabled(!canUndo)
-                    .opacity(canUndo ? 1 : 0.45)
-                    .accessibilityHint("Vrátí poslední šipku, včetně hodů bota")
-
-                    if humanInput && surface == .total && canUseTotal(game) {
-                        Button { resolveTotal(game) } label: {
-                            Label(sumText.isEmpty ? "Potvrdit" : "Potvrdit \(sumText)", systemImage: "checkmark")
+            // Menu držíme mimo GlassEffectContainer — jinak iOS 26 při změně ikony/layoutu glitchuje výběr.
+            HStack(spacing: 10) {
+                GlassEffectContainer(spacing: 10) {
+                    HStack(spacing: 10) {
+                        Button { undo() } label: {
+                            Label("Zpět", systemImage: "arrow.uturn.backward")
                                 .font(.headline)
-                                .foregroundStyle(sumText.isEmpty ? Color.secondary : Theme.onAccent)
-                                .frame(maxWidth: .infinity, minHeight: 52)
+                                .labelStyle(.titleAndIcon)
+                                .foregroundStyle(.primary)
+                                .padding(.horizontal, 16)
+                                .frame(minHeight: 52)
                                 .contentShape(Capsule())
-                                .contentTransition(.numericText())
                         }
                         .buttonStyle(.plain)
-                        .glassEffect(
-                            sumText.isEmpty ? .regular : .regular.tint(MatchColors.finish).interactive(),
-                            in: Capsule()
-                        )
-                        .disabled(sumText.isEmpty)
-                        .accessibilityHint("Odečte zadaný součet kola")
-                    } else {
-                        Spacer(minLength: 0)
-                    }
+                        .glassEffect(.regular.interactive(), in: Capsule())
+                        .disabled(!canUndo)
+                        .opacity(canUndo ? 1 : 0.45)
+                        .accessibilityHint("Vrátí poslední šipku, včetně hodů bota")
 
-                    if surface == .voice, canUseTotal(game) {
-                        voiceModeBottomToggle(game)
+                        if showTotalConfirm {
+                            Button { resolveTotal(game) } label: {
+                                Label(sumText.isEmpty ? "Potvrdit" : "Potvrdit \(sumText)", systemImage: "checkmark")
+                                    .font(.headline)
+                                    .foregroundStyle(sumText.isEmpty ? Color.secondary : Theme.onAccent)
+                                    .frame(maxWidth: .infinity, minHeight: 52)
+                                    .contentShape(Capsule())
+                                    .contentTransition(.numericText())
+                            }
+                            .buttonStyle(.plain)
+                            .glassEffect(
+                                sumText.isEmpty ? .regular : .regular.tint(MatchColors.finish).interactive(),
+                                in: Capsule()
+                            )
+                            .disabled(sumText.isEmpty)
+                            .accessibilityHint("Odečte zadaný součet kola")
+                        } else if showVoiceModes {
+                            voiceModeBottomToggle(game)
+                        } else {
+                            Spacer(minLength: 0)
+                        }
                     }
-
-                    Menu {
-                        scoringSurfaceMenu(game)
-                    } label: {
-                        Image(systemName: surface.icon)
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(.primary)
-                            .frame(width: 52, height: 52)
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(.plain)
-                    .glassEffect(.regular.interactive(), in: Circle())
-                    .accessibilityLabel("Způsob zápisu")
-                    .accessibilityValue(surfaceMenuTitle(game))
                 }
+
+                Menu {
+                    scoringSurfaceMenu(game)
+                } label: {
+                    Image(systemName: surface.icon)
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .frame(width: 52, height: 52)
+                        .contentShape(Circle())
+                        .glassEffect(.regular.interactive(), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Způsob zápisu")
+                .accessibilityValue(surfaceMenuTitle(game))
             }
             .padding(.horizontal, 16)
             .padding(.top, 8)
             .padding(.bottom, 6)
             .frame(maxWidth: 780)
             .frame(maxWidth: .infinity)
+            .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: surface)
         }
     }
 
@@ -1052,12 +1061,10 @@ struct MatchView: View {
         .animation(.easeInOut(duration: 0.22), value: armed)
         .animation(.easeInOut(duration: 0.22), value: listening)
         .onAppear {
-            syncVoiceMode(for: game)
             syncVoiceListening(for: game)
         }
         .onChange(of: voiceSyncKey) { _, _ in
             if let live = store.activeMatch {
-                syncVoiceMode(for: live)
                 syncVoiceListening(for: live)
             }
         }
@@ -1065,16 +1072,9 @@ struct MatchView: View {
             voice.updateMode(effectiveVoiceMode(for: game))
         }
         .onChange(of: game.currentDarts.count) { _, _ in
-            syncVoiceMode(for: game)
             voice.updateMode(effectiveVoiceMode(for: game))
         }
-        .onDisappear { voice.stop() }
-    }
-
-    private func syncVoiceMode(for game: Match) {
-        if !canUseTotal(game) || !game.currentDarts.isEmpty, voiceMode == .total {
-            voiceMode = .darts
-        }
+        // stop řeší changeSurface / isVoiceArmed — dvojité stop() při zmizení race-uje s novým startem.
     }
 
     private func voiceMicBadge(armed: Bool, listening: Bool, recognizing: Bool, unavailable: Bool) -> some View {
@@ -1247,10 +1247,12 @@ struct MatchView: View {
     }
 
     private func selectVoiceMode(_ mode: VoiceScoreMode) {
+        guard voiceMode != mode || surface != .voice else { return }
         store.selectionHaptic()
         voiceMode = mode
         if surface != .voice {
             changeSurface(.voice)
+            return
         }
         if let game = store.activeMatch {
             voice.updateMode(effectiveVoiceMode(for: game))
@@ -1258,19 +1260,32 @@ struct MatchView: View {
     }
 
     private func changeSurface(_ value: ScoringSurface) {
-        guard var game = store.activeMatch else { return }
-        if value == .total && !game.currentDarts.isEmpty {
+        guard let live = store.activeMatch else { return }
+        if value == .total && !live.currentDarts.isEmpty {
             error = "Součet lze zapnout na začátku kola. Dokonči nebo vrať rozehrané šipky."
             return
         }
+        if value == surface { return }
+        store.selectionHaptic()
         if surface == .voice, value != .voice { voice.stop() }
-        if surface != value { store.selectionHaptic() }
-        surface = value
-        sumText = ""
-        var options = game.config.settings
-        options.entry = value == .total ? .total : .darts
-        game.config.options = options
-        store.activeMatch = game
+
+        withAnimation(reduceMotion ? nil : .snappy(duration: 0.22)) {
+            surface = value
+            sumText = ""
+        }
+
+        // Preferenci entry ulož bez zbytečného přepisu, ať Menu stihne dismiss bez remountu celého zápasu.
+        let entry: EntryStyle = value == .total ? .total : .darts
+        if live.config.settings.entry != entry {
+            Task { @MainActor in
+                guard var game = store.activeMatch else { return }
+                var options = game.config.settings
+                guard options.entry != entry else { return }
+                options.entry = entry
+                game.config.options = options
+                store.activeMatch = game
+            }
+        }
     }
     private func hit(_ dart: Dart) {
         guard !paused, !isHoldingVisit, legCeremony == nil, var game = store.activeMatch, game.currentPlayer.botLevel == nil, !game.finished, game.legWinner == nil, !game.needsBullOff else { return }
