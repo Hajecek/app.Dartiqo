@@ -8,29 +8,11 @@ private enum TrainingColors {
     static let finish = Color(red: 0.05, green: 0.52, blue: 0.31)
 }
 
-private enum TrainingSurface: String, CaseIterable, Identifiable {
-    case grid, board, camera
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .grid: return "Čísla"
-        case .board: return "Terč"
-        case .camera: return "Kamera"
-        }
-    }
-    var icon: String {
-        switch self {
-        case .grid: return "square.grid.3x3.fill"
-        case .board: return "target"
-        case .camera: return "camera.fill"
-        }
-    }
-}
-
-/// Trénink na stejné ploše jako zápas: skóre, tři sloty a mřížka čísel.
+/// Trénink na stejné ploše jako zápas: skóre, tři sloty, hold po kole a stejné způsoby zápisu.
 struct TrainingPlayView: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var definition: TrainingDefinition
     var config: TrainingConfig
     var seed: UInt64?
@@ -39,11 +21,20 @@ struct TrainingPlayView: View {
     @State private var session: TrainingSession?
     @State private var saved = false
     @State private var awarded = 0
+    @State private var xpBreakdown = TrainingXPBreakdown()
+    @State private var showXP = false
     @State private var multiplier = 1
-    @State private var surface = TrainingSurface.grid
+    @State private var surface = ScoringSurface.grid
+    @State private var sumText = ""
+    @State private var visitBuffer: [Dart] = []
+    @State private var holdDarts: [Dart] = []
+    @State private var isHoldingVisit = false
+    @State private var holdSurface: ScoringSurface = .grid
+    @State private var holdGeneration = 0
     @State private var confirmQuit = false
     @State private var pulse = 0
     @State private var previousBest: TrainingResult?
+    @State private var entryError: String?
 
     private var projection: TrainingProjection {
         guard let session else { return TrainingProjection() }
@@ -54,10 +45,14 @@ struct TrainingPlayView: View {
         guard let calibration = store.boardCalibration else { return false }
         return calibration.isCalibrated && calibration.isCameraMapped
     }
+    /// Šipky aktuálního / drženého kola — ne celá historie.
     private var visitDarts: [Dart] {
-        let recent = projection.recent
-        let count = min(3, recent.count)
-        return Array(recent.suffix(count))
+        isHoldingVisit ? holdDarts : visitBuffer
+    }
+    private var playSurfaces: [ScoringSurface] {
+        var items: [ScoringSurface] = [.grid, .board, .total]
+        if cameraReady { items.append(.camera) }
+        return items
     }
 
     var body: some View {
@@ -84,14 +79,6 @@ struct TrainingPlayView: View {
                             .buttonStyle(.glassProminent)
                             .tint(TrainingColors.finish)
                     }
-                } else if projection.phase == .choose {
-                    promptCard {
-                        ForEach(Array(projection.choices.enumerated()), id: \.offset) { item in
-                            Button(item.element) { act(.choose(item.offset)) }
-                                .buttonStyle(.glassProminent)
-                                .tint(TrainingColors.finish)
-                        }
-                    }
                 } else {
                     if !projection.boardNumbers.isEmpty {
                         CricketMarksCard(
@@ -107,12 +94,24 @@ struct TrainingPlayView: View {
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.vertical, surface == .grid ? 6 : 10)
             .frame(maxWidth: 780)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: isHoldingVisit)
+            .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: projection.score)
+            .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: projection.scoreText)
         }
         .scrollIndicators(.hidden)
+        .scrollDisabled(surface == .grid && !isHoldingVisit && !finished)
         .background(TrainingColors.background)
         .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
+        .alert("Zápis", isPresented: Binding(
+            get: { entryError != nil },
+            set: { if !$0 { entryError = nil } }
+        )) {
+            Button("OK", role: .cancel) { entryError = nil }
+        } message: {
+            Text(entryError ?? "")
+        }
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .toolbarBackground(TrainingColors.background, for: .navigationBar)
@@ -137,31 +136,41 @@ struct TrainingPlayView: View {
         }
         .onAppear(perform: prepare)
         .onDisappear(perform: autosave)
+        .onChange(of: finished) { _, done in
+            if done { commitIfNeeded() }
+        }
+        .sheet(isPresented: $showXP) {
+            TrainingXPBreakdownSheet(breakdown: xpBreakdown)
+        }
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { date in
             guard config.timeLimit != nil || definition.id == "rush" else { return }
             guard var current = session, current.status == .playing else { return }
             TrainingEngine.sync(&current, at: date)
             session = current
-            if current.status == .completed { store.stageTraining(current) }
+            store.stageTraining(current)
+            if current.status == .completed { commitIfNeeded() }
         }
         .sensoryFeedback(.impact, trigger: pulse)
     }
 
     private var scoreboard: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        let headline = projection.target.isEmpty ? projection.scoreText : projection.target
+        let numeric = Double(projection.score)
+        return VStack(alignment: .leading, spacing: 2) {
             Text(definition.title)
                 .font(AppFont.body(14, weight: .semibold))
                 .lineLimit(1)
-            Text(projection.target.isEmpty ? projection.scoreText : projection.target)
+            Text(headline)
                 .font(AppFont.display(64, weight: .bold))
                 .monospacedDigit()
                 .minimumScaleFactor(0.4)
                 .lineLimit(1)
                 .foregroundStyle(.white)
+                .contentTransition(.numericText(value: numeric))
                 .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
             HStack(spacing: 8) {
-                capsule("\(projection.scoreText)")
-                capsule("šipky \(projection.dartsLeft)")
+                capsule(projection.scoreText)
+                capsule(isHoldingVisit ? "kolo hotovo" : "šipky \(projection.dartsLeft)")
                 capsule("kolo \(projection.visit)")
                 if let lives = projection.lives { capsule("životy \(lives)") }
             }
@@ -180,37 +189,64 @@ struct TrainingPlayView: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
             .background(TrainingColors.ink.opacity(0.12), in: Capsule())
+            .contentTransition(.opacity)
     }
 
     private var throwStrip: some View {
-        HStack(spacing: 8) {
-            ForEach(0..<3, id: \.self) { index in
-                let dart = visitDarts.indices.contains(index) ? visitDarts[index] : nil
-                ThrowSlotFace(index: index, dart: dart)
+        Group {
+            if isHoldingVisit && holdSurface == .total {
+                VisitHoldSummaryCard(
+                    title: "Součet zapsán",
+                    value: "\(holdDarts.reduce(0) { $0 + $1.score })",
+                    labels: holdDarts.map(\.label)
+                )
+            } else {
+                HStack(spacing: 8) {
+                    ForEach(0..<3, id: \.self) { index in
+                        let dart = visitDarts.indices.contains(index) ? visitDarts[index] : nil
+                        ThrowSlotFace(index: index, dart: dart)
+                    }
+                }
+                .frame(height: 88)
+                .padding(10)
+                .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel(isHoldingVisit ? "Kolo hotovo" : "Aktuální hod")
             }
         }
-        .frame(height: 88)
-        .padding(10)
-        .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Aktuální hod")
     }
 
     @ViewBuilder
     private var input: some View {
-        switch surface {
-        case .board:
-            ScoringDartboard(marks: visitDarts, interactive: true) { dart in _ = throwDart(dart) }
-        case .camera:
-            if let calibration = store.boardCalibration, cameraReady {
-                CameraScoreView(calibration: calibration, labels: visitDarts.map(\.label), dartCount: session?.actions.count ?? 0) { dart, _ in
-                    throwDart(dart)
-                }
-                .frame(minHeight: 420)
+        if isHoldingVisit {
+            if holdSurface != .total {
+                ScoringDartboard(marks: holdDarts, interactive: false)
             }
-        case .grid:
-            ManualScorePad(multiplier: $multiplier, onSelect: { store.selectionHaptic() }) { dart in
-                _ = throwDart(dart)
+        } else {
+            switch surface {
+            case .board:
+                ScoringDartboard(marks: visitDarts, interactive: true) { dart in _ = throwDart(dart) }
+            case .camera:
+                if let calibration = store.boardCalibration, cameraReady {
+                    CameraScoreView(calibration: calibration, labels: visitDarts.map(\.label), dartCount: visitDarts.count) { dart, _ in
+                        throwDart(dart)
+                    }
+                    .frame(minHeight: 420)
+                }
+            case .total:
+                TotalScorePad(
+                    sumText: $sumText,
+                    showBust: false,
+                    onQuick: { score in
+                        sumText = "\(score)"
+                        submitTotal()
+                    },
+                    onTap: { store.tapHaptic(.light) }
+                )
+            case .grid, .voice:
+                ManualScorePad(multiplier: $multiplier, onSelect: { store.selectionHaptic() }) { dart in
+                    _ = throwDart(dart)
+                }
             }
         }
         if !projection.detail.isEmpty || projection.hint != nil || projection.ghost != nil || !projection.bogeys.isEmpty {
@@ -289,14 +325,44 @@ struct TrainingPlayView: View {
                     }
                 }
             }
-            if saved {
-                Label(awarded > 0 ? "+\(awarded) XP" : "XP za tuhle hru už je zapsané", systemImage: "bolt.fill")
-                    .font(.headline)
-                    .foregroundStyle(.black)
-                    .frame(maxWidth: .infinity, minHeight: 52)
-                    .background(Theme.brand, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            if xpBreakdown.hasAward || awarded != 0 || saved {
+                resultXPBanner
             }
         }
+    }
+
+    private var resultXPBanner: some View {
+        let total = xpBreakdown.hasAward ? xpBreakdown.total : awarded
+        let positive = total >= 0
+        return Button { showXP = true } label: {
+            HStack(spacing: 14) {
+                Image(systemName: positive ? "bolt.fill" : "bolt.slash.fill")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(TrainingColors.ink)
+                    .frame(width: 48, height: 48)
+                    .background(TrainingColors.ink.opacity(0.12), in: Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(total > 0 ? "+\(total) XP" : total == 0 ? "0 XP" : "\(total) XP")
+                        .font(.system(.title2, design: .rounded).weight(.heavy))
+                        .monospacedDigit()
+                        .foregroundStyle(TrainingColors.ink)
+                    Text(xpBreakdown.hasAward ? "Klepni — za co přesně padlo XP" : "XP za tuhle hru už je zapsané")
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(TrainingColors.ink.opacity(0.62))
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "info.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(TrainingColors.ink.opacity(0.55))
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.brand, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(!xpBreakdown.hasAward)
+        .accessibilityLabel("\(total) XP")
+        .accessibilityHint(xpBreakdown.hasAward ? "Otevře rozklad odměny" : "")
     }
 
     private func resultFacts(_ result: TrainingResult) -> [(value: String, label: String)] {
@@ -367,58 +433,87 @@ struct TrainingPlayView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 10) {
-            if !finished || !saved {
-                Button { undo() } label: { Label("Zpět", systemImage: "arrow.uturn.backward") }
-                    .buttonStyle(.glass)
-                    .disabled(saved || (session?.actions.isEmpty ?? true))
-            }
             if finished {
                 Button { restart() } label: {
                     Label("Znovu", systemImage: "arrow.clockwise")
-                        .frame(maxWidth: .infinity)
+                        .font(.headline)
+                        .labelStyle(.titleAndIcon)
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                        .contentShape(Capsule())
                 }
-                .buttonStyle(.glass)
-                Button {
-                    if saved { store.returnHome() } else { save() }
-                } label: {
-                    Label(saved ? "Domů" : "Uložit", systemImage: saved ? "house.fill" : "checkmark")
-                        .frame(maxWidth: .infinity)
+                .buttonStyle(.plain)
+                .glassEffect(.regular.interactive(), in: Capsule())
+
+                Button(action: goHome) {
+                    Label("Domů", systemImage: "house.fill")
+                        .font(.headline)
+                        .labelStyle(.titleAndIcon)
+                        .foregroundStyle(Color.black)
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                        .contentShape(Capsule())
                 }
-                .buttonStyle(.glassProminent)
-                .tint(saved ? Theme.brand : TrainingColors.finish)
-            }
-            if !finished {
-                Spacer(minLength: 0)
+                .buttonStyle(.plain)
+                .glassEffect(.regular.tint(Theme.brand).interactive(), in: Capsule())
+                .accessibilityHint("Uloží výsledek a vrátí na Domů")
+            } else {
+                Button { undo() } label: {
+                    Label("Zpět", systemImage: "arrow.uturn.backward")
+                        .font(.headline)
+                        .labelStyle(.titleAndIcon)
+                        .foregroundStyle(.primary)
+                        .padding(.horizontal, 16)
+                        .frame(minHeight: 52)
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .glassEffect(.regular.interactive(), in: Capsule())
+                .disabled(!canUndo)
+                .opacity(canUndo ? 1 : 0.45)
+
+                if surface == .total && !isHoldingVisit {
+                    Button { submitTotal() } label: {
+                        Label(sumText.isEmpty ? "Potvrdit" : "Potvrdit \(sumText)", systemImage: "checkmark")
+                            .font(.headline)
+                            .labelStyle(.titleAndIcon)
+                            .foregroundStyle(sumText.isEmpty ? Color.secondary : Color.black)
+                            .frame(maxWidth: .infinity, minHeight: 52)
+                            .contentShape(Capsule())
+                            .contentTransition(.numericText())
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(
+                        sumText.isEmpty ? .regular : .regular.tint(TrainingColors.finish).interactive(),
+                        in: Capsule()
+                    )
+                    .disabled(sumText.isEmpty)
+                } else {
+                    Spacer(minLength: 0)
+                }
+
                 Menu {
-                    ForEach(TrainingSurface.allCases) { item in
-                        if item != .camera || cameraReady {
-                            Button {
-                                guard surface != item else { return }
-                                store.selectionHaptic()
-                                withAnimation(.snappy(duration: 0.22)) { surface = item }
-                            } label: {
-                                Label(item.title, systemImage: surface == item ? "checkmark" : item.icon)
-                            }
+                    ForEach(playSurfaces) { item in
+                        Button {
+                            changeSurface(item)
+                        } label: {
+                            Label(item.title, systemImage: surface == item ? "checkmark" : item.icon)
                         }
+                        .disabled(item == .total && !visitBuffer.isEmpty)
                     }
                 } label: {
                     Image(systemName: surface.icon)
                         .font(.title3.weight(.semibold))
+                        .foregroundStyle(.primary)
                         .frame(width: 52, height: 52)
                         .contentShape(Circle())
+                        .glassEffect(.regular.interactive(), in: Circle())
                 }
-                .buttonStyle(.glass)
-                .buttonBorderShape(.circle)
+                .buttonStyle(.plain)
+                .disabled(isHoldingVisit)
                 .accessibilityLabel("Způsob zápisu")
                 .accessibilityValue(surface.title)
             }
         }
-        .font(.headline)
-        .lineLimit(1)
-        .labelStyle(.titleAndIcon)
-        .controlSize(.large)
-        .buttonBorderShape(.capsule)
-        .tint(.white)
         .padding(.horizontal, 16)
         .padding(.top, 8)
         .padding(.bottom, 6)
@@ -426,11 +521,30 @@ struct TrainingPlayView: View {
         .frame(maxWidth: .infinity)
     }
 
+    private var canUndo: Bool {
+        if isHoldingVisit { return true }
+        return !(session?.actions.isEmpty ?? true)
+    }
+
+    private func changeSurface(_ value: ScoringSurface) {
+        guard value != surface, !isHoldingVisit else { return }
+        if value == .total, !visitBuffer.isEmpty {
+            entryError = "Součet lze zapnout na začátku kola. Dokonči nebo vrať šipky."
+            return
+        }
+        store.selectionHaptic()
+        withAnimation(reduceMotion ? nil : .snappy(duration: 0.22)) {
+            surface = value
+            sumText = ""
+        }
+    }
+
     private func prepare() {
         guard session == nil, let owner = store.profile?.id else { return }
         previousBest = store.bestTrainingResult(for: definition.id)
         if let resume {
             session = resume
+            if resume.status == .completed { commitIfNeeded() }
             return
         }
         let started = TrainingEngine.start(
@@ -447,36 +561,137 @@ struct TrainingPlayView: View {
 
     @discardableResult
     private func throwDart(_ dart: Dart) -> Bool {
-        guard var current = session, current.status == .playing else { return false }
-        let before = current.actions.count
+        guard !isHoldingVisit, var current = session, current.status == .playing else { return false }
+        let beforeVisit = TrainingEngine.project(current).visit
+        let beforeLeft = TrainingEngine.project(current).dartsLeft
+        let beforeCount = current.actions.count
         TrainingEngine.record(.dart(dart), into: &current)
-        guard current.actions.count > before else { return false }
-        session = current
+        guard current.actions.count > beforeCount else { return false }
+        var buffer = visitBuffer
+        buffer.append(dart)
+        let after = TrainingEngine.project(current)
+        withAnimation(reduceMotion ? nil : .snappy(duration: 0.28)) {
+            session = current
+            visitBuffer = buffer
+        }
         store.stageTraining(current)
-        store.feedback(dart.segment == 0 ? nil : dart.score)
+        store.feedback(dart.segment == 0 ? nil : dart.score, announce: surface != .total)
         pulse += 1
+        if current.status == .completed { commitIfNeeded() }
+
+        let closed = after.finished
+            || after.visit > beforeVisit
+            || buffer.count >= 3
+            || (beforeLeft <= 1 && after.dartsLeft > beforeLeft)
+        if closed {
+            beginVisitHold(buffer, surface: surface)
+        }
         return true
     }
 
+    private func submitTotal() {
+        guard !isHoldingVisit, visitBuffer.isEmpty, let score = Int(sumText) else { return }
+        guard let darts = ScoringTotal.darts(for: score) else {
+            entryError = "Součet \(score) nejde sestavit ze tří šipek."
+            return
+        }
+        var recorded: [Dart] = []
+        for dart in darts {
+            guard throwDartQuiet(dart) else { break }
+            recorded.append(dart)
+            if projection.finished { break }
+        }
+        sumText = ""
+        if !recorded.isEmpty {
+            beginVisitHold(recorded, surface: .total)
+        }
+    }
+
+    /// Zápis bez holdu — pro dávku součtu.
+    @discardableResult
+    private func throwDartQuiet(_ dart: Dart) -> Bool {
+        guard var current = session, current.status == .playing else { return false }
+        let beforeCount = current.actions.count
+        TrainingEngine.record(.dart(dart), into: &current)
+        guard current.actions.count > beforeCount else { return false }
+        visitBuffer.append(dart)
+        session = current
+        store.stageTraining(current)
+        pulse += 1
+        if current.status == .completed { commitIfNeeded() }
+        return true
+    }
+
+    private func beginVisitHold(_ darts: [Dart], surface hold: ScoringSurface) {
+        holdGeneration += 1
+        let generation = holdGeneration
+        holdDarts = darts
+        holdSurface = hold
+        visitBuffer = []
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { isHoldingVisit = true }
+        if hold == .total {
+            store.feedback(darts.reduce(0) { $0 + $1.score })
+        }
+        let delay = ScoringChrome.visitHoldSeconds(reduceMotion: reduceMotion)
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard generation == holdGeneration, isHoldingVisit, holdDarts == darts else { return }
+            finishVisitHold()
+        }
+    }
+
+    private func finishVisitHold() {
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.28)) {
+            isHoldingVisit = false
+            holdDarts = []
+        }
+        if finished { commitIfNeeded() }
+    }
+
     private func act(_ action: TrainingAction) {
-        guard var current = session, current.status == .playing else { return }
+        guard !isHoldingVisit, var current = session, current.status == .playing else { return }
         let before = current.actions.count
         TrainingEngine.record(action, into: &current)
         guard current.actions.count > before else { return }
         session = current
         store.stageTraining(current)
         pulse += 1
+        if current.status == .completed { commitIfNeeded() }
     }
 
     private func undo() {
         guard var current = session, !saved else { return }
+        if isHoldingVisit {
+            holdGeneration += 1
+            let count = holdDarts.count
+            for _ in 0..<count { TrainingEngine.undo(&current) }
+            withAnimation(reduceMotion ? nil : .snappy(duration: 0.28)) {
+                isHoldingVisit = false
+                holdDarts = []
+                visitBuffer = []
+                session = current
+            }
+            store.stageTraining(current)
+            return
+        }
+        guard !current.actions.isEmpty else { return }
         TrainingEngine.undo(&current)
-        session = current
+        if !visitBuffer.isEmpty { visitBuffer.removeLast() }
+        withAnimation(reduceMotion ? nil : .snappy(duration: 0.28)) {
+            session = current
+        }
         store.stageTraining(current)
     }
 
     private func restart() {
         guard var current = session else { return }
+        holdGeneration += 1
+        isHoldingVisit = false
+        holdDarts = []
+        visitBuffer = []
+        sumText = ""
         if saved {
             current.id = UUID()
             current.actions = []
@@ -486,6 +701,7 @@ struct TrainingPlayView: View {
             current.startedAt = Date()
             saved = false
             awarded = 0
+            xpBreakdown = TrainingXPBreakdown()
         } else {
             TrainingEngine.restart(&current)
         }
@@ -493,18 +709,28 @@ struct TrainingPlayView: View {
         store.stageTraining(current)
     }
 
-    private func save() {
-        guard let current = session, !saved else { return }
-        awarded = store.commitTraining(current)
-        saved = true
-        store.feedback()
-        pulse += 1
+    private func commitIfNeeded() {
+        guard let current = session, current.status == .completed else { return }
+        xpBreakdown = store.trainingXP(for: current)
+        if !saved {
+            awarded = store.commitTraining(current)
+            saved = true
+            store.feedback()
+            pulse += 1
+        }
+        if !xpBreakdown.hasAward, awarded != 0 {
+            xpBreakdown = store.trainingXP(for: current)
+        }
     }
 
     private func autosave() {
-        guard let current = session, current.status == .completed, !saved else { return }
-        awarded = store.commitTraining(current)
-        saved = true
+        commitIfNeeded()
+    }
+
+    private func goHome() {
+        commitIfNeeded()
+        store.returnHome()
+        dismiss()
     }
 
     private func quit() {

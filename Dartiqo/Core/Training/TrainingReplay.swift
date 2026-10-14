@@ -62,8 +62,6 @@ enum TrainingReplay {
             return run.rush(seconds: seconds, need: need, limit: limit)
         case .marathon(_, _), .tower(_), .daily(_), .world(_), .stepList(_, _, _):
             return run.steps(fail: true, dartsEach: 3, accuracy: nil, minimumHits: nil)
-        case .risk(let rounds, let target):
-            return run.risk(rounds: rounds, target: target)
         case .segments(_, _, let darts, let accuracy):
             return run.steps(fail: false, dartsEach: darts, accuracy: accuracy, minimumHits: nil)
         case .perfect(_, let need, _):
@@ -121,7 +119,6 @@ private final class TrainingRun {
     var hint: String?
     var routes: [[Dart]] = []
     var phase: TrainingPhase = .scoring
-    var choices: [String] = []
     var memory: [String] = []
     var bossHP: Int?
     var bossMax: Int?
@@ -159,19 +156,6 @@ private final class TrainingRun {
         ideal = .dart(fallback)
         waiting = true
         phase = .scoring
-        return nil
-    }
-
-    func choice() -> Int? {
-        while index < actions.count {
-            let action = actions[index]
-            index += 1
-            if case .choose(let value) = action { return value }
-        }
-        ideal = .choose(0)
-        waiting = true
-        phase = .choose
-        choices = ["Jistota S20", "Risk T20"]
         return nil
     }
 
@@ -247,7 +231,6 @@ private final class TrainingRun {
         projection.finished = finished
         projection.success = finished && success
         projection.phase = phase
-        projection.choices = choices
         projection.memory = memory
         projection.lives = lives
         projection.combo = combo
@@ -987,34 +970,6 @@ private final class TrainingRun {
         }
         record = hits
         return finish(hits >= need, "Rush \(hits) zásahů.")
-    }
-
-    func risk(rounds: Int, target: Int) -> TrainingProjection {
-        choices = ["Jistota S20", "Risk T20"]
-        for round in 0..<rounds {
-            phase = .choose
-            task = "Vyber jistotu nebo risk"
-            self.target = "Kolo \(round + 1)"
-            guard let pick = choice() else { return pause() }
-            phase = .scoring
-            let aim: Aim = pick == 1 ? .segment(20, 3) : .segment(20, 1)
-            self.target = aim.label
-            var chunk: [Dart] = []
-            for shot in 0..<3 {
-                dartsLeft = 3 - shot
-                mark(round, of: rounds)
-                guard let thrown = dart(aim.example) else { return pause() }
-                _ = absorb(thrown, aim: aim)
-                chunk.append(thrown)
-            }
-            let gained = pick == 1
-                ? (chunk.allSatisfy { Aim.segment(20, 3).matches($0) } ? 180 : 0)
-                : chunk.filter { Aim.segment(20, 1).matches($0) }.count * 20
-            score += gained
-            scoreText = "\(score)"
-        }
-        record = score
-        return finish(score >= target, "Risk skóre \(score).")
     }
 
     func exact(need: Int) -> TrainingProjection {

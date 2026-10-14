@@ -126,11 +126,10 @@ enum Aim: Codable, Hashable {
 enum TrainingAction: Codable, Equatable {
     case dart(Dart)
     case ready
-    case choose(Int)
 }
 
 enum TrainingPhase: String, Codable, Equatable {
-    case scoring, memorize, choose
+    case scoring, memorize
 }
 
 enum TrainingFeedback: String, Codable, Equatable {
@@ -178,7 +177,6 @@ enum TrainingKind: Codable, Equatable {
     case puzzle(count: Int, need: Int)
     case rush(seconds: Int, need: Int, limit: Int)
     case marathon(tasks: Int, limit: Int)
-    case risk(rounds: Int, target: Int)
     case chaos(limit: Int)
     case segments(pick: SegmentPick, mult: Int?, darts: Int, accuracy: Double)
     case perfect(visits: Int, need: Int, total: Int)
@@ -321,7 +319,6 @@ struct TrainingProjection: Equatable {
     var finished = false
     var success = false
     var phase: TrainingPhase = .scoring
-    var choices: [String] = []
     var memory: [String] = []
     var lives: Int?
     var combo = 0

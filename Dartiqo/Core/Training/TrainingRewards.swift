@@ -1,25 +1,140 @@
 import Foundation
 
+/// Jedna položka rozkladu XP za trénink.
+struct TrainingXPLine: Identifiable, Equatable {
+    var id: String
+    var title: String
+    var detail: String
+    var symbol: String
+    var amount: Int
+
+    var signedText: String {
+        amount > 0 ? "+\(amount)" : "\(amount)"
+    }
+}
+
+/// Součet XP a řádků „za co“ za jednu tréninkovou session.
+struct TrainingXPBreakdown: Equatable {
+    var lines: [TrainingXPLine]
+    var total: Int { lines.reduce(0) { $0 + $1.amount } }
+    var hasAward: Bool { !lines.isEmpty }
+
+    init(lines: [TrainingXPLine] = []) {
+        self.lines = lines.filter { $0.amount != 0 }
+    }
+}
+
 enum TrainingRewards {
     /// XP za dokončenou hru. Restart ani prázdný záznam nic nedají. Čtvrté a další dokončení stejné hry v jednom dni nechá jen 10 % základu.
-    static func award(definition: TrainingDefinition, config: TrainingConfig, result: TrainingResult, completionsToday: Int, isRecord: Bool, isDaily: Bool, isWeekly: Bool) -> Int {
-        guard result.darts > 0 else { return 0 }
+    static func award(
+        definition: TrainingDefinition,
+        config: TrainingConfig,
+        result: TrainingResult,
+        completionsToday: Int,
+        isRecord: Bool,
+        isDaily: Bool,
+        isWeekly: Bool
+    ) -> TrainingXPBreakdown {
+        guard result.darts > 0 else { return TrainingXPBreakdown() }
         let level = config.level == .adaptive ? .advanced : config.level
         let base: Int
+        let levelLabel: String
         switch level {
-        case .beginner: base = 20
-        case .pro: base = 70
-        case .advanced, .adaptive: base = 40
+        case .beginner:
+            base = 20
+            levelLabel = "Začátečník"
+        case .pro:
+            base = 70
+            levelLabel = "Pro"
+        case .advanced, .adaptive:
+            base = 40
+            levelLabel = "Pokročilý"
         }
-        if completionsToday >= 3 { return max(1, base / 10) }
-        var amount = base
-        if result.success { amount += 30 }
-        amount += Int((min(1, max(0, result.accuracy)) * 20).rounded())
-        if isRecord { amount += 40 }
-        if result.accuracy >= 0.5 || result.bestStreak >= 3 { amount += 15 }
-        if isDaily { amount += 50 }
-        if isWeekly { amount += 40 }
-        return amount
+        if completionsToday >= 3 {
+            let farm = max(1, base / 10)
+            return TrainingXPBreakdown(lines: [
+                TrainingXPLine(
+                    id: "farm",
+                    title: "Opakování dnes",
+                    detail: "Čtvrté a další dokončení \(definition.title) dává jen 10 % základu.",
+                    symbol: "arrow.triangle.2.circlepath",
+                    amount: farm
+                )
+            ])
+        }
+        var lines: [TrainingXPLine] = [
+            TrainingXPLine(
+                id: "base",
+                title: "Základ",
+                detail: "\(levelLabel) · \(definition.title)",
+                symbol: "slider.horizontal.3",
+                amount: base
+            )
+        ]
+        if result.success {
+            lines.append(TrainingXPLine(
+                id: "success",
+                title: "Splnění",
+                detail: "Úkol dokončený úspěšně",
+                symbol: "checkmark.circle.fill",
+                amount: 30
+            ))
+        }
+        let accuracyXP = Int((min(1, max(0, result.accuracy)) * 20).rounded())
+        if accuracyXP > 0 {
+            lines.append(TrainingXPLine(
+                id: "accuracy",
+                title: "Přesnost",
+                detail: "\(Int((result.accuracy * 100).rounded())) % zásahů",
+                symbol: "scope",
+                amount: accuracyXP
+            ))
+        }
+        if isRecord {
+            lines.append(TrainingXPLine(
+                id: "record",
+                title: "Nový rekord",
+                detail: "Lepší než předchozí nejlepší výsledek",
+                symbol: "medal.fill",
+                amount: 40
+            ))
+        }
+        if result.accuracy >= 0.5 || result.bestStreak >= 3 {
+            let detail: String
+            if result.accuracy >= 0.5, result.bestStreak >= 3 {
+                detail = "Přesnost aspoň 50 % a série \(result.bestStreak)"
+            } else if result.accuracy >= 0.5 {
+                detail = "Přesnost aspoň 50 %"
+            } else {
+                detail = "Série aspoň 3 zásahy"
+            }
+            lines.append(TrainingXPLine(
+                id: "bonus",
+                title: "Bonus",
+                detail: detail,
+                symbol: "flame.fill",
+                amount: 15
+            ))
+        }
+        if isDaily {
+            lines.append(TrainingXPLine(
+                id: "daily",
+                title: "Denní výzva",
+                detail: "Spuštěno z denní trojice",
+                symbol: "flag.fill",
+                amount: 50
+            ))
+        }
+        if isWeekly {
+            lines.append(TrainingXPLine(
+                id: "weekly",
+                title: "Týdenní výzva",
+                detail: "Spuštěno z týdenního úkolu",
+                symbol: "calendar",
+                amount: 40
+            ))
+        }
+        return TrainingXPBreakdown(lines: lines)
     }
 }
 

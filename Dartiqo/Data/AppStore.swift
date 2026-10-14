@@ -409,6 +409,48 @@ enum AppSection: Hashable {
         data.trainingPlan?[key] = plan
         save()
     }
+    /// Rozklad XP za trénink (i před uložením). Už zapsaná session bere počet dokončení bez sebe.
+    func trainingXP(for session: TrainingSession) -> TrainingXPBreakdown {
+        guard let owner = profile?.id, session.owner == owner, session.status == .completed, session.result != nil else {
+            return TrainingXPBreakdown()
+        }
+        let calendar = Calendar.current
+        let day = calendar.startOfDay(for: session.finishedAt ?? Date())
+        let prior = (data.trainingSessions ?? []).filter {
+            $0.id != session.id &&
+            $0.owner == owner && $0.definitionID == session.definitionID && $0.status == .completed &&
+            calendar.startOfDay(for: $0.finishedAt ?? $0.startedAt) == day
+        }.count
+        return trainingXP(for: session, priorCompletionsToday: prior)
+    }
+
+    private func trainingXP(for session: TrainingSession, priorCompletionsToday: Int) -> TrainingXPBreakdown {
+        guard let definition = TrainingCatalog.find(session.definitionID), let result = session.result else {
+            return TrainingXPBreakdown()
+        }
+        // Bez této session — jinak by po uložení „nový rekord“ zmizel.
+        let priorBest = trainingHistory
+            .filter { $0.id != session.id }
+            .compactMap { item -> TrainingResult? in
+                guard item.definitionID == session.definitionID, item.status == .completed, item.result?.success == true else { return nil }
+                return item.result
+            }
+            .max { lhs, rhs in
+                if lhs.higherIsBetter { return lhs.score < rhs.score }
+                return lhs.score > rhs.score
+            }
+        let record = result.success && isBetterTraining(result, than: priorBest)
+        return TrainingRewards.award(
+            definition: definition,
+            config: session.config,
+            result: result,
+            completionsToday: priorCompletionsToday,
+            isRecord: record,
+            isDaily: session.config.isDaily,
+            isWeekly: session.config.isWeekly
+        )
+    }
+
     /// Zapíše výsledek jednou. Stejné id session XP ani historii nezdvojí.
     @discardableResult
     func commitTraining(_ session: TrainingSession) -> Int {
@@ -424,23 +466,7 @@ enum AppSection: Hashable {
             $0.owner == owner && $0.definitionID == session.definitionID && $0.status == .completed &&
             calendar.startOfDay(for: $0.finishedAt ?? $0.startedAt) == day
         }.count
-        let result = session.result!
-        let previous = bestTrainingResult(for: session.definitionID)
-        let record = result.success && isBetterTraining(result, than: previous)
-        let amount: Int
-        if let definition = TrainingCatalog.find(session.definitionID) {
-            amount = TrainingRewards.award(
-                definition: definition,
-                config: session.config,
-                result: result,
-                completionsToday: prior,
-                isRecord: record,
-                isDaily: session.config.isDaily,
-                isWeekly: session.config.isWeekly
-            )
-        } else {
-            amount = 0
-        }
+        let amount = trainingXP(for: session, priorCompletionsToday: prior).total
         data.trainingSessions?.append(session)
         if amount > 0 {
             if data.xpEvents == nil { data.xpEvents = [] }

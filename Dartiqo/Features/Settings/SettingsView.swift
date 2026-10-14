@@ -197,34 +197,95 @@ struct XPInfoView: View {
 
 /// Rozklad XP za právě dohraný zápas.
 struct MatchXPBreakdownSheet: View {
-    @Environment(\.dismiss) private var dismiss
     var breakdown: MatchXPBreakdown
+
+    var body: some View {
+        XPBreakdownSheet(
+            title: "XP za zápas",
+            accessibilityTotal: "\(breakdown.total) XP za zápas",
+            footer: "Každý řádek je pásmo od–do, nebo výsledek zápasu. Prohra bere XP.",
+            lines: breakdown.lines.map {
+                XPBreakdownRow(id: $0.id, title: $0.title, detail: $0.detail, symbol: $0.symbol, amount: $0.amount)
+            },
+            total: breakdown.total
+        )
+    }
+}
+
+/// Rozklad XP za právě dohraný trénink.
+struct TrainingXPBreakdownSheet: View {
+    var breakdown: TrainingXPBreakdown
+
+    var body: some View {
+        XPBreakdownSheet(
+            title: "XP za trénink",
+            accessibilityTotal: "\(breakdown.total) XP za trénink",
+            footer: "Každý řádek je jedna složka odměny za tuhle hru.",
+            lines: breakdown.lines.map {
+                XPBreakdownRow(id: $0.id, title: $0.title, detail: $0.detail, symbol: $0.symbol, amount: $0.amount)
+            },
+            total: breakdown.total
+        )
+    }
+}
+
+struct XPBreakdownRow: Identifiable {
+    var id: String
+    var title: String
+    var detail: String
+    var symbol: String
+    var amount: Int
+    var signedText: String { amount > 0 ? "+\(amount)" : "\(amount)" }
+}
+
+/// Společné modalní okno s rozkladem XP.
+struct XPBreakdownSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    var title: String
+    var accessibilityTotal: String
+    var footer: String?
+    var lines: [XPBreakdownRow]
+    var total: Int
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(breakdown.total > 0 ? "+\(breakdown.total)" : "\(breakdown.total)")
-                            .font(.system(size: 42, weight: .heavy, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(breakdown.total >= 0 ? Theme.brand : Color.red)
-                        Text("XP")
+                    let tint = total >= 0 ? Theme.brand : Color.red
+                    VStack(spacing: 14) {
+                        Image(systemName: total >= 0 ? "bolt.fill" : "bolt.slash.fill")
                             .font(.title2.weight(.bold))
-                            .foregroundStyle(.secondary)
-                        Spacer()
+                            .foregroundStyle(.black)
+                            .frame(width: 52, height: 52)
+                            .background(tint, in: Circle())
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(total > 0 ? "+\(total)" : "\(total)")
+                                .font(.system(size: 56, weight: .heavy, design: .rounded))
+                                .monospacedDigit()
+                                .foregroundStyle(tint)
+                                .contentTransition(.numericText())
+                            Text("XP")
+                                .font(.system(size: 22, weight: .bold, design: .rounded))
+                                .foregroundStyle(tint.opacity(0.72))
+                                .padding(.bottom, 6)
+                        }
                     }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
                     .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 4, trailing: 16))
                     .accessibilityElement(children: .combine)
-                    .accessibilityLabel("\(breakdown.total) XP za zápas")
+                    .accessibilityLabel(accessibilityTotal)
                 }
-                Section {
-                    Text("Každý řádek je pásmo od–do, nebo výsledek zápasu. Prohra bere XP.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                if let footer {
+                    Section {
+                        Text(footer)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Section("Rozklad") {
-                    ForEach(breakdown.lines) { line in
+                    ForEach(lines) { line in
                         HStack(alignment: .top, spacing: 12) {
                             Image(systemName: line.symbol)
                                 .font(.body.weight(.semibold))
@@ -255,13 +316,13 @@ struct MatchXPBreakdownSheet: View {
                         Text("Celkem")
                             .font(.headline)
                         Spacer()
-                        Text("\(breakdown.total > 0 ? "+" : "")\(breakdown.total) XP")
+                        Text("\(total > 0 ? "+" : "")\(total) XP")
                             .font(.headline.monospacedDigit())
-                            .foregroundStyle(breakdown.total >= 0 ? Theme.brand : Color.red)
+                            .foregroundStyle(total >= 0 ? Theme.brand : Color.red)
                     }
                 }
             }
-            .navigationTitle("XP za zápas")
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

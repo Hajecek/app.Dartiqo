@@ -54,6 +54,8 @@ struct SetupView: View {
     @State private var limitCustom = false
     @State private var openRule: RuleKey? = .start
     @State private var showFriends = false
+    @State private var showMoreLineups = false
+    @State private var showAddSeat = false
     @State private var botPicker: BotPickerTarget?
     /// Rozbalená karta handicapu (index místa).
     @State private var handicapFocus: Int?
@@ -325,7 +327,7 @@ struct SetupView: View {
     private var subtitle: String {
         switch step {
         case 0: return "Vyber režim. Ostatní doladíš v dalším kroku."
-        case 1: return "Nejdřív uvidíš, kdo stojí u terče. Pak doladíš jména a sílu."
+        case 1: return "Vyber způsob. Jméno a sílu se nastaví hned pod ním."
         case 2: return "Klepni na sekci a nastav ji. Ostatní zůstanou sbalené."
         case 3: return "Kdo hraje a podle jakých pravidel. Klepnutím na řádek ho změníš."
         default: return "Rozhodni, kdo hází první leg."
@@ -459,22 +461,22 @@ struct SetupView: View {
         var id: Self { self }
         var title: String {
             switch self {
-            case .meBot: return "Já + Bot"
-            case .meFriend: return "Já + Kamarád"
-            case .meGhost: return "Já + Ghost"
-            case .botBot: return "2 Boti"
-            case .friendFriend: return "2 Kamarádi"
-            case .solo: return "Sólo"
+            case .meBot: return "Proti botovi"
+            case .meFriend: return "S kamarádem"
+            case .meGhost: return "Proti ghostovi"
+            case .botBot: return "Bot proti botovi"
+            case .friendFriend: return "Dva kamarádi"
+            case .solo: return "Sám"
             }
         }
         var detail: String {
             switch self {
-            case .meBot: return "Ty proti počítači"
-            case .meFriend: return "Ty proti člověku"
-            case .meGhost: return "Ty proti svému starému zápasu"
-            case .botBot: return "Dva boti mezi sebou"
-            case .friendFriend: return "Dva lidé, ty jen zapisuješ"
-            case .solo: return "Hraješ sám"
+            case .meBot: return "Počítač hází proti tobě"
+            case .meFriend: return "Člověk vedle tebe"
+            case .meGhost: return "Tvoje staré šipky hrají proti tobě"
+            case .botBot: return "Dva počítače, ty se jen díváš"
+            case .friendFriend: return "Ty nehraješ, jen zapisuješ"
+            case .solo: return "Bez soupeře"
             }
         }
         var icon: String {
@@ -483,14 +485,22 @@ struct SetupView: View {
             case .meFriend: return "person.2.fill"
             case .meGhost: return "person.fill.viewfinder"
             case .botBot: return "cpu.fill"
-            case .friendFriend: return "person.3.fill"
-            case .solo: return "figure.archery"
+            case .friendFriend: return "square.and.pencil"
+            case .solo: return "person.fill"
             }
         }
     }
 
-    private var lineupChoices: [Lineup] {
-        draft.config.mode == .x01 ? Lineup.allCases : Lineup.allCases.filter { $0 != .meGhost }
+    private var primaryLineups: [Lineup] { [.meBot, .meFriend, .solo] }
+
+    private var extraLineups: [Lineup] {
+        var rows: [Lineup] = [.friendFriend, .botBot]
+        if draft.config.mode == .x01 { rows.insert(.meGhost, at: 0) }
+        return rows
+    }
+
+    private var showsExtraLineups: Bool {
+        showMoreLineups || currentLineup == nil || extraLineups.contains { $0 == currentLineup }
     }
 
     private var currentLineup: Lineup? {
@@ -510,14 +520,12 @@ struct SetupView: View {
 
     private func applyLineup(_ lineup: Lineup) {
         hideKeyboard()
-        var openBotSeat: UUID?
+        showAddSeat = false
         withAnimation(motion) {
             switch lineup {
             case .meBot:
-                let bot = SeatDraft(name: "Bot", isBot: true)
-                draft.seats = [SeatDraft(name: "Já"), bot]
+                draft.seats = [SeatDraft(name: "Já"), SeatDraft(name: "Bot", isBot: true)]
                 draft.ghostKind = nil
-                openBotSeat = bot.id
             case .meFriend:
                 draft.seats = [SeatDraft(name: "Já"), SeatDraft(name: "")]
                 draft.ghostKind = nil
@@ -527,10 +535,8 @@ struct SetupView: View {
                     draft.ghostKind = store.ghostOffers(startingScore: draft.config.startingScore, outRule: draft.config.outRule).first?.kind
                 }
             case .botBot:
-                let first = SeatDraft(name: "Bot", isBot: true, level: 3)
-                draft.seats = [first, SeatDraft(name: "Bot", isBot: true, level: 6)]
+                draft.seats = [SeatDraft(name: "Bot", isBot: true, level: 3), SeatDraft(name: "Bot", isBot: true, level: 6)]
                 draft.ghostKind = nil
-                openBotSeat = first.id
             case .friendFriend:
                 draft.seats = [SeatDraft(name: ""), SeatDraft(name: "")]
                 draft.ghostKind = nil
@@ -541,9 +547,8 @@ struct SetupView: View {
             draft.withoutMe = (lineup == .botBot || lineup == .friendFriend) ? true : nil
             draft.starter = 0
         }
-        if lineup == .meFriend || lineup == .friendFriend { focusedGuest = draft.seats.first { !$0.isBot && !$0.ghostSeat && $0.name.isEmpty }?.id }
-        if let openBotSeat, let seat = draft.seats.first(where: { $0.id == openBotSeat }) {
-            botPicker = BotPickerTarget(id: seat.id, seatID: seat.id, level: seat.level)
+        if lineup == .meFriend || lineup == .friendFriend {
+            focusedGuest = draft.seats.first { !$0.isBot && !$0.ghostSeat && $0.name.isEmpty }?.id
         }
     }
 
@@ -581,97 +586,54 @@ struct SetupView: View {
     }
 
     private var rosterStep: some View {
-        let others = draft.seats.indices.filter { !isMe($0) }
-        let rosterShape = RoundedRectangle(cornerRadius: 28, style: .continuous)
-        return VStack(alignment: .leading, spacing: 18) {
-            GlassEffectContainer(spacing: 0) {
-                VStack(spacing: 0) {
-                    matchupStage
+        VStack(alignment: .leading, spacing: 12) {
+            if currentLineup == nil {
+                customRoster
+                Text("Nebo vyber způsob znovu. Nahradí tuhle sestavu.")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 6)
+            }
 
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(lineupChoices) { lineup in
-                                lineupTile(lineup)
-                            }
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
-                    }
-                    .sensoryFeedback(.selection, trigger: currentLineup)
+            ForEach(primaryLineups) { lineup in
+                lineupChoice(lineup)
+            }
 
-                    Rectangle()
-                        .fill(Color.primary.opacity(0.08))
-                        .frame(height: 1)
-                        .padding(.horizontal, 14)
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Text(seatEditorTitle)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text("\(draft.seats.count)/4")
-                                .font(.caption.weight(.bold).monospacedDigit())
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(Color.primary.opacity(0.08), in: Capsule())
-                        }
-
-                        meCard
-
-                        if others.isEmpty {
-                            Text(draft.includesMe ? "Hraješ sám. Níže můžeš přidat soupeře." : "Přidej aspoň jednoho hráče nebo bota.")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(14)
-                                .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        }
-
-                        ForEach(others, id: \.self) { index in
-                            Group {
-                                if draft.seats[index].ghostSeat { ghostSeatCard(index) }
-                                else if draft.seats[index].isBot { botCard(index) }
-                                else { friendCard(index) }
-                            }
-                            .transition(.asymmetric(insertion: .scale(scale: 0.96).combined(with: .opacity), removal: .opacity))
-                        }
-
-                        if currentLineup == .meGhost {
-                            ghostVariantPicker
-                        }
-
-                        if draft.seats.count < 4 && !draft.seats.contains(where: \.ghostSeat) {
-                            HStack(spacing: 8) {
-                                addChip("Přítel", icon: "person.2.fill") { showFriends = true }
-                                addChip("Host", icon: "person.badge.plus") { addGuest() }
-                                addChip("Bot", icon: "cpu") { addBot() }
-                            }
-                            .transition(.opacity)
-                        }
-                    }
-                    .padding(14)
+            if showsExtraLineups {
+                ForEach(extraLineups) { lineup in
+                    lineupChoice(lineup)
                 }
-                .glassEffect(.regular, in: rosterShape)
+            } else {
+                Button {
+                    withAnimation(sectionMotion) { showMoreLineups = true }
+                } label: {
+                    HStack(spacing: 8) {
+                        Text("Další způsoby")
+                            .font(.subheadline.weight(.semibold))
+                        Image(systemName: "chevron.down")
+                            .font(.caption.weight(.bold))
+                    }
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Zobrazit další způsoby")
             }
 
             Label(draft.includesMe ? "Hrajete na jednom telefonu a zapisujete se střídavě." : "Zápas běží na tomhle telefonu. Do tvých statistik se nepočítá.", systemImage: "iphone")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .contentTransition(.opacity)
+                .padding(.top, 4)
         }
+        .sensoryFeedback(.selection, trigger: currentLineup)
         .sheet(isPresented: $showFriends) {
             FriendPickerSheet(
                 taken: Set(draft.seats.compactMap(\.friendID) + [store.profile?.id].compactMap { $0 }),
-                slots: 4 - draft.seats.count
+                slots: friendPickerSlots
             ) { picked in
-                withAnimation(motion) {
-                    for friend in picked where draft.seats.count < 4 {
-                        draft.seats.append(SeatDraft(name: friend.name, friendID: friend.id))
-                    }
-                    draft.starter = 0
-                }
+                applyPickedFriends(picked)
             }
             .environmentObject(store)
         }
@@ -682,204 +644,367 @@ struct SetupView: View {
         }
     }
 
-    private var seatEditorTitle: String {
-        if currentLineup == .meGhost { return "Tvůj ghost" }
-        if currentLineup == .solo { return "Ty u terče" }
-        if draft.seats.contains(where: \.isBot) { return "Síla a jména" }
-        return "Jména u terče"
+    private func lineupChoice(_ lineup: Lineup) -> some View {
+        let selected = currentLineup == lineup
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        return VStack(alignment: .leading, spacing: 0) {
+            Button { applyLineup(lineup) } label: {
+                HStack(spacing: 14) {
+                    Image(systemName: lineup.icon)
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(Theme.action)
+                        .frame(width: 44, height: 44)
+                        .background(Theme.action.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(lineup.title)
+                            .font(.headline)
+                        Text(lineup.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .font(.title3)
+                        .foregroundStyle(selected ? Theme.action : Color.secondary)
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                .padding(16)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(selected ? .isSelected : [])
+            .accessibilityHint(selected ? "Vybraný způsob" : "Vybrat tenhle způsob")
+
+            if selected {
+                lineupDetail(lineup)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 14)
+                    .transition(.opacity)
+            }
+        }
+        .background(selected ? Theme.action.opacity(0.09) : Theme.card, in: shape)
+        .overlay(shape.strokeBorder(selected ? Theme.action : Theme.stroke, lineWidth: selected ? 1.5 : 1))
+        .animation(sectionMotion, value: selected)
     }
 
-    private var matchupCaption: String {
-        currentLineup?.detail ?? "\(draft.seats.count) u terče · doladíš níž"
+    @ViewBuilder
+    private func lineupDetail(_ lineup: Lineup) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            switch lineup {
+            case .solo:
+                meCard
+            case .meBot, .botBot:
+                ForEach(botSeatIndices, id: \.self) { index in
+                    botEditor(index)
+                }
+            case .meFriend, .friendFriend:
+                ForEach(humanSeatIndices, id: \.self) { index in
+                    friendCard(index, allowsRemove: false)
+                }
+                if !canContinue {
+                    Text("Napiš jméno, nebo vyber kamaráda níž.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                savedPeopleRow
+                Button { showFriends = true } label: {
+                    Label("Vybrat z kontaktů", systemImage: "person.crop.circle.badge.plus")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.action)
+            case .meGhost:
+                ghostVariantPicker
+            }
+
+            if lineup != .solo && lineup != .meGhost && draft.seats.count < 4 {
+                addAnother
+            }
+        }
+        .padding(.top, 2)
     }
 
-    private var matchupStage: some View {
-        let solo = draft.seats.count == 1
-        return VStack(spacing: 12) {
-            Group {
-                if solo {
-                    matchupSeatBubble(0)
+    private var customRoster: some View {
+        let others = draft.seats.indices.filter { !isMe($0) }
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Vlastní sestava")
+                        .font(.headline)
+                    Text(draft.includesMe ? "Hraješ taky. Šipky zapisujete na tomhle telefonu." : "Ty nehraješ, jen zapisuješ.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                Text("\(draft.seats.count)/4")
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.primary.opacity(0.08), in: Capsule())
+            }
+
+            if draft.includesMe { meCard }
+
+            ForEach(others, id: \.self) { index in
+                if draft.seats[index].ghostSeat {
+                    ghostSeatCard(index)
+                } else if draft.seats[index].isBot {
+                    botCard(index)
                 } else {
-                    HStack(spacing: 0) {
-                        ForEach(draft.seats.indices, id: \.self) { index in
-                            if index > 0 {
-                                Text("VS")
-                                    .font(.system(.caption, design: .rounded, weight: .heavy))
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, draft.seats.count > 2 ? 6 : 12)
-                                    .accessibilityHidden(true)
+                    friendCard(index)
+                }
+            }
+
+            if draft.seats.contains(where: \.ghostSeat) {
+                ghostVariantPicker
+            }
+
+            if draft.seats.count < 4 && !draft.seats.contains(where: \.ghostSeat) {
+                HStack(spacing: 8) {
+                    addChip("Kamarád", icon: "person.fill") { showFriends = true }
+                    addChip("Bot", icon: "cpu") { addBot() }
+                }
+            }
+
+            if draft.includesMe || draft.seats.count < 4 {
+                Button { setPlaysMyself(!draft.includesMe) } label: {
+                    Text(draft.includesMe ? "Nehraju, jen zapisuju" : "Chci hrát taky")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .disabled(!draft.includesMe && draft.seats.count >= 4)
+            }
+        }
+        .padding(14)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Theme.stroke, lineWidth: 1))
+    }
+
+    private var addAnother: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(sectionMotion) { showAddSeat.toggle() }
+            } label: {
+                Label("Přidat dalšího hráče", systemImage: showAddSeat ? "chevron.up" : "plus")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(minHeight: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Až čtyři lidé u terče")
+
+            if showAddSeat {
+                HStack(spacing: 8) {
+                    addChip("Kamarád", icon: "person.fill") { addGuest() }
+                    addChip("Bot", icon: "cpu") { addBot() }
+                }
+                .transition(.opacity)
+            }
+        }
+    }
+
+    private var botSeatIndices: [Int] {
+        draft.seats.indices.filter { draft.seats[$0].isBot && !isMe($0) }
+    }
+
+    private var humanSeatIndices: [Int] {
+        draft.seats.indices.filter { !isMe($0) && !draft.seats[$0].isBot && !draft.seats[$0].ghostSeat }
+    }
+
+    private func botEditor(_ index: Int) -> some View {
+        let level = draft.seats[index].level
+        let info = BotLevel.get(level)
+        return VStack(alignment: .leading, spacing: 12) {
+            Button { openBotPicker(seatID: draft.seats[index].id) } label: {
+                HStack(spacing: 12) {
+                    Avatar(name: info.persona, bot: true, size: 52, asset: info.photo)
+                        .id(info.photo)
+                        .playerRing(seatColor(index))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(botPersona(index))
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                        Text("Klepni pro portrét a statistiky")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: "info.circle")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(botPersona(index)), úroveň \(level)")
+            .accessibilityHint("Otevře portrét a statistiky")
+
+            VStack(alignment: .leading, spacing: 6) {
+                Slider(value: Binding(
+                    get: { Double(draft.seats[index].level) },
+                    set: { setBotLevel(index, Int($0.rounded())) }
+                ), in: 1...10, step: 1)
+                .tint(Theme.action)
+                .accessibilityLabel("Síla soupeře \(botPersona(index))")
+                .accessibilityValue("Úroveň \(level), \(info.name)")
+
+                HStack {
+                    Text("Lehčí")
+                    Spacer()
+                    Text("Úroveň \(level)")
+                        .monospacedDigit()
+                        .contentTransition(.numericText(value: Double(level)))
+                    Spacer()
+                    Text("Těžší")
+                }
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.secondary)
+
+                Text("\(info.name) · průměr \(info.averageText)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .contentTransition(.opacity)
+            }
+        }
+        .padding(12)
+        .playerCard(seatColor(index))
+        .sensoryFeedback(.selection, trigger: level)
+    }
+
+    private func setBotLevel(_ index: Int, _ level: Int) {
+        guard draft.seats.indices.contains(index) else { return }
+        let next = min(10, max(1, level))
+        guard draft.seats[index].level != next else { return }
+        draft.seats[index].level = next
+    }
+
+    private struct SavedPerson: Identifiable {
+        var id: UUID
+        var name: String
+        var photo: Data?
+    }
+
+    private var savedPeople: [SavedPerson] {
+        let taken = Set(draft.seats.compactMap(\.friendID))
+        let mates = store.housemates
+            .filter { !taken.contains($0.id) }
+            .map { SavedPerson(id: $0.id, name: $0.name, photo: $0.photoJPEG) }
+        let pals = store.friends
+            .filter { !taken.contains($0.id) }
+            .map { SavedPerson(id: $0.id, name: $0.name, photo: nil) }
+        return mates + pals
+    }
+
+    @ViewBuilder
+    private var savedPeopleRow: some View {
+        if !savedPeople.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Nebo někdo uložený")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(savedPeople) { person in
+                            Button { placeSavedPerson(person) } label: {
+                                VStack(spacing: 6) {
+                                    Avatar(name: person.name, size: 44, photo: person.photo)
+                                    Text(person.name)
+                                        .font(.caption2.weight(.semibold))
+                                        .lineLimit(1)
+                                        .frame(width: 68)
+                                }
                             }
-                            matchupSeatBubble(index)
-                                .frame(maxWidth: .infinity)
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Vybrat \(person.name)")
                         }
                     }
+                    .padding(.vertical, 2)
                 }
             }
-            .animation(motion, value: draft.seats.map(\.id))
-
-            Text(matchupCaption)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .contentTransition(.opacity)
-                .id(matchupCaption)
         }
-        .padding(.horizontal, 16)
-        .padding(.top, 20)
-        .padding(.bottom, 14)
-        .frame(maxWidth: .infinity)
-        .background {
-            UnevenRoundedRectangle(
-                topLeadingRadius: 28,
-                bottomLeadingRadius: 0,
-                bottomTrailingRadius: 0,
-                topTrailingRadius: 28,
-                style: .continuous
-            )
-            .fill(Color.primary.opacity(0.04))
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(Color.primary.opacity(0.08))
-                    .frame(height: 1)
-            }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("U terče: \(draft.seats.indices.map(seatName).joined(separator: ", ")). \(matchupCaption)")
     }
 
-    private func matchupSeatBubble(_ index: Int) -> some View {
-        let seat = draft.seats[index]
-        let me = isMe(index)
-        let ghostOffer = seat.ghostSeat ? draft.ghostKind.flatMap {
-            store.ghostOffer($0, startingScore: draft.config.startingScore, outRule: draft.config.outRule)
-        } : nil
-        let title: String = {
-            if me { return store.profile?.name ?? "Já" }
-            if seat.ghostSeat { return ghostOffer?.displayName ?? "Ghost" }
-            if seat.isBot { return botPersona(index) }
-            return seat.name.isEmpty ? "Kamarád" : seat.name
-        }()
-        let subtitle: String = {
-            if me { return "Ty" }
-            if seat.ghostSeat { return draft.ghostKind?.title ?? "Ghost" }
-            if seat.isBot { return "Bot · \(seat.level)" }
-            return seat.friendID != nil ? "Přítel" : "Host"
-        }()
-        return VStack(spacing: 8) {
-            Group {
-                if me {
-                    Avatar(name: title, size: 64, photo: store.profile?.photoJPEG)
-                } else if seat.isBot {
-                    Avatar(name: title, bot: true, size: 64, asset: BotLevel.get(seat.level).photo)
-                } else if seat.ghostSeat {
-                    ZStack {
-                        Circle().fill(Theme.action.opacity(0.14))
-                        Image(systemName: "person.fill.viewfinder")
-                            .font(.title2.weight(.semibold))
-                            .foregroundStyle(Theme.action)
+    private func placeSavedPerson(_ person: SavedPerson) {
+        hideKeyboard()
+        withAnimation(motion) {
+            if currentLineup == .meFriend, let index = firstHumanSeat() {
+                draft.seats[index] = SeatDraft(name: person.name, friendID: person.id)
+            } else if let index = firstEmptyHumanSeat() {
+                draft.seats[index] = SeatDraft(name: person.name, friendID: person.id)
+            } else if currentLineup == .friendFriend, let index = firstHumanSeat() {
+                draft.seats[index] = SeatDraft(name: person.name, friendID: person.id)
+            }
+            draft.starter = 0
+        }
+    }
+
+    private func firstHumanSeat() -> Int? {
+        draft.seats.indices.first { !isMe($0) && !draft.seats[$0].isBot && !draft.seats[$0].ghostSeat }
+    }
+
+    private func firstEmptyHumanSeat() -> Int? {
+        draft.seats.indices.first { index in
+            !isMe(index) && !draft.seats[index].isBot && !draft.seats[index].ghostSeat
+                && draft.seats[index].friendID == nil
+                && draft.seats[index].name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    private var friendPickerSlots: Int {
+        let emptyHumans = draft.seats.indices.filter { index in
+            !isMe(index) && !draft.seats[index].isBot && !draft.seats[index].ghostSeat
+                && draft.seats[index].name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }.count
+        switch currentLineup {
+        case .meFriend:
+            return 1
+        case .friendFriend:
+            return max(1, emptyHumans)
+        default:
+            return max(1, (4 - draft.seats.count) + emptyHumans)
+        }
+    }
+
+    private func applyPickedFriends(_ picked: [PickedFriend]) {
+        guard !picked.isEmpty else { return }
+        hideKeyboard()
+        withAnimation(motion) {
+            var queue = picked
+            if currentLineup == .meFriend, queue.count == 1,
+               let index = draft.seats.indices.first(where: { !isMe($0) && !draft.seats[$0].isBot && !draft.seats[$0].ghostSeat }) {
+                let friend = queue.removeFirst()
+                draft.seats[index] = SeatDraft(name: friend.name, friendID: friend.id)
+            } else {
+                let empty = draft.seats.indices.filter { index in
+                    !isMe(index) && !draft.seats[index].isBot && !draft.seats[index].ghostSeat
+                        && draft.seats[index].friendID == nil
+                        && draft.seats[index].name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                }
+                for index in empty {
+                    guard !queue.isEmpty else { break }
+                    let friend = queue.removeFirst()
+                    draft.seats[index] = SeatDraft(name: friend.name, friendID: friend.id)
+                }
+                if currentLineup == .friendFriend, !queue.isEmpty, let index = firstHumanSeat() {
+                    let friend = queue.removeFirst()
+                    draft.seats[index] = SeatDraft(name: friend.name, friendID: friend.id)
+                }
+                if currentLineup == nil {
+                    for friend in queue where draft.seats.count < 4 {
+                        draft.seats.append(SeatDraft(name: friend.name, friendID: friend.id))
                     }
-                    .frame(width: 64, height: 64)
-                } else {
-                    Avatar(
-                        name: seat.name.isEmpty ? "?" : seat.name,
-                        size: 64,
-                        photo: store.housemates.first { $0.id == seat.friendID }?.photoJPEG
-                    )
                 }
             }
-            .playerRing(seatColor(index))
-            .shadow(color: (seatColor(index) ?? .clear).opacity(0.35), radius: 10, y: 4)
-
-            VStack(spacing: 2) {
-                Text(title)
-                    .font(.subheadline.weight(.bold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
-                Text(subtitle)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+            draft.starter = 0
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title), \(subtitle)")
-    }
-
-    private func lineupTile(_ lineup: Lineup) -> some View {
-        let selected = currentLineup == lineup
-        let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
-        return Button { applyLineup(lineup) } label: {
-            VStack(spacing: 8) {
-                lineupFaceStack(lineup)
-                Text(lineup.title)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(selected ? Color.black : Color.primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-            }
-            .padding(.horizontal, 10)
-            .frame(width: 104, height: 86)
-            .background(selected ? Theme.brand : Color.primary.opacity(0.08), in: shape)
-            .overlay(shape.strokeBorder(selected ? Color.black.opacity(0.1) : Color.primary.opacity(0.06), lineWidth: 1))
-            .contentShape(shape)
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(selected ? .isSelected : [])
-        .accessibilityLabel("\(lineup.title). \(lineup.detail)")
-    }
-
-    private func lineupFaceStack(_ lineup: Lineup) -> some View {
-        HStack(spacing: -12) {
-            ForEach(Array(lineupPreviewRoles(lineup).enumerated()), id: \.offset) { _, role in
-                lineupPreviewFace(role)
-            }
-        }
-    }
-
-    private enum LineupFace {
-        case me, bot, friend, ghost, empty
-    }
-
-    private func lineupPreviewRoles(_ lineup: Lineup) -> [LineupFace] {
-        switch lineup {
-        case .meBot: return [.me, .bot]
-        case .meFriend: return [.me, .friend]
-        case .meGhost: return [.me, .ghost]
-        case .botBot: return [.bot, .bot]
-        case .friendFriend: return [.friend, .friend]
-        case .solo: return [.me]
-        }
-    }
-
-    private func lineupPreviewFace(_ role: LineupFace) -> some View {
-        Group {
-            switch role {
-            case .me:
-                Avatar(name: store.profile?.name ?? "Já", size: 30, photo: store.profile?.photoJPEG)
-            case .bot:
-                ZStack {
-                    Circle().fill(Theme.positive.opacity(0.18))
-                    Image(systemName: "cpu").font(.caption.weight(.bold)).foregroundStyle(Theme.positive)
-                }
-                .frame(width: 30, height: 30)
-            case .friend:
-                ZStack {
-                    Circle().fill(Theme.action.opacity(0.14))
-                    Image(systemName: "person.fill").font(.caption.weight(.bold)).foregroundStyle(Theme.action)
-                }
-                .frame(width: 30, height: 30)
-            case .ghost:
-                ZStack {
-                    Circle().fill(Theme.action.opacity(0.14))
-                    Image(systemName: "person.fill.viewfinder").font(.caption.weight(.bold)).foregroundStyle(Theme.action)
-                }
-                .frame(width: 30, height: 30)
-            case .empty:
-                Circle().strokeBorder(Color.primary.opacity(0.2), style: StrokeStyle(lineWidth: 1.5, dash: [3, 3]))
-                    .frame(width: 30, height: 30)
-            }
-        }
-        .overlay(Circle().strokeBorder(Theme.card, lineWidth: 2))
     }
 
     private func addChip(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
@@ -979,13 +1104,9 @@ struct SetupView: View {
     }
 
     private var meCard: some View {
-        let playing = draft.includesMe
-        let blocked = !playing && draft.seats.count >= 4
-        return HStack(spacing: 14) {
+        HStack(spacing: 14) {
             Avatar(name: store.profile?.name ?? "Já", size: 48, photo: store.profile?.photoJPEG)
-                .saturation(playing ? 1 : 0)
-                .opacity(playing ? 1 : 0.5)
-                .playerRing(playing ? seatColor(0) : nil)
+                .playerRing(seatColor(0))
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(store.profile?.name ?? "Já").font(.headline).lineLimit(1)
@@ -996,21 +1117,16 @@ struct SetupView: View {
                         .padding(.vertical, 3)
                         .background(Theme.accentFill, in: Capsule())
                 }
-                Text(playing ? "Hraješ · statistiky se ukládají" : blocked ? "Místa jsou plná" : "Jen spouštíš zápas")
+                Text("Hraješ · statistiky se ukládají")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .contentTransition(.opacity)
             }
             Spacer(minLength: 8)
-            Toggle("Hraju taky", isOn: Binding(get: { playing }, set: { setPlaysMyself($0) }))
-                .labelsHidden()
-                .tint(Theme.action)
-                .disabled(blocked)
         }
         .padding(.leading, 14)
         .padding(.trailing, 14)
         .padding(.vertical, 12)
-        .playerCard(playing ? seatColor(0) : nil)
+        .playerCard(seatColor(0))
     }
 
     /// Barva místa v sestavě. Sólo hra barvy nepotřebuje.
@@ -1062,7 +1178,7 @@ struct SetupView: View {
         .accessibilityLabel("Odebrat \(seatName(index))")
     }
 
-    private func friendCard(_ index: Int) -> some View {
+    private func friendCard(_ index: Int, allowsRemove: Bool = true) -> some View {
         let seat = draft.seats[index]
         let linked = seat.friendID != nil
         let housemate = store.housemates.first { $0.id == seat.friendID }
@@ -1080,16 +1196,29 @@ struct SetupView: View {
                         .focused($focusedGuest, equals: seat.id)
                         .submitLabel(.done)
                 }
-                Label(housemate != nil ? "Profil na tomto telefonu" : linked ? "Přítel" : "Host · uloží se mezi přátele", systemImage: housemate != nil ? "person.crop.circle.fill" : linked ? "heart.fill" : "person")
+                Label(housemate != nil ? "Profil na tomto telefonu" : linked ? "Uložený kamarád" : "Jméno se uloží na příště", systemImage: housemate != nil ? "person.crop.circle.fill" : linked ? "heart.fill" : "person")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .labelStyle(.titleAndIcon)
             }
             Spacer(minLength: 4)
-            removeButton(index)
+            if allowsRemove {
+                removeButton(index)
+            } else if linked {
+                Button("Změnit") {
+                    withAnimation(motion) {
+                        draft.seats[index] = SeatDraft(name: "")
+                        draft.starter = 0
+                    }
+                    focusedGuest = draft.seats[index].id
+                }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Theme.action)
+                .buttonStyle(.plain)
+            }
         }
         .padding(.leading, 14)
-        .padding(.trailing, 6)
+        .padding(.trailing, allowsRemove ? 6 : 14)
         .padding(.vertical, 10)
         .playerCard(seatColor(index))
     }
@@ -1276,7 +1405,7 @@ struct SetupView: View {
                 .playerRing(seatColor(index))
                 VStack(alignment: .leading, spacing: 2) {
                     Text(seatName(index)).font(.subheadline.weight(.semibold)).lineLimit(1)
-                    Text(isMe(index) ? "Ty" : seat.ghostSeat ? (draft.ghostKind?.title ?? "Ghost") : seat.isBot ? "Bot · úroveň \(seat.level)" : seat.friendID != nil ? "Přítel" : "Host")
+                    Text(isMe(index) ? "Ty" : seat.ghostSeat ? (draft.ghostKind?.title ?? "Ghost") : seat.isBot ? "Bot · úroveň \(seat.level)" : "Kamarád")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

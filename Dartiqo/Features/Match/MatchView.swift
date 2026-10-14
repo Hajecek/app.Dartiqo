@@ -22,28 +22,6 @@ private enum MatchColors {
     /// Setup shot when a finish is impossible — amber, so it doesn't read as a checkout.
     static let setupTip = Color(red: 0.42, green: 0.24, blue: 0.02)
 }
-private enum ScoringSurface: String, CaseIterable, Identifiable {
-    case grid, board, total, voice, camera
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .grid: return "Čísla"
-        case .board: return "Terč"
-        case .total: return "Součet"
-        case .voice: return "Hlas"
-        case .camera: return "Kamera"
-        }
-    }
-    var icon: String {
-        switch self {
-        case .grid: return "square.grid.3x3.fill"
-        case .board: return "target"
-        case .total: return "number"
-        case .voice: return "mic.fill"
-        case .camera: return "camera.fill"
-        }
-    }
-}
 private struct LegCeremony: Equatable, Identifiable {
     var id = UUID()
     var winner: Int
@@ -436,17 +414,7 @@ struct MatchView: View {
     }
 
     private func visitSummaryCard(title: String, value: String) -> some View {
-        VStack(spacing: 10) {
-            Text(title).font(AppFont.caption(13, weight: .semibold)).foregroundStyle(MatchColors.ink.opacity(0.55))
-            Text(value).font(AppFont.display(48, weight: .bold)).foregroundStyle(MatchColors.ink).monospacedDigit()
-            Text(holdDarts.map(\.label).joined(separator: " · "))
-                .font(AppFont.body(15, weight: .semibold))
-                .foregroundStyle(MatchColors.ink.opacity(0.7))
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 28)
-        .padding(.horizontal, 16)
-        .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        VisitHoldSummaryCard(title: title, value: value, labels: holdDarts.map(\.label))
     }
     private func scoreboard(_ game: Match,shown: Match) -> some View {
         let columns = min(2, game.players.count)
@@ -1358,7 +1326,7 @@ struct MatchView: View {
         let legOver = store.activeMatch?.legWinner != nil
         // Keep the whole throw screen visible long enough to read before the turn flips.
         // A winning visit goes straight to the ceremony, which shows the checkout itself.
-        let hold = legOver ? 0.35 : reduceMotion ? 0.45 : max(1.8, min(2.8, delay + 0.6))
+        let hold = legOver ? 0.35 : ScoringChrome.visitHoldSeconds(botDelay: delay, reduceMotion: reduceMotion)
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(hold * 1_000_000_000))
             guard isHoldingVisit, holdDarts == darts, correcting == nil else { return }
@@ -1635,48 +1603,17 @@ struct MatchView: View {
         } catch { self.error = error.localizedDescription }
     }
     private func totalInput(_ game: Match) -> some View {
-        // Číslo součtu je jen v horním stripu — tady jen klávesnice ve stejném rastru jako šipky.
-        VStack(spacing: 8) {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 6), spacing: 6) {
-                ForEach([26, 41, 60, 100, 140, 180], id: \.self) { score in
-                    Button {
-                        store.tapHaptic(.medium)
-                        sumText = "\(score)"
-                        resolveTotal(game)
-                    } label: {
-                        Text("\(score)")
-                            .font(AppFont.caption(13, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Odečíst \(score) bodů ihned")
-                }
-            }
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
-                ForEach(["1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", "BUST"], id: \.self) { key in
-                    Button {
-                        store.tapHaptic(.light)
-                        if key == "⌫" {
-                            if !sumText.isEmpty { sumText.removeLast() }
-                        } else if key == "BUST" {
-                            bustPrompt = true
-                        } else if sumText.count < 3 {
-                            sumText = sumText == "0" ? key : sumText + key
-                        }
-                    } label: {
-                        Text(key)
-                            .font(key == "BUST" || key == "⌫" ? AppFont.caption(14, weight: .bold) : AppFont.display(24, weight: .bold))
-                            .foregroundStyle(key == "BUST" ? MatchColors.coral : Color.white)
-                            .frame(maxWidth: .infinity, minHeight: 48)
-                            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(key == "⌫" ? "Smazat" : key == "BUST" ? "Přehoz" : key)
-                }
-            }
-        }
+        TotalScorePad(
+            sumText: $sumText,
+            showBust: true,
+            onQuick: { score in
+                store.tapHaptic(.medium)
+                sumText = "\(score)"
+                resolveTotal(game)
+            },
+            onBust: { bustPrompt = true },
+            onTap: { store.tapHaptic(.light) }
+        )
     }
     private func resolveTotal(_ game: Match) {
         if Int(sumText) == game.currentState.remaining { finishPrompt = true }
@@ -2416,22 +2353,27 @@ struct MatchView: View {
                 multiplier = 1; sumText = ""; paused = false; holdDarts = []; isHoldingVisit = false; holdPlayer = nil; legCeremony = nil; revision = UUID()
             } label: {
                 Label("Odveta", systemImage: "arrow.clockwise")
-                    .frame(maxWidth: .infinity)
+                    .font(.headline)
+                    .labelStyle(.titleAndIcon)
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, minHeight: 52)
+                    .contentShape(Capsule())
             }
-            .buttonStyle(.glass)
-            .tint(.white)
+            .buttonStyle(.plain)
+            .glassEffect(.regular.interactive(), in: Capsule())
 
             Button { leaveToHome() } label: {
-                Label("Dokončit", systemImage: "checkmark")
-                    .frame(maxWidth: .infinity)
+                Label("Domů", systemImage: "house.fill")
+                    .font(.headline)
+                    .labelStyle(.titleAndIcon)
+                    .foregroundStyle(Color.black)
+                    .frame(maxWidth: .infinity, minHeight: 52)
+                    .contentShape(Capsule())
             }
-            .buttonStyle(.glassProminent)
-            .tint(MatchColors.finish)
-            .accessibilityHint("Uloží výsledek a vrátí na domovskou stránku")
+            .buttonStyle(.plain)
+            .glassEffect(.regular.tint(MatchColors.finish).interactive(), in: Capsule())
+            .accessibilityHint("Uloží výsledek a vrátí na Domů")
         }
-        .font(.headline)
-        .controlSize(.large)
-        .buttonBorderShape(.capsule)
         .padding(.horizontal, 16)
         .padding(.top, 10)
         .padding(.bottom, 6)

@@ -6,6 +6,134 @@ enum ScoringChrome {
     static let ink = Color(red: 0.045, green: 0.10, blue: 0.075)
     static let green = Color(red: 0.13, green: 0.80, blue: 0.49)
     static let aiTipSoft = Color(red: 0.78, green: 0.95, blue: 0.90)
+    /// Pauza po kole, než se ukáže další — stejná v zápase i tréninku.
+    static func visitHoldSeconds(botDelay: Double = 1.5, reduceMotion: Bool) -> Double {
+        reduceMotion ? 0.45 : max(1.8, min(2.8, botDelay + 0.6))
+    }
+}
+
+/// Způsob zápisu šipek — sdílený zápasem i tréninkem.
+enum ScoringSurface: String, CaseIterable, Identifiable {
+    case grid, board, total, voice, camera
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .grid: return "Čísla"
+        case .board: return "Terč"
+        case .total: return "Součet"
+        case .voice: return "Hlas"
+        case .camera: return "Kamera"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .grid: return "square.grid.3x3.fill"
+        case .board: return "target"
+        case .total: return "number"
+        case .voice: return "mic.fill"
+        case .camera: return "camera.fill"
+        }
+    }
+}
+
+/// Klávesnice součtu kola. Stejná v zápase i tréninku.
+struct TotalScorePad: View {
+    @Binding var sumText: String
+    var showBust: Bool = true
+    var onQuick: (Int) -> Void
+    var onBust: () -> Void = {}
+    var onTap: () -> Void = {}
+
+    var body: some View {
+        VStack(spacing: 8) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 6), spacing: 6) {
+                ForEach([26, 41, 60, 100, 140, 180], id: \.self) { score in
+                    Button {
+                        onTap()
+                        onQuick(score)
+                    } label: {
+                        Text("\(score)")
+                            .font(AppFont.caption(13, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Součet \(score)")
+                }
+            }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+                ForEach(keys, id: \.self) { key in
+                    if key.isEmpty {
+                        Color.clear.frame(maxWidth: .infinity, minHeight: 48)
+                    } else {
+                        Button {
+                            onTap()
+                            if key == "⌫" {
+                                if !sumText.isEmpty { sumText.removeLast() }
+                            } else if key == "BUST" {
+                                onBust()
+                            } else if sumText.count < 3 {
+                                sumText = sumText == "0" ? key : sumText + key
+                            }
+                        } label: {
+                            Text(key)
+                                .font(key == "BUST" || key == "⌫" ? AppFont.caption(14, weight: .bold) : AppFont.display(24, weight: .bold))
+                                .foregroundStyle(key == "BUST" ? ScoringChrome.coral : Color.white)
+                                .frame(maxWidth: .infinity, minHeight: 48)
+                                .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(key == "⌫" ? "Smazat" : key == "BUST" ? "Přehoz" : key)
+                    }
+                }
+            }
+        }
+    }
+
+    private var keys: [String] {
+        showBust
+            ? ["1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", "BUST"]
+            : ["1", "2", "3", "4", "5", "6", "7", "8", "9", "⌫", "0", ""]
+    }
+}
+
+/// Karty „kolo hotovo“ při souhrnu součtu / hlasu.
+struct VisitHoldSummaryCard: View {
+    var title: String
+    var value: String
+    var labels: [String]
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Text(title)
+                .font(AppFont.caption(13, weight: .semibold))
+                .foregroundStyle(ScoringChrome.ink.opacity(0.55))
+            Text(value)
+                .font(AppFont.display(48, weight: .bold))
+                .foregroundStyle(ScoringChrome.ink)
+                .monospacedDigit()
+                .contentTransition(.numericText())
+            if !labels.isEmpty {
+                Text(labels.joined(separator: " · "))
+                    .font(AppFont.body(15, weight: .semibold))
+                    .foregroundStyle(ScoringChrome.ink.opacity(0.7))
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 28)
+        .padding(.horizontal, 16)
+        .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+}
+
+/// Inferované šipky pro zápis součtu (stejná logika jako v zápase).
+enum ScoringTotal {
+    static func darts(for score: Int) -> [Dart]? {
+        guard let route = Match.scoringRoute(score) else { return nil }
+        if score == 0 { return [.miss, .miss, .miss] }
+        return Array(repeating: .miss, count: max(0, 3 - route.count)) + route
+    }
 }
 
 /// Ruční zápis šipky: mřížka 1–20, bull, minutí a Double / Triple.

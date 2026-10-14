@@ -85,7 +85,6 @@ enum TrainingCatalog {
         add(62, "puzzle", "3 Dart Puzzle", "Odehraj navržený checkout.", "Platí i jiná legální cesta na stejné skóre. Přehoz kolo neuzavře.", .checkout, 6, .advanced, .puzzle(count: 5, need: 3), options: rounds)
         add(63, "rush", "Target Rush", "Co nejvíc cílů, než vyprší čas.", "Konec přijde s časem nebo po limitu šipek.", .original, 2, .beginner, .rush(seconds: 60, need: 8, limit: 40), options: TrainingOptions(darts: true, time: true))
         add(64, "marathon", "Dartiqo Marathon", "Dvacet různých úkolů za sebou.", "Na každý jsou tři šipky. Tři minuty úkol ukončí celý maraton.", .endurance, 15, .advanced, .marathon(tasks: 20, limit: 60))
-        add(65, "risk", "Risk or Reward", "Před návštěvou volíš jistotu, nebo T20.", "Jistota platí S20. Risk dá 180 jen za tři T20, jinak nulu.", .original, 5, .advanced, .risk(rounds: 6, target: 120), options: rounds)
         add(66, "chaos", "Around the Chaos", "Čísla 1–20 v náhodném pořadí.", "Pořadí je součást uloženého zadání.", .accuracy, 8, .advanced, .chaos(limit: 80), options: TrainingOptions(darts: true))
         add(67, "no-favorite", "No Favorite", "Čísla, která házíš nejmíň.", "Bez historie přijde pevná diagnostická sada.", .adaptive, 6, .beginner, .segments(pick: .rare, mult: nil, darts: 3, accuracy: 0.4), options: segments)
         add(68, "weak-spot", "Weak Spot Killer", "Trénink podle skutečných slabin.", "Málo dat znamená diagnostiku T20, D16, 20 a bull.", .adaptive, 8, .advanced, .segments(pick: .weak, mult: nil, darts: 8, accuracy: 0.35), options: segments)

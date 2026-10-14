@@ -32,9 +32,21 @@ struct TrainingHomeView: View {
         return ids.compactMap(TrainingCatalog.find)
     }
     private var selected: TrainingDefinition? { games.first { $0.id == selectedID } ?? games.first }
-    private let stepTitles = ["Hra", "Pravidla", "Souhrn"]
+    /// Jen hry, kde `rulesStep` opravdu nabízí nastavení (ne jen text / prázdno).
+    private var hasRulesStep: Bool {
+        switch selected?.id {
+        case "around-clock", "shanghai", "checkout-40", "treble-20", "practice-501":
+            return true
+        default:
+            return false
+        }
+    }
+    private var stepTitles: [String] {
+        hasRulesStep ? ["Hra", "Pravidla", "Souhrn"] : ["Hra", "Souhrn"]
+    }
     private var stepCount: Int { stepTitles.count }
     private var isLastStep: Bool { step >= stepCount - 1 }
+    private var rulesStepIndex: Int? { hasRulesStep ? 1 : nil }
     private var motion: Animation? { reduceMotion ? nil : .smooth(duration: 0.38) }
 
     var body: some View {
@@ -52,7 +64,7 @@ struct TrainingHomeView: View {
                     }
                     Group {
                         if step == 0 { gameStep }
-                        else if step == 1 { rulesStep }
+                        else if step == rulesStepIndex { rulesStep }
                         else { summaryStep }
                     }
                     .id(step)
@@ -67,6 +79,7 @@ struct TrainingHomeView: View {
             }
         }
         .animation(motion, value: step)
+        .animation(motion, value: hasRulesStep)
         .safeAreaInset(edge: .bottom, spacing: 0) { setupBar }
         .toolbar(.hidden, for: .tabBar)
         .screen()
@@ -88,6 +101,9 @@ struct TrainingHomeView: View {
             guard let first = games.first?.id, !games.contains(where: { $0.id == selectedID }) else { return }
             choose(first)
         }
+        .onChange(of: hasRulesStep) { _, _ in
+            if step >= stepCount { setStep(stepCount - 1) }
+        }
         .sheet(item: $info) { definition in
             TrainingInfoSheet(definition: definition) {
                 info = nil
@@ -103,19 +119,19 @@ struct TrainingHomeView: View {
     }
 
     private var headline: String {
-        switch step {
-        case 0: return "Jaká hra?"
-        case 1: return "Jak se hraje?"
-        default: return "Všechno sedí?"
-        }
+        if step == 0 { return "Jaká hra?" }
+        if step == rulesStepIndex { return "Jak se hraje?" }
+        return "Všechno sedí?"
     }
 
     private var subtitle: String {
-        switch step {
-        case 0: return "Vyber režim. Pravidla nastavíš v dalším kroku."
-        case 1: return "Zapni, co se v téhle hře hraje."
-        default: return "Kdo hraje a podle jakých pravidel."
+        if step == 0 {
+            return hasRulesStep
+                ? "Vyber režim. Pravidla nastavíš v dalším kroku."
+                : "Vyber režim. Na souhrnu zkontroluješ start."
         }
+        if step == rulesStepIndex { return "Zapni, co se v téhle hře hraje." }
+        return hasRulesStep ? "Kdo hraje a podle jakých pravidel." : "Zkontroluj výběr a spusť hru."
     }
 
     private var progress: some View {
@@ -205,12 +221,6 @@ struct TrainingHomeView: View {
                     }
                 }
             }
-        case "bobs-27":
-            ruleCard("Cíle") {
-                Text("D1 až D20, start 27, tři šipky na double.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
         case "shanghai":
             ruleCard("Čísla") {
                 LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5), spacing: 8) {
@@ -268,7 +278,9 @@ struct TrainingHomeView: View {
         VStack(spacing: 12) {
             if let selected {
                 summaryRow("Hra", selected.title, symbol: selected.category.symbol) { setStep(0) }
-                summaryRow("Pravidla", rulesSummary, symbol: "slider.horizontal.3") { setStep(1) }
+                if let rulesStepIndex {
+                    summaryRow("Pravidla", rulesSummary, symbol: "slider.horizontal.3") { setStep(rulesStepIndex) }
+                }
                 summaryRow("Délka", "\(selected.listed.title) · \(selected.minutes) min", symbol: "clock") { setStep(0) }
             }
         }
@@ -337,7 +349,7 @@ struct TrainingHomeView: View {
     }
 
     private var canAdvance: Bool {
-        if step == 1, selected?.id == "shanghai" { return !numbers.isEmpty }
+        if step == rulesStepIndex, selected?.id == "shanghai" { return !numbers.isEmpty }
         return true
     }
 

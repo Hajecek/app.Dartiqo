@@ -39,8 +39,6 @@ enum TrainingEngine {
             session.actions.append(.dart(dart))
         case (.memorize, .ready):
             session.actions.append(.ready)
-        case (.choose, .choose(let value)) where value == 0 || value == 1:
-            session.actions.append(.choose(value))
         default:
             return
         }
@@ -206,9 +204,6 @@ extension TrainingKind {
             return .rush(seconds: Int(config.timeLimit ?? Double(seconds)), need: easierNeed(need, level), limit: config.dartCount ?? limit)
         case .marathon(let tasks, let limit):
             return .marathon(tasks: tasks, limit: config.dartCount ?? easierLimit(limit, level))
-        case .risk(let rounds, let target):
-            let shifted = level == .beginner ? max(40, target - 40) : level == .pro ? target + 40 : target
-            return .risk(rounds: config.rounds ?? rounds, target: config.targetScore ?? shifted)
         case .chaos(let limit):
             return .chaos(limit: config.dartCount ?? easierLimit(limit, level))
         case .segments(let pick, let mult, let darts, let accuracy):

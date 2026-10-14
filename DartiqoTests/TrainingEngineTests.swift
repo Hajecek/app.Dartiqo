@@ -98,10 +98,14 @@ final class TrainingEngineTests: XCTestCase {
         let result = TrainingResult(success: true, score: 40, higherIsBetter: true, darts: 1, hits: 1, accuracy: 1, bestStreak: 1, summary: "ok")
         let first = TrainingRewards.award(definition: definition, config: TrainingConfig(), result: result, completionsToday: 0, isRecord: true, isDaily: false, isWeekly: false)
         let farm = TrainingRewards.award(definition: definition, config: TrainingConfig(), result: result, completionsToday: 3, isRecord: true, isDaily: true, isWeekly: true)
-        XCTAssertGreaterThan(first, 40)
-        XCTAssertEqual(farm, 4)
+        XCTAssertGreaterThan(first.total, 40)
+        XCTAssertTrue(first.lines.contains { $0.id == "base" })
+        XCTAssertTrue(first.lines.contains { $0.id == "success" })
+        XCTAssertEqual(farm.total, 4)
+        XCTAssertEqual(farm.lines.map(\.id), ["farm"])
         let empty = TrainingRewards.award(definition: definition, config: TrainingConfig(), result: TrainingResult(), completionsToday: 0, isRecord: false, isDaily: false, isWeekly: false)
-        XCTAssertEqual(empty, 0)
+        XCTAssertEqual(empty.total, 0)
+        XCTAssertFalse(empty.hasAward)
     }
 
     func testX01RulesStayAlignedWithMatch() throws {
@@ -183,7 +187,6 @@ final class TrainingEngineTests: XCTestCase {
             } else {
                 switch projection.phase {
                 case .memorize: TrainingEngine.record(.ready, into: &session, at: session.startedAt)
-                case .choose: TrainingEngine.record(.choose(1), into: &session, at: session.startedAt)
                 case .scoring: TrainingEngine.record(.dart(.miss), into: &session, at: session.startedAt)
                 }
             }
