@@ -53,21 +53,31 @@ struct SetupView: View {
     @State private var scoreExact = false
     @State private var limitCustom = false
     @State private var openRule: RuleKey? = .start
-    @State private var showFriends = false
-    @State private var showMoreLineups = false
-    @State private var showAddSeat = false
+    @State private var friendPicker: FriendPickerTarget?
     @State private var botPicker: BotPickerTarget?
+    @State private var ghostPicker: GhostPickerTarget?
     /// Rozbalená karta handicapu (index místa).
     @State private var handicapFocus: Int?
     @FocusState private var focusedGuest: UUID?
 
+    private struct FriendPickerTarget: Identifiable, Equatable {
+        var id = UUID()
+        /// `nil` = přidat do volných míst, jinak vyměnit toto místo.
+        var seatID: UUID?
+    }
     private struct BotPickerTarget: Identifiable, Equatable {
         var id: UUID
         /// `nil` = nový bot, jinak úprava existujícího místa.
         var seatID: UUID?
         var level: Int
     }
-    private enum RuleKey: Hashable { case start, finish, mode, length, limit, handicap, flow }
+    private struct GhostPickerTarget: Identifiable, Equatable {
+        var id = UUID()
+        /// `true` = přidat ghosta do sestavy, `false` = jen změnit variantu.
+        var adding: Bool
+        var initialKind: GhostKind?
+    }
+    private enum RuleKey: Hashable { case start, finish, mode, length, limit, handicap }
     @State private var opening: Opening?
     @State private var modeInfo: GameMode?
     @State private var openingInfo: Opening?
@@ -80,6 +90,7 @@ struct SetupView: View {
     @State private var showH2HAfterToss = false
     @State private var coinWinner: Int?
     @State private var pregameSeries: HeadToHead?
+    @State private var openSoloTraining = false
     private let presetScores = [101, 301, 501, 701, 1001]
     private var options: Binding<MatchOptions> { Binding(get: { draft.config.settings }, set: { draft.config.options = $0 }) }
     init(mode: GameMode, preset: SetupDraft? = nil, onHome: (() -> Void)? = nil, coversLiveBar: Bool = false) {
@@ -91,7 +102,12 @@ struct SetupView: View {
         guard !draft.seats.isEmpty else { return false }
         if draft.seats.contains(where: \.ghostSeat) {
             guard draft.config.mode == .x01, let kind = draft.ghostKind else { return false }
-            return store.ghostOffer(kind, startingScore: draft.config.startingScore, outRule: draft.config.outRule) != nil
+            return store.ghostOffer(
+                kind,
+                startingScore: draft.config.startingScore,
+                outRule: draft.config.outRule,
+                matchID: draft.ghostMatchID
+            ) != nil
         }
         return !draft.seats.indices.contains {
             !isMe($0) && !draft.seats[$0].isBot && !draft.seats[$0].ghostSeat
@@ -99,9 +115,25 @@ struct SetupView: View {
         }
     }
     private var showsOpening: Bool { draft.seats.count > 1 }
+    /// Jen já u terče → zápas nemá smysl, jdeme do tréninku.
+    private var isSoloTraining: Bool {
+        draft.seats.count == 1 && draft.includesMe
+            && !draft.seats[0].isBot && !draft.seats[0].ghostSeat
+    }
     private var stepCount: Int { showsOpening ? 5 : 4 }
     private var stepTitles: [String] { showsOpening ? ["Hra", "Hráči", "Pravidla", "Souhrn", "Start"] : ["Hra", "Hráči", "Pravidla", "Souhrn"] }
     private var isLastStep: Bool { step >= stepCount - 1 }
+    private var advanceTitle: String {
+        if isSoloTraining, step >= 1 { return "Trénovat" }
+        return isLastStep ? "Hrát" : "Pokračovat"
+    }
+    private var advanceSymbol: String {
+        if isSoloTraining, step >= 1 { return "scope" }
+        return isLastStep ? "play.fill" : "arrow.right"
+    }
+    private var soloTrainingIDs: [String] {
+        TrainingCatalog.ids(for: draft.config.mode, startingScore: draft.config.startingScore)
+    }
     private var canPlay: Bool {
         guard canContinue else { return false }
         guard showsOpening else { return true }
@@ -213,6 +245,10 @@ struct SetupView: View {
             Button("Zrušit", role: .cancel) {}
         }
         .fullScreenCover(isPresented: $live) { MatchLaunchView(intro: launchIntro).environmentObject(store) }
+        .navigationDestination(isPresented: $openSoloTraining) {
+            TrainingHomeView(gameIDs: soloTrainingIDs, onHome: onHome)
+                .environmentObject(store)
+        }
         .sheet(item: $modeInfo) { mode in
             ModeInfoSheet(mode: mode) {
                 modeInfo = nil
@@ -327,7 +363,10 @@ struct SetupView: View {
     private var subtitle: String {
         switch step {
         case 0: return "Vyber režim. Ostatní doladíš v dalším kroku."
-        case 1: return "Vyber způsob. Jméno a sílu se nastaví hned pod ním."
+        case 1:
+            return isSoloTraining
+                ? "Sám u terče = trénink. Přidej soupeře, pokud chceš zápas."
+                : "Sestav, kdo stojí u terče. Až čtyři místa."
         case 2: return "Klepni na sekci a nastav ji. Ostatní zůstanou sbalené."
         case 3: return "Kdo hraje a podle jakých pravidel. Klepnutím na řádek ho změníš."
         default: return "Rozhodni, kdo hází první leg."
@@ -377,10 +416,10 @@ struct SetupView: View {
 
                 Button { advance() } label: {
                     HStack(spacing: 8) {
-                        Text(isLastStep ? "Hrát" : "Pokračovat")
+                        Text(advanceTitle)
                             .font(.headline)
                             .contentTransition(.opacity)
-                        Image(systemName: isLastStep ? "play.fill" : "arrow.right")
+                        Image(systemName: advanceSymbol)
                             .font(.subheadline.weight(.bold))
                             .contentTransition(.symbolEffect(.replace))
                     }
@@ -392,6 +431,7 @@ struct SetupView: View {
                 .glassEffect(canAdvance ? .regular.tint(Theme.brand).interactive() : .regular, in: Capsule())
                 .disabled(!canAdvance)
                 .animation(motion, value: canAdvance)
+                .animation(motion, value: isSoloTraining)
             }
         }
         .padding(.horizontal, 20)
@@ -437,119 +477,23 @@ struct SetupView: View {
                 ChoiceCard(title: mode.shortTitle, detail: mode.detail, symbol: mode.symbol, selected: draft.config.mode == mode, action: {
                     withAnimation(motion) {
                         draft.config.mode = mode
-                        if mode != .x01, currentLineup == .meGhost { applyLineup(.meBot) }
+                        if mode != .x01 { replaceGhostWithBotIfNeeded() }
                     }
                 }, info: { modeInfo = mode })
             }
-            if let id = store.profile?.id.uuidString, let last = store.data.lastSetups?[id] {
-                Button {
-                    draft = last
-                    scoreText = "\(last.config.startingScore)"
-                    setStep(2)
-                } label: {
-                    Label("Použít poslední nastavení", systemImage: "clock.arrow.circlepath")
-                        .font(.subheadline.bold())
-                        .frame(maxWidth: .infinity)
-                        .padding(16)
-                }
-                .foregroundStyle(Theme.action)
-            }
-        }
-    }
-    private enum Lineup: CaseIterable, Identifiable {
-        case meBot, meFriend, meGhost, botBot, friendFriend, solo
-        var id: Self { self }
-        var title: String {
-            switch self {
-            case .meBot: return "Proti botovi"
-            case .meFriend: return "S kamarádem"
-            case .meGhost: return "Proti ghostovi"
-            case .botBot: return "Bot proti botovi"
-            case .friendFriend: return "Dva kamarádi"
-            case .solo: return "Sám"
-            }
-        }
-        var detail: String {
-            switch self {
-            case .meBot: return "Počítač hází proti tobě"
-            case .meFriend: return "Člověk vedle tebe"
-            case .meGhost: return "Tvoje staré šipky hrají proti tobě"
-            case .botBot: return "Dva počítače, ty se jen díváš"
-            case .friendFriend: return "Ty nehraješ, jen zapisuješ"
-            case .solo: return "Bez soupeře"
-            }
-        }
-        var icon: String {
-            switch self {
-            case .meBot: return "cpu"
-            case .meFriend: return "person.2.fill"
-            case .meGhost: return "person.fill.viewfinder"
-            case .botBot: return "cpu.fill"
-            case .friendFriend: return "square.and.pencil"
-            case .solo: return "person.fill"
-            }
         }
     }
 
-    private var primaryLineups: [Lineup] { [.meBot, .meFriend, .solo] }
-
-    private var extraLineups: [Lineup] {
-        var rows: [Lineup] = [.friendFriend, .botBot]
-        if draft.config.mode == .x01 { rows.insert(.meGhost, at: 0) }
-        return rows
+    private func replaceGhostWithBotIfNeeded() {
+        guard let index = draft.seats.firstIndex(where: \.ghostSeat) else { return }
+        draft.seats[index] = SeatDraft(name: "Bot", isBot: true)
+        draft.ghostKind = nil
+        draft.ghostMatchID = nil
+        draft.starter = 0
     }
 
-    private var showsExtraLineups: Bool {
-        showMoreLineups || currentLineup == nil || extraLineups.contains { $0 == currentLineup }
-    }
-
-    private var currentLineup: Lineup? {
-        let others = draft.seats.indices.filter { !isMe($0) }.map { draft.seats[$0] }
-        switch (draft.includesMe, others.count) {
-        case (true, 0): return .solo
-        case (true, 1):
-            if others[0].ghostSeat { return .meGhost }
-            return others[0].isBot ? .meBot : .meFriend
-        case (false, 2):
-            if others.allSatisfy(\.isBot) { return .botBot }
-            if others.allSatisfy({ !$0.isBot && !$0.ghostSeat }) { return .friendFriend }
-            return nil
-        default: return nil
-        }
-    }
-
-    private func applyLineup(_ lineup: Lineup) {
-        hideKeyboard()
-        showAddSeat = false
-        withAnimation(motion) {
-            switch lineup {
-            case .meBot:
-                draft.seats = [SeatDraft(name: "Já"), SeatDraft(name: "Bot", isBot: true)]
-                draft.ghostKind = nil
-            case .meFriend:
-                draft.seats = [SeatDraft(name: "Já"), SeatDraft(name: "")]
-                draft.ghostKind = nil
-            case .meGhost:
-                draft.seats = [SeatDraft(name: "Já"), SeatDraft(name: "Ghost", isGhost: true)]
-                if draft.ghostKind == nil {
-                    draft.ghostKind = store.ghostOffers(startingScore: draft.config.startingScore, outRule: draft.config.outRule).first?.kind
-                }
-            case .botBot:
-                draft.seats = [SeatDraft(name: "Bot", isBot: true, level: 3), SeatDraft(name: "Bot", isBot: true, level: 6)]
-                draft.ghostKind = nil
-            case .friendFriend:
-                draft.seats = [SeatDraft(name: ""), SeatDraft(name: "")]
-                draft.ghostKind = nil
-            case .solo:
-                draft.seats = [SeatDraft(name: "Já")]
-                draft.ghostKind = nil
-            }
-            draft.withoutMe = (lineup == .botBot || lineup == .friendFriend) ? true : nil
-            draft.starter = 0
-        }
-        if lineup == .meFriend || lineup == .friendFriend {
-            focusedGuest = draft.seats.first { !$0.isBot && !$0.ghostSeat && $0.name.isEmpty }?.id
-        }
+    private var canAddSeat: Bool {
+        draft.seats.count < 4 && !draft.seats.contains(where: \.ghostSeat)
     }
 
     private func openBotPicker(seatID: UUID) {
@@ -586,159 +530,12 @@ struct SetupView: View {
     }
 
     private var rosterStep: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if currentLineup == nil {
-                customRoster
-                Text("Nebo vyber způsob znovu. Nahradí tuhle sestavu.")
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("U terče")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
-                    .padding(.top, 6)
-            }
-
-            ForEach(primaryLineups) { lineup in
-                lineupChoice(lineup)
-            }
-
-            if showsExtraLineups {
-                ForEach(extraLineups) { lineup in
-                    lineupChoice(lineup)
-                }
-            } else {
-                Button {
-                    withAnimation(sectionMotion) { showMoreLineups = true }
-                } label: {
-                    HStack(spacing: 8) {
-                        Text("Další způsoby")
-                            .font(.subheadline.weight(.semibold))
-                        Image(systemName: "chevron.down")
-                            .font(.caption.weight(.bold))
-                    }
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Zobrazit další způsoby")
-            }
-
-            Label(draft.includesMe ? "Hrajete na jednom telefonu a zapisujete se střídavě." : "Zápas běží na tomhle telefonu. Do tvých statistik se nepočítá.", systemImage: "iphone")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .contentTransition(.opacity)
-                .padding(.top, 4)
-        }
-        .sensoryFeedback(.selection, trigger: currentLineup)
-        .sheet(isPresented: $showFriends) {
-            FriendPickerSheet(
-                taken: Set(draft.seats.compactMap(\.friendID) + [store.profile?.id].compactMap { $0 }),
-                slots: friendPickerSlots
-            ) { picked in
-                applyPickedFriends(picked)
-            }
-            .environmentObject(store)
-        }
-        .sheet(item: $botPicker) { target in
-            BotPickerSheet(initialLevel: target.level, confirmTitle: target.seatID == nil ? "Přidat bota" : "Potvrdit") { level in
-                confirmBotLevel(level, target: target)
-            }
-        }
-    }
-
-    private func lineupChoice(_ lineup: Lineup) -> some View {
-        let selected = currentLineup == lineup
-        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
-        return VStack(alignment: .leading, spacing: 0) {
-            Button { applyLineup(lineup) } label: {
-                HStack(spacing: 14) {
-                    Image(systemName: lineup.icon)
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(Theme.action)
-                        .frame(width: 44, height: 44)
-                        .background(Theme.action.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(lineup.title)
-                            .font(.headline)
-                        Text(lineup.detail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 8)
-                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                        .font(.title3)
-                        .foregroundStyle(selected ? Theme.action : Color.secondary)
-                        .contentTransition(.symbolEffect(.replace))
-                }
-                .padding(16)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityAddTraits(selected ? .isSelected : [])
-            .accessibilityHint(selected ? "Vybraný způsob" : "Vybrat tenhle způsob")
-
-            if selected {
-                lineupDetail(lineup)
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 14)
-                    .transition(.opacity)
-            }
-        }
-        .background(selected ? Theme.action.opacity(0.09) : Theme.card, in: shape)
-        .overlay(shape.strokeBorder(selected ? Theme.action : Theme.stroke, lineWidth: selected ? 1.5 : 1))
-        .animation(sectionMotion, value: selected)
-    }
-
-    @ViewBuilder
-    private func lineupDetail(_ lineup: Lineup) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            switch lineup {
-            case .solo:
-                meCard
-            case .meBot, .botBot:
-                ForEach(botSeatIndices, id: \.self) { index in
-                    botEditor(index)
-                }
-            case .meFriend, .friendFriend:
-                ForEach(humanSeatIndices, id: \.self) { index in
-                    friendCard(index, allowsRemove: false)
-                }
-                if !canContinue {
-                    Text("Napiš jméno, nebo vyber kamaráda níž.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                savedPeopleRow
-                Button { showFriends = true } label: {
-                    Label("Vybrat z kontaktů", systemImage: "person.crop.circle.badge.plus")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Theme.action)
-            case .meGhost:
-                ghostVariantPicker
-            }
-
-            if lineup != .solo && lineup != .meGhost && draft.seats.count < 4 {
-                addAnother
-            }
-        }
-        .padding(.top, 2)
-    }
-
-    private var customRoster: some View {
-        let others = draft.seats.indices.filter { !isMe($0) }
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Vlastní sestava")
-                        .font(.headline)
-                    Text(draft.includesMe ? "Hraješ taky. Šipky zapisujete na tomhle telefonu." : "Ty nehraješ, jen zapisuješ.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 8)
+                Spacer()
                 Text("\(draft.seats.count)/4")
                     .font(.caption.weight(.bold).monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -747,261 +544,182 @@ struct SetupView: View {
                     .background(Color.primary.opacity(0.08), in: Capsule())
             }
 
-            if draft.includesMe { meCard }
+            VStack(spacing: 10) {
+                ForEach(draft.seats.indices, id: \.self) { index in
+                    seatRow(index)
+                }
+            }
 
-            ForEach(others, id: \.self) { index in
-                if draft.seats[index].ghostSeat {
-                    ghostSeatCard(index)
-                } else if draft.seats[index].isBot {
-                    botCard(index)
+            if canAddSeat {
+                HStack(spacing: 8) {
+                    addChip("Kamarád", icon: "person.fill") {
+                        openFriendPicker()
+                    }
+                    addChip("Bot", icon: "cpu") { addBot() }
+                    if draft.config.mode == .x01 {
+                        addChip("Ghost", icon: "person.fill.viewfinder") { openGhostPicker(adding: true) }
+                    }
+                }
+            }
+
+            scoreOnlyCard
+        }
+        .sensoryFeedback(.selection, trigger: draft.seats.count)
+        .sheet(item: $friendPicker) { target in
+            FriendPickerSheet(
+                taken: takenFriends(excluding: target.seatID),
+                slots: target.seatID == nil ? friendPickerSlots : 1
+            ) { picked in
+                applyPickedFriends(picked, replacing: target.seatID)
+            }
+            .environmentObject(store)
+        }
+        .sheet(item: $botPicker) { target in
+            BotPickerSheet(
+                initialLevel: target.level,
+                title: target.seatID == nil ? "Přidat bota" : "Změnit bota",
+                confirmTitle: target.seatID == nil ? "Přidat bota" : "Potvrdit"
+            ) { level in
+                confirmBotLevel(level, target: target)
+            }
+        }
+        .sheet(item: $ghostPicker) { target in
+            GhostPickerSheet(
+                startingScore: draft.config.startingScore,
+                outRule: draft.config.outRule,
+                initialKind: target.initialKind,
+                initialMatchID: draft.ghostMatchID,
+                title: target.adding ? "Přidat ghosta" : "Změnit ghosta",
+                confirmTitle: target.adding ? "Přidat ghosta" : "Potvrdit"
+            ) { selection in
+                confirmGhost(selection, adding: target.adding)
+            }
+            .environmentObject(store)
+        }
+    }
+
+    @ViewBuilder
+    private func seatRow(_ index: Int) -> some View {
+        if isMe(index) {
+            meCard
+        } else if draft.seats[index].ghostSeat {
+            ghostSeatCard(index)
+        } else if draft.seats[index].isBot {
+            botEditor(index)
+        } else {
+            friendCard(index)
+        }
+    }
+
+    private func openGhostPicker(adding: Bool) {
+        hideKeyboard()
+        ghostPicker = GhostPickerTarget(
+            adding: adding,
+            initialKind: draft.ghostKind
+        )
+    }
+
+    private func confirmGhost(_ selection: GhostSelection, adding: Bool) {
+        withAnimation(motion) {
+            if adding || !draft.seats.contains(where: \.ghostSeat) {
+                if draft.includesMe {
+                    draft.seats = [SeatDraft(name: "Já"), SeatDraft(name: "Ghost", isGhost: true)]
                 } else {
-                    friendCard(index)
+                    draft.seats = [SeatDraft(name: "Ghost", isGhost: true)]
                 }
             }
-
-            if draft.seats.contains(where: \.ghostSeat) {
-                ghostVariantPicker
-            }
-
-            if draft.seats.count < 4 && !draft.seats.contains(where: \.ghostSeat) {
-                HStack(spacing: 8) {
-                    addChip("Kamarád", icon: "person.fill") { showFriends = true }
-                    addChip("Bot", icon: "cpu") { addBot() }
-                }
-            }
-
-            if draft.includesMe || draft.seats.count < 4 {
-                Button { setPlaysMyself(!draft.includesMe) } label: {
-                    Text(draft.includesMe ? "Nehraju, jen zapisuju" : "Chci hrát taky")
-                        .font(.subheadline.weight(.semibold))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .disabled(!draft.includesMe && draft.seats.count >= 4)
-            }
+            draft.ghostKind = selection.kind
+            draft.ghostMatchID = selection.kind == .pickMatch ? selection.matchID : nil
+            draft.starter = 0
         }
-        .padding(14)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Theme.stroke, lineWidth: 1))
-    }
-
-    private var addAnother: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button {
-                withAnimation(sectionMotion) { showAddSeat.toggle() }
-            } label: {
-                Label("Přidat dalšího hráče", systemImage: showAddSeat ? "chevron.up" : "plus")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .frame(minHeight: 36)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint("Až čtyři lidé u terče")
-
-            if showAddSeat {
-                HStack(spacing: 8) {
-                    addChip("Kamarád", icon: "person.fill") { addGuest() }
-                    addChip("Bot", icon: "cpu") { addBot() }
-                }
-                .transition(.opacity)
-            }
-        }
-    }
-
-    private var botSeatIndices: [Int] {
-        draft.seats.indices.filter { draft.seats[$0].isBot && !isMe($0) }
-    }
-
-    private var humanSeatIndices: [Int] {
-        draft.seats.indices.filter { !isMe($0) && !draft.seats[$0].isBot && !draft.seats[$0].ghostSeat }
     }
 
     private func botEditor(_ index: Int) -> some View {
         let level = draft.seats[index].level
         let info = BotLevel.get(level)
-        return VStack(alignment: .leading, spacing: 12) {
+        return HStack(spacing: 4) {
             Button { openBotPicker(seatID: draft.seats[index].id) } label: {
                 HStack(spacing: 12) {
-                    Avatar(name: info.persona, bot: true, size: 52, asset: info.photo)
+                    BotPortrait(level: level, size: 64, selected: false)
                         .id(info.photo)
-                        .playerRing(seatColor(index))
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text(botPersona(index))
                             .font(.headline)
                             .foregroundStyle(.primary)
-                        Text("Klepni pro portrét a statistiky")
+                            .lineLimit(1)
+                        Text("Lv \(level) · \(info.name)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Theme.action)
+                            .contentTransition(.opacity)
+                        Text("Průměr \(info.averageText) · klepni pro změnu")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
                     }
                     Spacer(minLength: 4)
-                    Image(systemName: "info.circle")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.tertiary)
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityLabel("\(botPersona(index)), úroveň \(level)")
-            .accessibilityHint("Otevře portrét a statistiky")
-
-            VStack(alignment: .leading, spacing: 6) {
-                Slider(value: Binding(
-                    get: { Double(draft.seats[index].level) },
-                    set: { setBotLevel(index, Int($0.rounded())) }
-                ), in: 1...10, step: 1)
-                .tint(Theme.action)
-                .accessibilityLabel("Síla soupeře \(botPersona(index))")
-                .accessibilityValue("Úroveň \(level), \(info.name)")
-
-                HStack {
-                    Text("Lehčí")
-                    Spacer()
-                    Text("Úroveň \(level)")
-                        .monospacedDigit()
-                        .contentTransition(.numericText(value: Double(level)))
-                    Spacer()
-                    Text("Těžší")
-                }
-                .font(.caption.weight(.bold))
-                .foregroundStyle(.secondary)
-
-                Text("\(info.name) · průměr \(info.averageText)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity)
-                    .contentTransition(.opacity)
-            }
+            .accessibilityHint("Otevře výběr bota")
+            removeButton(index)
         }
-        .padding(12)
+        .padding(.leading, 12)
+        .padding(.trailing, 6)
+        .padding(.vertical, 12)
         .playerCard(seatColor(index))
         .sensoryFeedback(.selection, trigger: level)
     }
 
-    private func setBotLevel(_ index: Int, _ level: Int) {
-        guard draft.seats.indices.contains(index) else { return }
-        let next = min(10, max(1, level))
-        guard draft.seats[index].level != next else { return }
-        draft.seats[index].level = next
-    }
-
-    private struct SavedPerson: Identifiable {
-        var id: UUID
-        var name: String
-        var photo: Data?
-    }
-
-    private var savedPeople: [SavedPerson] {
-        let taken = Set(draft.seats.compactMap(\.friendID))
-        let mates = store.housemates
-            .filter { !taken.contains($0.id) }
-            .map { SavedPerson(id: $0.id, name: $0.name, photo: $0.photoJPEG) }
-        let pals = store.friends
-            .filter { !taken.contains($0.id) }
-            .map { SavedPerson(id: $0.id, name: $0.name, photo: nil) }
-        return mates + pals
-    }
-
-    @ViewBuilder
-    private var savedPeopleRow: some View {
-        if !savedPeople.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Nebo někdo uložený")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        ForEach(savedPeople) { person in
-                            Button { placeSavedPerson(person) } label: {
-                                VStack(spacing: 6) {
-                                    Avatar(name: person.name, size: 44, photo: person.photo)
-                                    Text(person.name)
-                                        .font(.caption2.weight(.semibold))
-                                        .lineLimit(1)
-                                        .frame(width: 68)
-                                }
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Vybrat \(person.name)")
-                        }
-                    }
-                    .padding(.vertical, 2)
-                }
-            }
-        }
-    }
-
-    private func placeSavedPerson(_ person: SavedPerson) {
-        hideKeyboard()
-        withAnimation(motion) {
-            if currentLineup == .meFriend, let index = firstHumanSeat() {
-                draft.seats[index] = SeatDraft(name: person.name, friendID: person.id)
-            } else if let index = firstEmptyHumanSeat() {
-                draft.seats[index] = SeatDraft(name: person.name, friendID: person.id)
-            } else if currentLineup == .friendFriend, let index = firstHumanSeat() {
-                draft.seats[index] = SeatDraft(name: person.name, friendID: person.id)
-            }
-            draft.starter = 0
-        }
-    }
-
-    private func firstHumanSeat() -> Int? {
-        draft.seats.indices.first { !isMe($0) && !draft.seats[$0].isBot && !draft.seats[$0].ghostSeat }
-    }
-
-    private func firstEmptyHumanSeat() -> Int? {
-        draft.seats.indices.first { index in
-            !isMe(index) && !draft.seats[index].isBot && !draft.seats[index].ghostSeat
-                && draft.seats[index].friendID == nil
-                && draft.seats[index].name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-    }
-
     private var friendPickerSlots: Int {
-        let emptyHumans = draft.seats.indices.filter { index in
-            !isMe(index) && !draft.seats[index].isBot && !draft.seats[index].ghostSeat
-                && draft.seats[index].name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }.count
-        switch currentLineup {
-        case .meFriend:
-            return 1
-        case .friendFriend:
-            return max(1, emptyHumans)
-        default:
-            return max(1, (4 - draft.seats.count) + emptyHumans)
-        }
+        max(1, min(4, 4 - draft.seats.count))
     }
 
-    private func applyPickedFriends(_ picked: [PickedFriend]) {
+    private func openFriendPicker(replacing seatID: UUID? = nil) {
+        hideKeyboard()
+        friendPicker = FriendPickerTarget(seatID: seatID)
+    }
+
+    private func takenFriends(excluding seatID: UUID?) -> Set<UUID> {
+        var ids = Set(draft.seats.compactMap(\.friendID))
+        if let seatID, let current = draft.seats.first(where: { $0.id == seatID })?.friendID {
+            ids.remove(current)
+        }
+        if let me = store.profile?.id { ids.insert(me) }
+        return ids
+    }
+
+    private func applyPickedFriends(_ picked: [PickedFriend], replacing seatID: UUID? = nil) {
         guard !picked.isEmpty else { return }
         hideKeyboard()
         withAnimation(motion) {
+            if let seatID,
+               let index = draft.seats.firstIndex(where: { $0.id == seatID }),
+               let friend = picked.first {
+                draft.seats[index].name = friend.name
+                draft.seats[index].friendID = friend.id
+                draft.seats[index].isBot = false
+                draft.seats[index].isGhost = nil
+                return
+            }
             var queue = picked
-            if currentLineup == .meFriend, queue.count == 1,
-               let index = draft.seats.indices.first(where: { !isMe($0) && !draft.seats[$0].isBot && !draft.seats[$0].ghostSeat }) {
+            let empty = draft.seats.indices.filter { index in
+                !isMe(index) && !draft.seats[index].isBot && !draft.seats[index].ghostSeat
+                    && draft.seats[index].friendID == nil
+                    && draft.seats[index].name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            for index in empty {
+                guard !queue.isEmpty else { break }
                 let friend = queue.removeFirst()
                 draft.seats[index] = SeatDraft(name: friend.name, friendID: friend.id)
-            } else {
-                let empty = draft.seats.indices.filter { index in
-                    !isMe(index) && !draft.seats[index].isBot && !draft.seats[index].ghostSeat
-                        && draft.seats[index].friendID == nil
-                        && draft.seats[index].name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                }
-                for index in empty {
-                    guard !queue.isEmpty else { break }
-                    let friend = queue.removeFirst()
-                    draft.seats[index] = SeatDraft(name: friend.name, friendID: friend.id)
-                }
-                if currentLineup == .friendFriend, !queue.isEmpty, let index = firstHumanSeat() {
-                    let friend = queue.removeFirst()
-                    draft.seats[index] = SeatDraft(name: friend.name, friendID: friend.id)
-                }
-                if currentLineup == nil {
-                    for friend in queue where draft.seats.count < 4 {
-                        draft.seats.append(SeatDraft(name: friend.name, friendID: friend.id))
-                    }
-                }
+            }
+            for friend in queue where draft.seats.count < 4 && !draft.seats.contains(where: \.ghostSeat) {
+                draft.seats.append(SeatDraft(name: friend.name, friendID: friend.id))
             }
             draft.starter = 0
         }
@@ -1025,82 +743,108 @@ struct SetupView: View {
 
     private func ghostSeatCard(_ index: Int) -> some View {
         let offer = draft.ghostKind.flatMap {
-            store.ghostOffer($0, startingScore: draft.config.startingScore, outRule: draft.config.outRule)
+            store.ghostOffer(
+                $0,
+                startingScore: draft.config.startingScore,
+                outRule: draft.config.outRule,
+                matchID: draft.ghostMatchID
+            )
         }
-        return HStack(spacing: 12) {
-            Image(systemName: "person.fill.viewfinder")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(Theme.action)
-                .frame(width: 48, height: 48)
-                .background(Theme.action.opacity(0.12), in: Circle())
-                .playerRing(seatColor(index))
-            VStack(alignment: .leading, spacing: 3) {
-                Text(offer?.displayName ?? "Ghost")
-                    .font(.headline)
-                    .lineLimit(1)
-                Text(offer.map { "\($0.kind.title) · průměr \($0.averageText)" } ?? "Vyber variantu níž")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        return HStack(spacing: 4) {
+            Button { openGhostPicker(adding: false) } label: {
+                HStack(spacing: 12) {
+                    ZStack {
+                        if let photo = store.profile?.photoJPEG {
+                            Avatar(name: store.profile?.name ?? "Ghost", size: 64, photo: photo)
+                                .opacity(0.9)
+                        } else {
+                            Image(systemName: "person.fill.viewfinder")
+                                .font(.title2.weight(.semibold))
+                                .foregroundStyle(Theme.action)
+                                .frame(width: 64, height: 64)
+                                .background(Theme.action.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        }
+                    }
+                    .playerRing(seatColor(index))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(offer?.displayName ?? "Ghost")
+                            .font(.headline)
+                            .lineLimit(1)
+                        Text(offer.map { $0.kind.title } ?? "Vyber variantu")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Theme.action)
+                        Text(
+                            offer.map { item in
+                                if let note = item.styleNote, !note.isEmpty {
+                                    return "\(note) · klepni pro změnu"
+                                }
+                                return "Průměr \(item.averageText) · klepni pro změnu"
+                            } ?? "Klepni a zvol ghosta"
+                        )
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.tertiary)
+                }
+                .contentShape(Rectangle())
             }
-            Spacer(minLength: 4)
+            .buttonStyle(.plain)
+            .accessibilityLabel(offer.map { "Ghost, \($0.kind.title), průměr \($0.averageText)" } ?? "Ghost")
+            .accessibilityHint("Otevře výběr ghosta")
+            removeButton(index)
         }
-        .padding(.leading, 14)
-        .padding(.trailing, 14)
+        .padding(.leading, 12)
+        .padding(.trailing, 6)
         .padding(.vertical, 12)
         .playerCard(seatColor(index))
     }
 
-    private var ghostVariantPicker: some View {
-        let offers = Dictionary(uniqueKeysWithValues: store.ghostOffers(startingScore: draft.config.startingScore, outRule: draft.config.outRule).map { ($0.kind, $0) })
-        return VStack(alignment: .leading, spacing: 8) {
-            Text("Proti kterému sobě")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-            if offers.isEmpty {
-                Text("Nejdřív dohraj jeden X01 zápas se stejným startem a zavřením. Ghost pak přehraje tvoje skutečné šipky.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .padding(14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            } else {
-                ForEach(GhostKind.allCases) { kind in
-                    let offer = offers[kind]
-                    let selected = draft.ghostKind == kind
-                    Button {
-                        withAnimation(motion) { draft.ghostKind = kind }
-                    } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: kind.symbol)
-                                .font(.body.weight(.semibold))
-                                .foregroundStyle(selected ? Color.black : Theme.action)
-                                .frame(width: 36, height: 36)
-                                .background((selected ? Color.black : Theme.action).opacity(0.12), in: Circle())
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(kind.title)
-                                    .font(.subheadline.weight(.bold))
-                                    .foregroundStyle(selected ? Color.black : Color.primary)
-                                Text(offer.map { "\($0.averageText) průměr · \(kind.detail)" } ?? "Pro tahle pravidla zatím není")
-                                    .font(.caption)
-                                    .foregroundStyle(selected ? Color.black.opacity(0.65) : Color.secondary)
-                                    .lineLimit(2)
-                            }
-                            Spacer(minLength: 0)
-                            if offer != nil {
-                                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(selected ? Color.black : Color.secondary)
-                            }
-                        }
-                        .padding(12)
-                        .background(selected ? Theme.brand : Theme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        .opacity(offer == nil ? 0.45 : 1)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(offer == nil)
-                    .accessibilityAddTraits(selected ? .isSelected : [])
+    private var scoreOnlyCard: some View {
+        let scoring = !draft.includesMe
+        let locked = scoring && draft.seats.count >= 4
+        return Toggle(isOn: Binding(
+            get: { scoring },
+            set: { setPlaysMyself(!$0) }
+        )) {
+            HStack(spacing: 12) {
+                Image(systemName: scoring ? "pencil.and.list.clipboard" : "person.slash")
+                    .font(.body.weight(.bold))
+                    .foregroundStyle(scoring ? Theme.onAccent : .secondary)
+                    .frame(width: 40, height: 40)
+                    .background(
+                        scoring ? Theme.accentFill : Color.primary.opacity(0.08),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Nehraju, jen zapisuju")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(locked
+                         ? "Sestava je plná, nejdřív někoho odeber"
+                         : scoring ? "Nejsi mezi hráči, jen zapisuješ skóre" : "Jsi v sestavě a statistiky se ukládají")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
+        .tint(Theme.accentFill)
+        .disabled(locked)
+        .padding(.leading, 12)
+        .padding(.trailing, 14)
+        .padding(.vertical, 12)
+        .background(scoring ? Theme.action.opacity(0.08) : Theme.card, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(scoring ? Theme.action.opacity(0.7) : Theme.stroke, lineWidth: scoring ? 1.5 : 1)
+        )
+        .animation(motion, value: scoring)
+        .accessibilityHint(scoring ? "Vypni, pokud chceš hrát" : "Zapni, pokud jen zapisuješ")
     }
 
     private var meCard: some View {
@@ -1143,14 +887,6 @@ struct SetupView: View {
 
     private func isMe(_ index: Int) -> Bool { draft.includesMe && index == 0 }
 
-    private func addGuest() {
-        withAnimation(motion) {
-            draft.seats.append(SeatDraft(name: ""))
-            draft.starter = 0
-        }
-        focusedGuest = draft.seats.last?.id
-    }
-
     private func addBot() {
         guard draft.seats.count < 4 else { return }
         botPicker = BotPickerTarget(id: UUID(), seatID: nil, level: 3)
@@ -1159,7 +895,12 @@ struct SetupView: View {
     private func removeSeat(_ index: Int) {
         guard draft.seats.indices.contains(index), !isMe(index) else { return }
         withAnimation(motion) {
+            let wasGhost = draft.seats[index].ghostSeat
             _ = draft.seats.remove(at: index)
+            if wasGhost {
+                draft.ghostKind = nil
+                draft.ghostMatchID = nil
+            }
             draft.starter = 0
         }
     }
@@ -1182,39 +923,59 @@ struct SetupView: View {
         let seat = draft.seats[index]
         let linked = seat.friendID != nil
         let housemate = store.housemates.first { $0.id == seat.friendID }
-        return HStack(spacing: 12) {
-            Avatar(name: seat.name.isEmpty ? "?" : seat.name, size: 44, photo: housemate?.photoJPEG)
-                .playerRing(seatColor(index))
-            VStack(alignment: .leading, spacing: 3) {
-                if linked {
-                    Text(seat.name).font(.headline).lineLimit(1)
-                } else {
-                    TextField("Jméno kamaráda", text: $draft.seats[index].name)
-                        .font(.headline)
-                        .textInputAutocapitalization(.words)
-                        .autocorrectionDisabled()
-                        .focused($focusedGuest, equals: seat.id)
-                        .submitLabel(.done)
+        let photo = seat.friendID.flatMap { store.photo(for: $0) }
+        let caption = housemate != nil ? "Profil na tomto telefonu" : linked ? "Uložený kamarád" : "Jméno se uloží na příště"
+        return HStack(spacing: 4) {
+            if linked {
+                Button { openFriendPicker(replacing: seat.id) } label: {
+                    HStack(spacing: 12) {
+                        Avatar(name: seat.name.isEmpty ? "?" : seat.name, size: 44, photo: photo)
+                            .playerRing(seatColor(index))
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(seat.name).font(.headline).lineLimit(1).foregroundStyle(.primary)
+                            Text(caption)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text("Klepni pro změnu")
+                                .font(.caption)
+                                .foregroundStyle(Theme.action)
+                        }
+                        Spacer(minLength: 4)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
                 }
-                Label(housemate != nil ? "Profil na tomto telefonu" : linked ? "Uložený kamarád" : "Jméno se uloží na příště", systemImage: housemate != nil ? "person.crop.circle.fill" : linked ? "heart.fill" : "person")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .labelStyle(.titleAndIcon)
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(seat.name), kamarád")
+                .accessibilityHint("Otevře výběr kamaráda")
+            } else {
+                HStack(spacing: 12) {
+                    Avatar(name: seat.name.isEmpty ? "?" : seat.name, size: 44, photo: photo)
+                        .playerRing(seatColor(index))
+                    VStack(alignment: .leading, spacing: 3) {
+                        TextField("Jméno kamaráda", text: $draft.seats[index].name)
+                            .font(.headline)
+                            .textInputAutocapitalization(.words)
+                            .autocorrectionDisabled()
+                            .focused($focusedGuest, equals: seat.id)
+                            .submitLabel(.done)
+                        Label(caption, systemImage: "person")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .labelStyle(.titleAndIcon)
+                    }
+                    Spacer(minLength: 4)
+                }
             }
-            Spacer(minLength: 4)
             if allowsRemove {
                 removeButton(index)
             } else if linked {
-                Button("Změnit") {
-                    withAnimation(motion) {
-                        draft.seats[index] = SeatDraft(name: "")
-                        draft.starter = 0
-                    }
-                    focusedGuest = draft.seats[index].id
-                }
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Theme.action)
-                .buttonStyle(.plain)
+                Button("Změnit") { openFriendPicker(replacing: seat.id) }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.action)
+                    .buttonStyle(.plain)
             }
         }
         .padding(.leading, 14)
@@ -1223,47 +984,6 @@ struct SetupView: View {
         .playerCard(seatColor(index))
     }
 
-    private func botCard(_ index: Int) -> some View {
-        let seat = draft.seats[index]
-        let level = seat.level
-        let info = BotLevel.get(level)
-        return HStack(spacing: 4) {
-            Button { openBotPicker(seatID: seat.id) } label: {
-                HStack(spacing: 12) {
-                    Avatar(name: info.persona, bot: true, size: 52, asset: info.photo)
-                        .id(info.photo)
-                        .playerRing(seatColor(index))
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(botPersona(index)).font(.headline).contentTransition(.opacity)
-                        Text("Lv. \(level) · \(info.averageText) avg · \(info.throwTempoLabel)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .contentTransition(.opacity)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                    }
-                    Spacer(minLength: 4)
-                    Text("\(level)")
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(Theme.action)
-                        .contentTransition(.numericText(value: Double(level)))
-                    Image(systemName: "chevron.right")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.tertiary)
-                }
-                .padding(.leading, 14)
-                .padding(.vertical, 12)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint("Upravit úroveň bota")
-            removeButton(index)
-        }
-        .padding(.trailing, 6)
-        .playerCard(seatColor(index))
-        .sensoryFeedback(.selection, trigger: level)
-    }
     private var rulesStep: some View {
         VStack(alignment: .leading, spacing: 12) {
             if draft.config.mode == .x01 {
@@ -1288,7 +1008,6 @@ struct SetupView: View {
             if draft.config.mode == .x01 && draft.seats.count > 1 {
                 ruleSection(.handicap, "Handicap", icon: "scalemass.fill", value: handicapSummary) { handicapGroup }
             }
-            ruleSection(.flow, "Během hry", icon: "slider.horizontal.3", value: flowSummary) { flowGroup }
         }
     }
 
@@ -1361,7 +1080,6 @@ struct SetupView: View {
         if draft.config.mode == .x01 && draft.seats.count > 1 {
             rows.append(SummaryRow(key: .handicap, icon: "scalemass.fill", title: "Handicap", value: seatsHaveHandicap ? handicapSummary : "Vypnuto"))
         }
-        rows.append(SummaryRow(key: .flow, icon: "slider.horizontal.3", title: "Během hry", value: flowSummary))
         return rows
     }
 
@@ -1399,7 +1117,7 @@ struct SetupView: View {
                     name: seatName(index),
                     bot: seat.isBot && !isMe(index),
                     size: 36,
-                    photo: isMe(index) ? store.profile?.photoJPEG : store.housemates.first { $0.id == seat.friendID }?.photoJPEG,
+                    photo: seatPhoto(index),
                     asset: seat.isBot && !isMe(index) ? BotLevel.get(seat.level).photo : nil
                 )
                 .playerRing(seatColor(index))
@@ -1493,14 +1211,6 @@ struct SetupView: View {
 
     private var finishSummary: String {
         draft.config.doubleIn ? "\(draft.config.outRule.title) · Double in" : draft.config.outRule.title
-    }
-
-    private var flowSummary: String {
-        var parts: [String] = []
-        if draft.config.mode == .x01 && !draftAnyDoubleIn { parts.append(draft.config.settings.entry == .total ? "Součet kola" : "Každá šipka") }
-        if draft.config.mode == .x01 && draft.config.settings.checkoutHints { parts.append("nápověda") }
-        if draft.config.settings.keepAwake { parts.append("displej svítí") }
-        return parts.isEmpty ? "Výchozí" : parts.joined(separator: " · ")
     }
 
     private var scoreGroup: some View {
@@ -1735,11 +1445,6 @@ struct SetupView: View {
 
     private var seatsHaveHandicap: Bool { draft.seats.contains { !($0.handicap?.isEmpty ?? true) } }
 
-    private var draftAnyDoubleIn: Bool {
-        guard draft.config.mode == .x01 else { return false }
-        return draft.seats.contains { $0.handicap?.doubleIn ?? draft.config.doubleIn }
-    }
-
     private var handicapSummary: String {
         let count = draft.seats.filter { !($0.handicap?.isEmpty ?? true) }.count
         switch count {
@@ -1881,7 +1586,7 @@ struct SetupView: View {
                             name: seatName(index),
                             bot: draft.seats[index].isBot && !isMe(index),
                             size: 36,
-                            photo: isMe(index) ? store.profile?.photoJPEG : store.housemates.first { $0.id == draft.seats[index].friendID }?.photoJPEG,
+                            photo: seatPhoto(index),
                             asset: draft.seats[index].isBot && !isMe(index) ? BotLevel.get(draft.seats[index].level).photo : nil
                         )
                         .playerRing(seatColor(index))
@@ -1943,7 +1648,7 @@ struct SetupView: View {
                         name: seatName(index),
                         bot: draft.seats[index].isBot && !isMe(index),
                         size: 40,
-                        photo: isMe(index) ? store.profile?.photoJPEG : store.housemates.first { $0.id == draft.seats[index].friendID }?.photoJPEG,
+                        photo: seatPhoto(index),
                         asset: draft.seats[index].isBot && !isMe(index) ? BotLevel.get(draft.seats[index].level).photo : nil
                     )
                     .playerRing(seatColor(index))
@@ -2107,11 +1812,7 @@ struct SetupView: View {
     private var coinTossPlayers: [CoinTossPlayer] {
         draft.seats.indices.map { index in
             let seat = draft.seats[index]
-            let photo: Data? = {
-                if isMe(index) { return store.profile?.photoJPEG }
-                if let id = seat.friendID { return store.housemates.first { $0.id == id }?.photoJPEG }
-                return nil
-            }()
+            let photo = seatPhoto(index)
             let asset: String? = seat.isBot && !isMe(index) ? BotLevel.get(seat.level).photo : nil
             return CoinTossPlayer(
                 id: index,
@@ -2130,34 +1831,6 @@ struct SetupView: View {
         }, info: { openingInfo = mode })
     }
 
-    private var flowGroup: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if draft.config.mode == .x01 && !draftAnyDoubleIn {
-                Picker("Zápis skóre", selection: options.entry) {
-                    ForEach(EntryStyle.allCases) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                Text(draft.config.settings.entry == .total ? "Napíšeš součet kola. Při zavření potvrdíš počet šipek." : "Každá šipka se zapíše hned a třetí předá tah.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                Label("Zápis po jednotlivých šipkách", systemImage: "scope")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            if draft.seats.contains(where: \.isBot) {
-                Picker("Tempo šipek bota", selection: options.botDelay) {
-                    Text("Rychlé").tag(0.5)
-                    Text("Plynulé").tag(1.5)
-                    Text("Klidné").tag(3.0)
-                }
-                .pickerStyle(.segmented)
-            }
-            if draft.config.mode == .x01 { Toggle("Nápověda zavření", isOn: options.checkoutHints).tint(Theme.action) }
-            Toggle("Nezhasínat displej", isOn: options.keepAwake).tint(Theme.action)
-        }
-    }
-
     private func commitScore(_ value: Int) {
         draft.config.startingScore = value
         scoreText = "\(value)"
@@ -2165,6 +1838,11 @@ struct SetupView: View {
 
     private func advance() {
         commitScoreFromField()
+        if isSoloTraining, step >= 1 {
+            hideKeyboard()
+            openSoloTraining = true
+            return
+        }
         if !isLastStep {
             setStep(step + 1)
         } else if opening == .random, draft.seats.count > 1 {
@@ -2188,12 +1866,25 @@ struct SetupView: View {
         commitScoreFromField()
         withAnimation(motion) { step = value }
     }
+    /// Fotka místa: ty a ghost berou portrét profilu, kamarád svůj uložený snímek.
+    private func seatPhoto(_ index: Int) -> Data? {
+        guard draft.seats.indices.contains(index) else { return nil }
+        if isMe(index) || draft.seats[index].ghostSeat { return store.profile?.photoJPEG }
+        guard let id = draft.seats[index].friendID else { return nil }
+        return store.photo(for: id)
+    }
+
     private func seatName(_ i: Int) -> String {
         if isMe(i) { return store.profile?.name ?? "Já" }
         let seat = draft.seats[i]
         if seat.ghostSeat {
             return draft.ghostKind.flatMap {
-                store.ghostOffer($0, startingScore: draft.config.startingScore, outRule: draft.config.outRule)?.displayName
+                store.ghostOffer(
+                    $0,
+                    startingScore: draft.config.startingScore,
+                    outRule: draft.config.outRule,
+                    matchID: draft.ghostMatchID
+                )?.displayName
             } ?? "Ghost"
         }
         return seat.isBot ? botPersona(i) : seat.name
@@ -2265,7 +1956,12 @@ struct SetupView: View {
                 players.append(Player(id: profile.id, name: profile.name))
             } else if seat.ghostSeat {
                 guard let kind = draft.ghostKind,
-                      let offer = store.ghostOffer(kind, startingScore: draft.config.startingScore, outRule: draft.config.outRule)
+                      let offer = store.ghostOffer(
+                        kind,
+                        startingScore: draft.config.startingScore,
+                        outRule: draft.config.outRule,
+                        matchID: draft.ghostMatchID
+                      )
                 else { return false }
                 ghostOffer = offer
                 ghostSeat = players.count

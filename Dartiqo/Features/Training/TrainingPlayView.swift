@@ -201,10 +201,21 @@ struct TrainingPlayView: View {
                     labels: holdDarts.map(\.label)
                 )
             } else {
+                let darts = visitDarts
+                let guide = trainingCheckoutGuide(thrown: darts.count)
                 HStack(spacing: 8) {
                     ForEach(0..<3, id: \.self) { index in
-                        let dart = visitDarts.indices.contains(index) ? visitDarts[index] : nil
-                        ThrowSlotFace(index: index, dart: dart)
+                        let filled = darts.count > index
+                        let suggested = (!filled && guide.route.indices.contains(index - darts.count))
+                            ? guide.route[index - darts.count] : nil
+                        let note = (!filled && suggested == nil && index == darts.count) ? guide.note : nil
+                        ThrowSlotTile(
+                            index: index,
+                            dart: filled ? darts[index] : nil,
+                            suggestion: suggested,
+                            note: note,
+                            setupLeave: suggested == nil ? nil : guide.setupLeave
+                        )
                     }
                 }
                 .frame(height: 88)
@@ -216,6 +227,26 @@ struct TrainingPlayView: View {
         }
     }
 
+    /// Zbývající skóre z cíle (číslo) — u X01 / checkout tipů stejně jako v zápase.
+    private var checkoutRemaining: Int? {
+        let raw = projection.target.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty, raw.allSatisfy(\.isNumber), let value = Int(raw), value > 0 else { return nil }
+        return value
+    }
+
+    private func trainingCheckoutGuide(thrown: Int) -> ScoringChrome.CheckoutGuide {
+        guard !isHoldingVisit, !finished, let remaining = checkoutRemaining else {
+            return ScoringChrome.CheckoutGuide()
+        }
+        return ScoringChrome.checkoutGuide(
+            remaining: remaining,
+            rule: .double,
+            thrown: thrown,
+            opened: projection.opened,
+            enabled: config.showCheckouts
+        )
+    }
+
     @ViewBuilder
     private var input: some View {
         if isHoldingVisit {
@@ -225,7 +256,11 @@ struct TrainingPlayView: View {
         } else {
             switch surface {
             case .board:
-                ScoringDartboard(marks: visitDarts, interactive: true) { dart in _ = throwDart(dart) }
+                ScoringDartboard(
+                    marks: visitDarts,
+                    interactive: true,
+                    suggestion: trainingCheckoutGuide(thrown: visitDarts.count).route.first
+                ) { dart in _ = throwDart(dart) }
             case .camera:
                 if let calibration = store.boardCalibration, cameraReady {
                     CameraScoreView(calibration: calibration, labels: visitDarts.map(\.label), dartCount: visitDarts.count) { dart, _ in
@@ -249,12 +284,11 @@ struct TrainingPlayView: View {
                 }
             }
         }
-        if !projection.detail.isEmpty || projection.hint != nil || projection.ghost != nil || !projection.bogeys.isEmpty {
+        if !projection.detail.isEmpty || projection.ghost != nil || !projection.bogeys.isEmpty || projection.playerLine != nil {
             VStack(alignment: .leading, spacing: 4) {
                 if !projection.detail.isEmpty { Text(projection.detail) }
                 if let line = projection.playerLine { Text(line).fontWeight(.bold) }
                 if let ghost = projection.ghost { Text(ghost) }
-                if config.showCheckouts, let hint = projection.hint, !hint.isEmpty { Text(hint).fontWeight(.semibold) }
                 if !projection.bogeys.isEmpty {
                     Text("Nezavřitelné: \(projection.bogeys.map(String.init).joined(separator: ", "))")
                 }

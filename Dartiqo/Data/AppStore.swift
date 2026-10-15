@@ -11,12 +11,28 @@ struct Profile: Codable, Identifiable {
     var createdAt = Date()
     /// Malý JPEG portrét. Chybějící klíč ve starších souborech zůstane prázdný.
     var photoJPEG: Data?
+    /// Lokální handle pro hledání mezi profily na zařízení.
+    var username: String?
+    var email: String?
 }
 struct Friend: Codable, Identifiable, Equatable {
     var id = UUID()
     var owner: UUID
     var name: String
     var lastPlayed: Date?
+    var photoJPEG: Data?
+    var username: String?
+    var email: String?
+    /// Propojení s profilem na stejném telefonu (stejné UUID v zápasech / H2H).
+    var linkedProfileID: UUID?
+}
+/// Výsledek hledání profilu v Dartiqo na tomto zařízení.
+struct DartiqoPersonHit: Identifiable, Equatable {
+    var id: UUID
+    var name: String
+    var username: String?
+    var email: String?
+    var photoJPEG: Data?
 }
 struct StoredData: Codable {
     var version = 1
@@ -40,6 +56,8 @@ struct StoredData: Codable {
     var xpEvents: [XPEvent]?
     var trainingPlan: [String: TrainingPlan]?
     var achievementUnlocks: [AchievementUnlock]?
+    /// Trvalé učení Zrcadla stylu (klíč owner|start|out).
+    var ghostStyleMemories: [String: GhostStyleMemory]?
 }
 struct JSONDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
@@ -95,6 +113,11 @@ enum AppSection: Hashable {
         if data.lastSetups == nil { data.lastSetups = [:] }
         data.lastSetups?[id] = setup; save()
     }
+    /// Poslední sestava zápasu pro předvyplnění obrazovky Hrát.
+    var lastSetup: SetupDraft? {
+        guard let id = profile?.id.uuidString else { return nil }
+        return data.lastSetups?[id]
+    }
     func addPreset(name: String, setup: SetupDraft) {
         guard let id = profile?.id else { return }
         let clean = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(32))
@@ -111,25 +134,119 @@ enum AppSection: Hashable {
     /// Ostatní profily na tomhle telefonu.
     var housemates: [Profile] { data.profiles.filter { $0.id != profile?.id } }
     @discardableResult func addFriend(_ name: String) -> Friend? {
+        createFriend(name: name)
+    }
+    @discardableResult func createFriend(
+        name: String,
+        username: String? = nil,
+        email: String? = nil,
+        photo: UIImage? = nil,
+        linkedProfileID: UUID? = nil
+    ) -> Friend? {
         guard let owner = profile?.id else { return nil }
         let clean = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24))
         guard !clean.isEmpty else { return nil }
-        if let existing = friends.first(where: { $0.name.compare(clean, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame }) { return existing }
-        let friend = Friend(owner: owner, name: clean)
+        let handle = Self.normalizeHandle(username)
+        let mail = Self.normalizeEmail(email)
+        if let linked = linkedProfileID,
+           let existing = friends.first(where: { $0.id == linked || $0.linkedProfileID == linked }) {
+            return existing
+        }
+        if let existing = friends.first(where: {
+            $0.name.compare(clean, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
+        }) { return existing }
+        var friend = Friend(
+            id: linkedProfileID ?? UUID(),
+            owner: owner,
+            name: clean,
+            username: handle,
+            email: mail,
+            linkedProfileID: linkedProfileID
+        )
+        if let photo { friend.photoJPEG = Self.jpegThumb(photo) }
         if data.friends == nil { data.friends = [] }
-        data.friends?.append(friend); save()
+        data.friends?.append(friend)
+        save()
         return friend
     }
+    /// Najde jiné profily na zařízení podle jména, username nebo e-mailu.
+    func findDartiqoPeople(query: String) -> [DartiqoPersonHit] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard needle.count >= 2 else { return [] }
+        let options: String.CompareOptions = [.caseInsensitive, .diacriticInsensitive]
+        return housemates.compactMap { person in
+            let haystacks = [person.name, person.username, person.email].compactMap { $0 }
+            guard haystacks.contains(where: { $0.range(of: needle, options: options) != nil }) else { return nil }
+            return DartiqoPersonHit(
+                id: person.id,
+                name: person.name,
+                username: person.username,
+                email: person.email,
+                photoJPEG: person.photoJPEG
+            )
+        }
+        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
     func deleteFriend(_ id: UUID) { data.friends?.removeAll { $0.id == id }; save() }
+    /// Upraví lokální profil kamaráda. Fotku mění jen když přijde nový snímek.
+    @discardableResult func updateFriend(
+        _ id: UUID,
+        name: String,
+        username: String?,
+        email: String?,
+        photo: UIImage? = nil
+    ) -> Friend? {
+        guard var all = data.friends,
+              let index = all.firstIndex(where: { $0.id == id && $0.owner == profile?.id }) else { return nil }
+        let clean = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24))
+        guard !clean.isEmpty else { return nil }
+        all[index].name = clean
+        all[index].username = Self.normalizeHandle(username)
+        all[index].email = Self.normalizeEmail(email)
+        if let photo { all[index].photoJPEG = Self.jpegThumb(photo) }
+        data.friends = all
+        save()
+        return all[index]
+    }
     func notePlayed(with ids: [UUID]) {
         guard var all = data.friends else { return }
         let now = Date()
-        for index in all.indices where ids.contains(all[index].id) { all[index].lastPlayed = now }
+        for index in all.indices where ids.contains(all[index].id) || ids.contains(where: { all[index].linkedProfileID == $0 }) {
+            all[index].lastPlayed = now
+        }
         data.friends = all; save()
     }
     var profile: Profile? { data.profiles.first { $0.id == data.selectedProfile } }
     func photo(for playerID: UUID) -> Data? {
-        data.profiles.first { $0.id == playerID }?.photoJPEG
+        let friend = data.friends?.first { $0.id == playerID || $0.linkedProfileID == playerID }
+        if let jpeg = friend?.photoJPEG { return jpeg }
+        if let jpeg = data.profiles.first(where: { $0.id == playerID })?.photoJPEG { return jpeg }
+        if let linked = friend?.linkedProfileID {
+            return data.profiles.first { $0.id == linked }?.photoJPEG
+        }
+        return nil
+    }
+    func updateProfileContact(username: String?, email: String?) {
+        guard let index = data.profiles.firstIndex(where: { $0.id == data.selectedProfile }) else { return }
+        data.profiles[index].username = Self.normalizeHandle(username)
+        data.profiles[index].email = Self.normalizeEmail(email)
+        save()
+    }
+    private static func normalizeHandle(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        var clean = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if clean.hasPrefix("@") { clean.removeFirst() }
+        clean = String(clean.prefix(24))
+        return clean.isEmpty ? nil : clean
+    }
+    private static func normalizeEmail(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let clean = String(raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().prefix(64))
+        return clean.isEmpty ? nil : clean
+    }
+    private static func jpegThumb(_ image: UIImage) -> Data? {
+        let thumb = image.preparingThumbnail(of: CGSize(width: 320, height: 320)) ?? image
+        return thumb.jpegData(compressionQuality: 0.82)
     }
     var matches: [Match] { guard let id = profile?.id else { return [] }; return data.matches.filter { $0.players.contains { $0.id == id } }.sorted { ($0.completedAt ?? $0.createdAt) > ($1.completedAt ?? $1.createdAt) } }
     var activeMatch: Match? {
@@ -158,11 +275,80 @@ enum AppSection: Hashable {
     /// Ghost nabídky pro zvolená X01 pravidla.
     func ghostOffers(startingScore: Int, outRule: OutRule) -> [GhostOffer] {
         guard let id = profile?.id else { return [] }
-        return GhostMode.offers(matches: matches, playerID: id, startingScore: startingScore, outRule: outRule)
+        return GhostMode.offers(
+            matches: matches,
+            playerID: id,
+            startingScore: startingScore,
+            outRule: outRule,
+            memory: ghostStyleMemory(startingScore: startingScore, outRule: outRule)
+        )
     }
-    func ghostOffer(_ kind: GhostKind, startingScore: Int, outRule: OutRule) -> GhostOffer? {
+    func ghostOffer(_ kind: GhostKind, startingScore: Int, outRule: OutRule, matchID: UUID? = nil) -> GhostOffer? {
         guard let id = profile?.id else { return nil }
-        return GhostMode.offer(kind: kind, matches: matches, playerID: id, startingScore: startingScore, outRule: outRule)
+        return GhostMode.offer(
+            kind: kind,
+            matches: matches,
+            playerID: id,
+            startingScore: startingScore,
+            outRule: outRule,
+            matchID: matchID,
+            memory: ghostStyleMemory(startingScore: startingScore, outRule: outRule)
+        )
+    }
+    func ghostMatchCandidates(startingScore: Int, outRule: OutRule) -> [GhostOffer] {
+        guard let id = profile?.id else { return [] }
+        return GhostMode.matchCandidates(matches: matches, playerID: id, startingScore: startingScore, outRule: outRule)
+    }
+    func ghostStyleMemory(startingScore: Int, outRule: OutRule) -> GhostStyleMemory? {
+        guard let id = profile?.id else { return nil }
+        let key = GhostStyleMemory.key(owner: id, startingScore: startingScore, outRule: outRule)
+        if let existing = data.ghostStyleMemories?[key] { return existing }
+        seedGhostStyleMemoryIfNeeded(owner: id, startingScore: startingScore, outRule: outRule)
+        return data.ghostStyleMemories?[key]
+    }
+
+    /// Jednou naplní paměť z dosavadní historie (starší účty bez průběžného učení).
+    private func seedGhostStyleMemoryIfNeeded(owner: UUID, startingScore: Int, outRule: OutRule) {
+        let key = GhostStyleMemory.key(owner: owner, startingScore: startingScore, outRule: outRule)
+        guard data.ghostStyleMemories?[key] == nil else { return }
+        let pool = matches.filter {
+            $0.finished && $0.config.mode == .x01
+                && $0.config.startingScore == startingScore
+                && $0.config.outRule == outRule
+                && $0.players.contains { $0.id == owner }
+        }
+        .sorted { ($0.completedAt ?? $0.createdAt) < ($1.completedAt ?? $1.createdAt) }
+        guard pool.count >= GhostMode.mirrorUnlockCount else { return }
+        var memory = GhostStyleMemory(owner: owner, startingScore: startingScore, outRule: outRule)
+        for match in pool {
+            guard let index = match.players.firstIndex(where: { $0.id == owner }) else { continue }
+            memory.learn(from: match, playerIndex: index)
+        }
+        if data.ghostStyleMemories == nil { data.ghostStyleMemories = [:] }
+        data.ghostStyleMemories?[key] = memory
+        save()
+    }
+
+    /// Po dohraném X01 aktualizuje učení Zrcadla stylu.
+    func learnGhostStyle(from match: Match) {
+        guard match.finished, match.config.mode == .x01 else { return }
+        guard let owner = profile?.id,
+              let index = match.players.firstIndex(where: { $0.id == owner })
+        else { return }
+        let key = GhostStyleMemory.key(
+            owner: owner,
+            startingScore: match.config.startingScore,
+            outRule: match.config.outRule
+        )
+        var memory = data.ghostStyleMemories?[key] ?? GhostStyleMemory(
+            owner: owner,
+            startingScore: match.config.startingScore,
+            outRule: match.config.outRule
+        )
+        memory.learn(from: match, playerIndex: index)
+        if data.ghostStyleMemories == nil { data.ghostStyleMemories = [:] }
+        data.ghostStyleMemories?[key] = memory
+        save()
     }
     var ownVisits: [Visit] { x01Matches.flatMap { m in m.visits.filter { m.players[$0.player].id == profile?.id } } }
     var average: Double {
@@ -205,18 +391,18 @@ enum AppSection: Hashable {
     }
     func setPhoto(_ image: UIImage?) {
         guard let index = data.profiles.firstIndex(where: { $0.id == data.selectedProfile }) else { return }
-        if let image {
-            let thumb = image.preparingThumbnail(of: CGSize(width: 320, height: 320)) ?? image
-            data.profiles[index].photoJPEG = thumb.jpegData(compressionQuality: 0.82)
-        } else {
-            data.profiles[index].photoJPEG = nil
-        }
+        data.profiles[index].photoJPEG = image.flatMap(Self.jpegThumb)
         save()
     }
     func signOut() { data.selectedProfile = nil; save() }
     func finish() {
         guard let match = activeMatch, match.finished else { return }
-        if !data.matches.contains(where: { $0.id == match.id }) { var archived = match; archived.undoStack = []; data.matches.append(archived) }
+        if !data.matches.contains(where: { $0.id == match.id }) {
+            var archived = match
+            archived.undoStack = []
+            data.matches.append(archived)
+            learnGhostStyle(from: archived)
+        }
         activeMatch = nil
     }
     func deleteMatch(_ id: UUID) {

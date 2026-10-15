@@ -117,4 +117,48 @@ final class GhostModeTests: XCTestCase {
         match.ghostVisits = []
         XCTAssertEqual(GhostMode.nextDart(in: match), Dart.miss)
     }
+
+    func testMirrorUnlocksAfterEnoughMatches() {
+        let matches = (0..<GhostMode.mirrorUnlockCount).map { index in
+            finishedMatch(
+                averageSeed: [[Dart(20, 3), Dart(20, 3), Dart(20, 3)]],
+                completed: now.addingTimeInterval(Double(-index) * 3_600)
+            )
+        }
+        XCTAssertFalse(
+            GhostMode.mirrorUnlocked(
+                matches: Array(matches.prefix(GhostMode.mirrorUnlockCount - 1)),
+                playerID: player,
+                startingScore: 501,
+                outRule: .double
+            )
+        )
+        let offer = GhostMode.offer(
+            kind: .mirror,
+            matches: matches,
+            playerID: player,
+            startingScore: 501,
+            outRule: .double,
+            now: now
+        )
+        XCTAssertNotNil(offer)
+        XCTAssertFalse(offer?.visits.isEmpty ?? true)
+        XCTAssertEqual(offer?.kind, .mirror)
+    }
+
+    func testTodayOffer() {
+        let today = finishedMatch(
+            averageSeed: [[Dart(20), Dart(20), Dart(20)]],
+            completed: now
+        )
+        let offer = GhostMode.offer(
+            kind: .today,
+            matches: [today],
+            playerID: player,
+            startingScore: 501,
+            outRule: .double,
+            now: now
+        )
+        XCTAssertEqual(offer?.sourceID, today.id)
+    }
 }

@@ -209,35 +209,28 @@ struct HeadToHeadPregameView: View {
         ZStack {
             background
             VStack(spacing: 0) {
-                Spacer(minLength: 12)
-
-                Label("Head-to-Head", systemImage: "person.2.fill")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(accent)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(accent.opacity(0.16), in: Capsule())
-
-                if let me = store.profile?.id {
-                    ScrollView {
-                        HeadToHeadStandingView(
-                            series: series,
-                            me: me,
-                            myName: myName,
-                            myPhoto: myPhoto,
-                            theirPhoto: theirPhoto,
-                            style: .ceremony,
-                            compact: true,
-                            onSelectMatch: nil
-                        )
-                        .padding(.horizontal, 20)
-                        .padding(.top, 16)
-                        .padding(.bottom, 12)
+                if series.played == 0, let me = store.profile?.id {
+                    Spacer(minLength: 12)
+                    VStack(spacing: 18) {
+                        h2hPill
+                        standing(me: me)
+                            .padding(.horizontal, 20)
                     }
-                    .scrollIndicators(.hidden)
+                    Spacer(minLength: 12)
+                } else {
+                    Spacer(minLength: 12)
+                    h2hPill
+                    if let me = store.profile?.id {
+                        ScrollView {
+                            standing(me: me)
+                                .padding(.horizontal, 20)
+                                .padding(.top, 16)
+                                .padding(.bottom, 12)
+                        }
+                        .scrollIndicators(.hidden)
+                    }
+                    Spacer(minLength: 0)
                 }
-
-                Spacer(minLength: 0)
             }
             .frame(maxWidth: 560)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -254,6 +247,28 @@ struct HeadToHeadPregameView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Head-to-Head proti \(series.opponentName). \(series.standingTitle) \(series.recordLine).")
         .accessibilityHint("Klepni Začít hru nebo počkej")
+    }
+
+    private var h2hPill: some View {
+        Label("Head-to-Head", systemImage: "person.2.fill")
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(accent)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(accent.opacity(0.16), in: Capsule())
+    }
+
+    private func standing(me: UUID) -> some View {
+        HeadToHeadStandingView(
+            series: series,
+            me: me,
+            myName: myName,
+            myPhoto: myPhoto,
+            theirPhoto: theirPhoto,
+            style: .ceremony,
+            compact: true,
+            onSelectMatch: nil
+        )
     }
 
     private var background: some View {
@@ -360,6 +375,7 @@ struct HeadToHeadStandingView: View {
 
     private var isBehind: Bool { series.myWins < series.theirWins }
     private var isAhead: Bool { series.myWins > series.theirWins }
+    private var isDebut: Bool { series.played == 0 }
 
     private var leadAmber: Color { Color(red: 1, green: 0.60, blue: 0.10) }
     private var lossRed: Color {
@@ -401,18 +417,22 @@ struct HeadToHeadStandingView: View {
     private var header: some View {
         VStack(spacing: 14) {
             HStack(spacing: 0) {
-                playerSide(name: myName, photo: myPhoto, bot: false, asset: nil, badge: nil, align: .leading, highlighted: isAhead || (!isBehind && !isAhead))
-                VStack(spacing: 4) {
-                    Text(series.recordLine)
-                        .font(.system(size: compact ? 34 : 40, weight: .heavy, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(myTint)
-                    Text(series.standingTitle.uppercased())
-                        .font(.caption.weight(.heavy))
-                        .tracking(0.6)
-                        .foregroundStyle(myTint.opacity(style == .ceremony ? 0.95 : 0.9))
+                playerSide(name: myName, photo: myPhoto, bot: false, asset: nil, badge: nil, align: .leading, highlighted: !isDebut && !isBehind)
+                if isDebut {
+                    debutMark
+                } else {
+                    VStack(spacing: 4) {
+                        Text(series.recordLine)
+                            .font(.system(size: compact ? 34 : 40, weight: .heavy, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(myTint)
+                        Text(series.standingTitle.uppercased())
+                            .font(.caption.weight(.heavy))
+                            .tracking(0.6)
+                            .foregroundStyle(myTint.opacity(style == .ceremony ? 0.95 : 0.9))
+                    }
+                    .frame(minWidth: 96)
                 }
-                .frame(minWidth: 96)
                 playerSide(
                     name: series.opponentName,
                     photo: theirPhoto,
@@ -420,30 +440,34 @@ struct HeadToHeadStandingView: View {
                     asset: series.opponentBotLevel.map { BotLevel.get($0).photo },
                     badge: series.opponentBotLevel.map { "Lv. \($0)" },
                     align: .trailing,
-                    highlighted: isBehind
+                    highlighted: !isDebut && isBehind
                 )
             }
 
-            shareBar
+            if isDebut {
+                debutNote
+            } else {
+                shareBar
 
-            HStack(spacing: 0) {
-                metric("\(series.played)", "zápasů")
-                Divider().frame(height: 32).overlay(style == .ceremony ? Color.white.opacity(0.12) : Color.primary.opacity(0.1))
-                metric("\(series.myWins)", "výher", tint: series.myWins > 0 ? Theme.positive : nil)
-                Divider().frame(height: 32).overlay(style == .ceremony ? Color.white.opacity(0.12) : Color.primary.opacity(0.1))
-                metric("\(series.theirWins)", "proher", tint: series.theirWins > 0 ? lossRed : nil)
-                Divider().frame(height: 32).overlay(style == .ceremony ? Color.white.opacity(0.12) : Color.primary.opacity(0.1))
-                metric(
-                    winRateLabel,
-                    "úspěšnost",
-                    tint: series.myWins + series.theirWins > 0 ? myTint : nil
+                HStack(spacing: 0) {
+                    metric("\(series.played)", "zápasů")
+                    metricDivider
+                    metric("\(series.myWins)", "výher", tint: series.myWins > 0 ? Theme.positive : nil)
+                    metricDivider
+                    metric("\(series.theirWins)", "proher", tint: series.theirWins > 0 ? lossRed : nil)
+                    metricDivider
+                    metric(
+                        winRateLabel,
+                        "úspěšnost",
+                        tint: series.myWins + series.theirWins > 0 ? myTint : nil
+                    )
+                }
+                .padding(.vertical, 10)
+                .background(
+                    (style == .light ? Theme.background : cardFill),
+                    in: RoundedRectangle(cornerRadius: 16, style: .continuous)
                 )
             }
-            .padding(.vertical, 10)
-            .background(
-                (style == .light ? Theme.background : cardFill),
-                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-            )
         }
         .padding(compact ? 14 : 16)
         .background(cardFill, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
@@ -454,10 +478,54 @@ struct HeadToHeadStandingView: View {
     }
 
     private var headerStroke: Color {
+        if isDebut { return leadAmber.opacity(style == .ceremony ? 0.45 : 0.35) }
         if isBehind { return lossRed.opacity(style == .ceremony ? 0.55 : 0.28) }
         if isAhead { return Theme.positive.opacity(style == .ceremony ? 0.45 : 0.28) }
         if style == .ceremony { return Color.white.opacity(0.08) }
         return Color.orange.opacity(0.4)
+    }
+
+    /// Zarovná „VS“ na portréty, ne mezi jméno a odznak.
+    private var debutMark: some View {
+        let mark: CGFloat = compact ? 52 : 58
+        return VStack(spacing: 8) {
+            Color.clear.frame(height: 18)
+            ZStack {
+                Circle().fill(leadAmber.opacity(style == .ceremony ? 0.18 : 0.12))
+                Circle().strokeBorder(leadAmber.opacity(0.7), lineWidth: 1.5)
+                Text("VS")
+                    .font(.system(size: compact ? 15 : 17, weight: .heavy, design: .rounded))
+                    .foregroundStyle(leadAmber)
+            }
+            .frame(width: mark, height: mark)
+            Color.clear.frame(height: 18)
+        }
+        .frame(minWidth: 72)
+        .accessibilityHidden(true)
+    }
+
+    private var debutNote: some View {
+        VStack(spacing: 4) {
+            Text("První vzájemný zápas")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(primaryText)
+            Text("Bilance se zapíše, až ho dohrajete.")
+                .font(.caption)
+                .foregroundStyle(secondaryText)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 14)
+        .background(
+            leadAmber.opacity(style == .ceremony ? 0.14 : 0.10),
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
+        .accessibilityElement(children: .combine)
+    }
+
+    private var metricDivider: some View {
+        Divider().frame(height: 32).overlay(style == .ceremony ? Color.white.opacity(0.12) : Color.primary.opacity(0.1))
     }
 
     private var winRateLabel: String {

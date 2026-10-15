@@ -154,7 +154,7 @@ struct HomeView: View {
     private var actionGrid: some View {
         VStack(spacing: 12) {
             HStack(spacing: 12) {
-                NavigationLink { SetupView(mode: .x01, coversLiveBar: true) } label: {
+                NavigationLink { SetupView(mode: .x01, preset: store.lastSetup, coversLiveBar: true) } label: {
                     LobbyCard(
                         title: "Hrát lokálně",
                         detail: "X01 s kamarády nebo boty",

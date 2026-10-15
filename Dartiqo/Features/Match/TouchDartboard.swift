@@ -6,6 +6,8 @@ struct TouchDartboard: View {
     var showMarkNumbers = true
     /// 1 = celý terč. Vyšší hodnota přiblíží střed, gesta používají stejný poloměr.
     var zoom: CGFloat = 1
+    /// AI nápověda. Zvýrazní jen dané pole — double, triple, single nebo bull.
+    var suggestion: Dart? = nil
     var onHit: (Dart) -> Void
 
     @State private var touch: CGPoint?
@@ -36,7 +38,7 @@ struct TouchDartboard: View {
             .contentShape(Rectangle())
             .modifier(BoardInteractionModifier(enabled: interactive, gesture: boardGesture(size: size, center: center, radius: radius)))
             .accessibilityElement()
-            .accessibilityLabel("Dotykový terč")
+            .accessibilityLabel(suggestion.map { "Dotykový terč, doporučení \($0.label)" } ?? "Dotykový terč")
             .accessibilityHint(interactive ? "Podrž a posouvej prst pro výběr přesného místa. Pusť pro zápis." : "")
             .accessibilityAddTraits(interactive ? .isButton : [])
         }
@@ -139,12 +141,18 @@ struct TouchDartboard: View {
                 context.stroke(ring(BoardGeometry.outerBull, 1, start, end), with: .color(.gray.opacity(0.7)), lineWidth: 0.5)
                 let angle = (-90 + Double(i) * 18) * Double.pi / 180
                 let point = CGPoint(x: center.x + radius * 1.09 * cos(angle), y: center.y + radius * 1.09 * sin(angle))
-                context.draw(Text("\(BoardGeometry.sectors[i])").font(.system(size: max(11, radius * 0.075), weight: .bold, design: .rounded)).foregroundColor(.white), at: point)
+                let aimed = suggestion?.segment == BoardGeometry.sectors[i]
+                context.draw(Text("\(BoardGeometry.sectors[i])").font(.system(size: max(11, radius * 0.075), weight: aimed ? .heavy : .bold, design: .rounded)).foregroundColor(aimed ? highlight : .white), at: point)
             }
             for (r, color) in [(BoardGeometry.outerBull, Color(red: 0.04, green: 0.59, blue: 0.35)), (BoardGeometry.innerBull, Color(red: 0.78, green: 0.12, blue: 0.15))] {
                 context.fill(Path(ellipseIn: CGRect(x: center.x - radius * r, y: center.y - radius * r, width: radius * r * 2, height: radius * r * 2)), with: .color(color))
             }
-            if let hover, let path = highlightPath(for: hover, center: center, radius: radius, ring: ring) {
+            if let suggestion, let path = highlightPath(for: suggestion, center: center, radius: radius, ring: ring) {
+                context.stroke(path, with: .color(.black.opacity(0.55)), lineWidth: 5)
+                context.fill(path, with: .color(highlight.opacity(0.78)))
+                context.stroke(path, with: .color(highlight), lineWidth: 2.5)
+            }
+            if let hover, hover != suggestion, let path = highlightPath(for: hover, center: center, radius: radius, ring: ring) {
                 context.fill(path, with: .color(highlight.opacity(0.28)))
                 context.stroke(path, with: .color(highlight), lineWidth: 2.5)
             }

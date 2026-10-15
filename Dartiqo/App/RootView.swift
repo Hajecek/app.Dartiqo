@@ -25,7 +25,7 @@ struct MainTabView: View {
                 .tabItem { Label("Domů", systemImage: "house.fill") }
                 .tag(AppSection.home)
             NavigationStack {
-                SetupView(mode: .x01) {
+                SetupView(mode: .x01, preset: store.lastSetup) {
                     store.section = .home
                 }
             }

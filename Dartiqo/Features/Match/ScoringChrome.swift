@@ -3,12 +3,94 @@ import SwiftUI
 /// Společná plocha zápisu pro zápas i trénink. Barvy sedí na zápasové plátno.
 enum ScoringChrome {
     static let coral = Color(red: 1, green: 0.32, blue: 0.20)
+    static let amber = Color(red: 1, green: 0.60, blue: 0.10)
     static let ink = Color(red: 0.045, green: 0.10, blue: 0.075)
     static let green = Color(red: 0.13, green: 0.80, blue: 0.49)
     static let aiTipSoft = Color(red: 0.78, green: 0.95, blue: 0.90)
+    /// Tmavší zelená pod bílým textem AI tipů v políčkách.
+    static let aiTip = Color(red: 0.02, green: 0.42, blue: 0.36)
+    /// Sehrávka — amber, ať se neplete s checkoutem.
+    static let setupTip = Color(red: 0.42, green: 0.24, blue: 0.02)
     /// Pauza po kole, než se ukáže další — stejná v zápase i tréninku.
     static func visitHoldSeconds(botDelay: Double = 1.5, reduceMotion: Bool) -> Double {
         reduceMotion ? 0.45 : max(1.8, min(2.8, botDelay + 0.6))
+    }
+
+    /// Nápověda zavření / sehrávky do tří slotů (zápas i trénink).
+    struct CheckoutGuide: Equatable {
+        var route: [Dart] = []
+        var note: String? = nil
+        var setupLeave: String? = nil
+    }
+
+    static func checkoutGuide(
+        remaining: Int,
+        rule: OutRule = .double,
+        thrown: Int,
+        opened: Bool = true,
+        enabled: Bool = true
+    ) -> CheckoutGuide {
+        guard enabled else { return CheckoutGuide() }
+        let dartsLeft = max(0, 3 - thrown)
+        if !opened { return CheckoutGuide(note: "double in") }
+        guard dartsLeft > 0 else { return CheckoutGuide() }
+        if let route = Checkout.route(for: remaining, rule: rule, darts: dartsLeft) {
+            return CheckoutGuide(route: route)
+        }
+        if remaining <= 170, let setup = Checkout.setup(for: remaining, rule: rule, darts: dartsLeft) {
+            return CheckoutGuide(route: setup.darts, setupLeave: setup.leaveLabel)
+        }
+        return CheckoutGuide()
+    }
+}
+
+/// Slot aktuálního hodu: šipka, AI checkout, sehrávka, nebo prázdné s poznámkou.
+struct ThrowSlotTile: View {
+    var index: Int
+    var dart: Dart?
+    var suggestion: Dart? = nil
+    var note: String? = nil
+    var setupLeave: String? = nil
+
+    var body: some View {
+        if let dart {
+            ThrowSlotFace(index: index, dart: dart)
+        } else if let suggestion {
+            let setup = setupLeave != nil
+            VStack(spacing: 5) {
+                HStack(spacing: 3) {
+                    Image(systemName: setup ? "arrow.turn.up.right" : "sparkles")
+                        .font(.system(size: 9, weight: .bold))
+                    Text(setup ? "Sehrávka" : "AI")
+                        .font(AppFont.caption(10, weight: .heavy))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+                .foregroundStyle(.white.opacity(0.85))
+                Text(suggestion.label)
+                    .font(AppFont.display(28, weight: .heavy))
+                    .foregroundStyle(.white)
+                    .minimumScaleFactor(0.7)
+                    .lineLimit(1)
+                Text(setup ? "na \(setupLeave ?? "")" : "\(suggestion.score)")
+                    .font(AppFont.caption(12, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundStyle(.white.opacity(0.75))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(setup ? ScoringChrome.setupTip : ScoringChrome.aiTip, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(setup ? ScoringChrome.amber : ScoringChrome.green.opacity(0.55), lineWidth: 1.5)
+            )
+            .accessibilityLabel(setup
+                ? "\(index + 1). šipka, sehrávka na \(setupLeave ?? ""), hoď \(suggestion.label)"
+                : "\(index + 1). šipka, AI nápověda \(suggestion.label)")
+        } else {
+            ThrowSlotFace(index: index, dart: nil, note: note)
+        }
     }
 }
 
@@ -294,10 +376,12 @@ struct ThrowSlotFace: View {
 struct ScoringDartboard: View {
     var marks: [Dart]
     var interactive: Bool
+    /// Další doporučená šipka. Na terči se rozsvítí jen to pole.
+    var suggestion: Dart? = nil
     var onHit: (Dart) -> Void = { _ in }
 
     var body: some View {
-        TouchDartboard(marks: marks, interactive: interactive, onHit: onHit)
+        TouchDartboard(marks: marks, interactive: interactive, suggestion: suggestion, onHit: onHit)
             .allowsHitTesting(interactive)
             .frame(maxWidth: 420)
             .frame(maxWidth: .infinity)

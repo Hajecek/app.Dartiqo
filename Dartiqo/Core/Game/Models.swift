@@ -348,7 +348,7 @@ public struct Match: Codable, Identifiable {
         ghostVisits != nil && ghostPlayerIndex == player
     }
     public var isGhostTurn: Bool { isGhost(active) }
-    public var tracksGhostAverage: Bool { ghostKind == .beatPB }
+    public var tracksGhostAverage: Bool { ghostKind == .beatPB || ghostKind == .mirror }
     public func average(for player: Int) -> Double {
         let v = visits.filter { $0.player == player }; let darts = v.reduce(0) { $0 + $1.darts.count }
         return darts == 0 ? 0 : Double(v.reduce(0) { $0 + $1.credited }) / Double(darts) * 3

@@ -136,6 +136,8 @@ private final class TrainingRun {
     var bogeys: [Int] = []
     var boardMarks: [Int: Int] = [:]
     var boardNumbers: [Int] = []
+    /// Stav otevření (double in) pro AI tipy ve slotech.
+    var opened = true
 
     init(session: TrainingSession, now: Date) {
         actions = session.actions
@@ -238,6 +240,7 @@ private final class TrainingRun {
         projection.bossMax = bossMax
         projection.hint = hint
         projection.routes = routes
+        projection.opened = opened
         projection.bogeys = bogeys
         projection.ghost = ghost
         projection.playerLine = players > 1 ? playerLine : nil
@@ -447,6 +450,7 @@ private final class TrainingRun {
                 scoreText = "\(remaining)"
                 target = "\(remaining)"
                 let hint = idealScoringDart(remaining: remaining, dartsInVisit: chunk.count, budget: 99, doubleIn: doubleIn, opened: opened)
+                self.opened = opened
                 guard let thrown = dart(hint) else { return LeaveResult(waiting: true) }
                 push(thrown)
                 chunk.append(thrown)
@@ -550,6 +554,7 @@ private final class TrainingRun {
                     detail = Checkout.canFinish(remaining) ? "" : "\(remaining) teď nejde zavřít."
                 }
                 let hintDart = idealScoringDart(remaining: remaining, dartsInVisit: chunk.count, budget: limit - darts.count, doubleIn: doubleIn, opened: opened)
+                self.opened = opened
                 guard let thrown = dart(hintDart) else { return pause() }
                 push(thrown)
                 chunk.append(thrown)

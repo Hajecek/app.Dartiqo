@@ -10,6 +10,45 @@ enum TrainingCatalog {
     static var showcaseGames: [TrainingDefinition] { showcase.compactMap(find) }
     static func find(_ id: String) -> TrainingDefinition? { all.first { $0.id == id } }
 
+    /// Tréninky stejného typu jako zvolený režim zápasu (X01 → X01 practice atd.).
+    static func ids(for mode: GameMode, startingScore: Int = 501) -> [String] {
+        var ids = all.filter { matches($0.kind, mode: mode) }.map(\.id)
+        guard mode == .x01 else { return ids }
+        let preferred: String
+        switch startingScore {
+        case 301: preferred = "practice-301"
+        case 701: preferred = "practice-701"
+        case 1001: preferred = "endurance-1001"
+        default: preferred = "practice-501"
+        }
+        if let index = ids.firstIndex(of: preferred) {
+            ids.remove(at: index)
+            ids.insert(preferred, at: 0)
+        }
+        return ids
+    }
+
+    private static func matches(_ kind: TrainingKind, mode: GameMode) -> Bool {
+        switch mode {
+        case .x01:
+            if case .x01 = kind { return true }
+            return false
+        case .cricket:
+            if case .cricket = kind { return true }
+            return false
+        case .aroundClock:
+            if case .around = kind { return true }
+            return false
+        case .countUp:
+            switch kind {
+            case .highScore, .average, .visitGoal, .ladder, .consistency, .perfect, .halve:
+                return true
+            default:
+                return false
+            }
+        }
+    }
+
     private static func make() -> [TrainingDefinition] {
         var items: [TrainingDefinition] = []
         func add(_ number: Int, _ id: String, _ title: String, _ summary: String, _ rules: String, _ category: TrainingCategory, _ minutes: Int, _ listed: TrainingLevel, _ kind: TrainingKind, options: TrainingOptions = TrainingOptions()) {

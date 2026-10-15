@@ -1,19 +1,69 @@
 import SwiftUI
 
-/// Výběr úrovně bota s orientačními statistikami.
+/// Velký portrét bota — fotka v zaobleném rámu, ne oříznutá do drobného kolečka.
+struct BotPortrait: View {
+    var level: Int
+    var size: CGFloat = 96
+    var selected = false
+    var showsLevelBadge = true
+
+    private var info: BotLevel { BotLevel.get(level) }
+    private var corner: CGFloat { max(14, size * 0.22) }
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            Image(info.photo)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size, height: size)
+                .clipped()
+                .overlay {
+                    LinearGradient(
+                        colors: [.clear, .clear, Color.black.opacity(0.35)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                }
+                .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: corner, style: .continuous)
+                        .strokeBorder(
+                            selected ? Theme.brand : Color.white.opacity(0.14),
+                            lineWidth: selected ? 2.5 : 1
+                        )
+                )
+                .shadow(color: selected ? Theme.brand.opacity(0.35) : .black.opacity(0.25), radius: selected ? 12 : 6, y: 4)
+
+            if showsLevelBadge {
+                Text("\(info.id)")
+                    .font(.system(size: max(11, size * 0.16), weight: .heavy, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(Color.black)
+                    .padding(.horizontal, max(6, size * 0.08))
+                    .padding(.vertical, max(3, size * 0.04))
+                    .background(Theme.brand, in: Capsule())
+                    .offset(x: 4, y: 4)
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Výběr bota galerií portrétů — bez slideru.
 struct BotPickerSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var initialLevel: Int
-    var title: String = "Nastavení bota"
+    var title: String = "Vyber soupeře"
     var confirmTitle: String = "Potvrdit"
     var onConfirm: (Int) -> Void
 
     @State private var level: Int
     @State private var appeared = false
 
-    init(initialLevel: Int = 3, title: String = "Nastavení bota", confirmTitle: String = "Potvrdit", onConfirm: @escaping (Int) -> Void) {
+    init(initialLevel: Int = 3, title: String = "Vyber soupeře", confirmTitle: String = "Potvrdit", onConfirm: @escaping (Int) -> Void) {
         self.initialLevel = initialLevel
         self.title = title
         self.confirmTitle = confirmTitle
@@ -22,18 +72,19 @@ struct BotPickerSheet: View {
     }
 
     private var info: BotLevel { BotLevel.get(level) }
-    private var motion: Animation? { reduceMotion ? nil : .smooth(duration: 0.32) }
+    private var motion: Animation? { reduceMotion ? nil : .smooth(duration: 0.28) }
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 5)
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 22) {
+                VStack(spacing: 20) {
                     hero
-                    levelBlock
-                    statsCard
+                    gallery
+                    statsRow
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 8)
+                .padding(.horizontal, 18)
+                .padding(.top, 6)
                 .padding(.bottom, 100)
             }
             .background(Theme.background.ignoresSafeArea())
@@ -44,9 +95,7 @@ struct BotPickerSheet: View {
                     Button("Zavřít") { dismiss() }
                 }
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                confirmBar
-            }
+            .safeAreaInset(edge: .bottom, spacing: 0) { confirmBar }
         }
         .presentationDetents([.large])
         .presentationDragIndicator(.visible)
@@ -54,141 +103,106 @@ struct BotPickerSheet: View {
             withAnimation(motion) { appeared = true }
         }
         .sensoryFeedback(.selection, trigger: level)
+        .animation(motion, value: level)
     }
 
     private var hero: some View {
         VStack(spacing: 14) {
-            Avatar(name: info.persona, bot: true, size: 112, asset: info.photo)
+            BotPortrait(level: level, size: 168, selected: true, showsLevelBadge: true)
                 .id(info.photo)
-                .scaleEffect(appeared || reduceMotion ? 1 : 0.92)
+                .scaleEffect(appeared || reduceMotion ? 1 : 0.94)
                 .opacity(appeared || reduceMotion ? 1 : 0)
-                .shadow(color: Theme.positive.opacity(0.28), radius: 18, y: 8)
-                .animation(motion, value: info.photo)
 
-            VStack(spacing: 4) {
+            VStack(spacing: 5) {
                 Text(info.persona)
                     .font(.title2.bold())
+                    .multilineTextAlignment(.center)
                     .contentTransition(.opacity)
-                Text("„\(info.nickname)“ · \(info.name)")
-                    .font(.subheadline)
+                Text("„\(info.nickname)“")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.action)
+                Text(info.name)
+                    .font(.caption.weight(.bold))
                     .foregroundStyle(.secondary)
-                    .contentTransition(.opacity)
+                    .textCase(.uppercase)
+                    .tracking(0.6)
             }
-            .multilineTextAlignment(.center)
-            .animation(motion, value: level)
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 8)
+        .padding(.vertical, 4)
     }
 
-    private var levelBlock: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label("Úroveň a statistiky", systemImage: "cpu")
+    private var gallery: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Úroveň 1–10")
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
 
-            HStack {
-                Text("Úroveň obtížnosti")
-                    .font(.body.weight(.semibold))
-                Spacer()
-                Text("Lv. \(level)")
-                    .font(.subheadline.weight(.bold).monospacedDigit())
-                    .foregroundStyle(Theme.onAccent)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Theme.positive, in: Capsule())
-                    .contentTransition(.numericText(value: Double(level)))
-            }
-
-            VStack(spacing: 8) {
-                Slider(value: Binding(
-                    get: { Double(level) },
-                    set: { value in
-                        withAnimation(motion) { level = Int(value.rounded()) }
+            LazyVGrid(columns: columns, spacing: 10) {
+                ForEach(BotLevel.all) { bot in
+                    Button {
+                        withAnimation(motion) { level = bot.id }
+                    } label: {
+                        VStack(spacing: 6) {
+                            BotPortrait(
+                                level: bot.id,
+                                size: 58,
+                                selected: bot.id == level,
+                                showsLevelBadge: false
+                            )
+                            Text("Lv \(bot.id)")
+                                .font(.caption2.weight(.heavy).monospacedDigit())
+                                .foregroundStyle(bot.id == level ? Theme.brand : .secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
                     }
-                ), in: 1...10, step: 1)
-                .tint(Theme.action)
-                .accessibilityLabel("Úroveň bota")
-                .accessibilityValue("\(level), \(info.persona), \(info.name)")
-
-                HStack {
-                    Text("1")
-                    Spacer()
-                    Text("5")
-                    Spacer()
-                    Text("10")
-                    Image(systemName: "flame.fill")
-                        .foregroundStyle(Theme.action)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(bot.persona), úroveň \(bot.id)")
+                    .accessibilityAddTraits(bot.id == level ? .isSelected : [])
                 }
-                .font(.caption.weight(.bold).monospacedDigit())
+            }
+        }
+        .padding(14)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(Theme.stroke, lineWidth: 1)
+        )
+    }
+
+    private var statsRow: some View {
+        HStack(spacing: 8) {
+            statChip("Průměr", info.averageText)
+            statChip("Checkout", info.checkoutText)
+            statChip("Tempo", info.throwTempoLabel)
+        }
+    }
+
+    private func statChip(_ title: String, _ value: String) -> some View {
+        VStack(spacing: 4) {
+            Text(title)
+                .font(.caption2.weight(.bold))
                 .foregroundStyle(.secondary)
-            }
-        }
-        .padding(16)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(Theme.stroke, lineWidth: 1)
-        )
-    }
-
-    private var statsCard: some View {
-        VStack(spacing: 0) {
-            statRow(
-                title: "Průměr 3 šipek",
-                value: info.averageText,
-                hint: "Orientační rozsah průměru v X01 na této úrovni."
-            )
-            Divider().padding(.leading, 16)
-            statRow(
-                title: "Tempo odhozu",
-                value: info.throwTempoText,
-                hint: "Jak rychle bot hází šipky mezi sebou při svém tahu."
-            )
-            Divider().padding(.leading, 16)
-            statRow(
-                title: "Úspěšnost zavření",
-                value: info.checkoutText,
-                hint: "Orientační šance, že bot zavře, když má checkout."
-            )
-            Divider().padding(.leading, 16)
-            statRow(
-                title: "180 na leg",
-                value: info.maxVisitText,
-                hint: "Orientační počet maxim na leg — u průměrného PDC profíka kolem 0,3."
-            )
-        }
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(Theme.stroke, lineWidth: 1)
-        )
-        .animation(motion, value: level)
-    }
-
-    private func statRow(title: String, value: String, hint: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            HStack(spacing: 6) {
-                Text(title)
-                    .font(.subheadline.weight(.medium))
-                Image(systemName: "questionmark.circle.fill")
-                    .font(.caption)
-                    .foregroundStyle(Theme.action.opacity(0.85))
-                    .accessibilityHidden(true)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityHint(hint)
-            Spacer(minLength: 8)
+                .textCase(.uppercase)
             Text(value)
-                .font(.body.weight(.bold).monospacedDigit())
+                .font(.subheadline.weight(.bold).monospacedDigit())
                 .foregroundStyle(.primary)
-                .contentTransition(.numericText())
+                .minimumScaleFactor(0.75)
+                .lineLimit(1)
+                .contentTransition(.opacity)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 6)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Theme.stroke, lineWidth: 1)
+        )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(title): \(value). \(hint)")
+        .accessibilityLabel("\(title): \(value)")
     }
 
     private var confirmBar: some View {

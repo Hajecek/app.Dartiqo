@@ -6,6 +6,8 @@ import UniformTypeIdentifiers
 struct SettingsView: View {
     @EnvironmentObject var store: AppStore
     @State private var name = ""
+    @State private var username = ""
+    @State private var email = ""
     @State private var deletion = false
     @State private var exporting = false
     @State private var document: JSONDocument?
@@ -21,6 +23,9 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                     VStack(alignment: .leading, spacing: 6) {
                         Text(store.profile?.name ?? "Hráč").font(.title2.bold())
+                        if let handle = store.profile?.username, !handle.isEmpty {
+                            Text("@\(handle)").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.action)
+                        }
                         Text("Level \(store.level) · \(store.xp) XP").font(.subheadline).foregroundStyle(.secondary)
                         Text(store.ownVisits.isEmpty ? "Průměr —" : String(format: "Průměr %.1f", store.average))
                             .font(.subheadline)
@@ -34,8 +39,29 @@ struct SettingsView: View {
                 if store.profile?.photoJPEG != nil {
                     Button("Odebrat fotku", role: .destructive) { store.setPhoto(nil) }
                 }
-                HStack { TextField("Přezdívka", text: $name).textContentType(.nickname); Button("Uložit") { store.rename(name); store.feedback() }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
-            } header: { Text("Hráčský profil") } footer: { Text("Místní profil na tomto zařízení. Bez online účtu a synchronizace.") }
+                HStack {
+                    TextField("Přezdívka", text: $name).textContentType(.nickname)
+                    Button("Uložit") { store.rename(name); store.feedback() }
+                        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                TextField("Username", text: $username)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .textContentType(.username)
+                TextField("E-mail", text: $email)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.emailAddress)
+                    .textContentType(.emailAddress)
+                Button("Uložit kontakt") {
+                    store.updateProfileContact(username: username, email: email)
+                    store.feedback()
+                }
+            } header: {
+                Text("Hráčský profil")
+            } footer: {
+                Text("Username a e-mail slouží k hledání mezi profily na tomto telefonu. Bez online účtu a synchronizace.")
+            }
             Section {
                 Picker("Vzhled", selection: $store.data.appearance) { Text("Tmavý").tag("dark"); Text("Světlý").tag("light"); Text("Podle systému").tag("system") }
                 Toggle("Haptická odezva", isOn: $store.data.haptics).tint(Theme.mint)
@@ -91,7 +117,11 @@ struct SettingsView: View {
                 Button("Přepnout hráčský profil") { store.signOut() }
                 Button("Smazat tento profil a jeho hry", role: .destructive) { deletion = true }
             }
-        }.navigationTitle("Nastavení").onAppear { name = store.profile?.name ?? "" }
+        }.navigationTitle("Nastavení").onAppear {
+            name = store.profile?.name ?? ""
+            username = store.profile?.username ?? ""
+            email = store.profile?.email ?? ""
+        }
             .onChange(of: photoItem) { _, item in
                 guard let item else { return }
                 Task {

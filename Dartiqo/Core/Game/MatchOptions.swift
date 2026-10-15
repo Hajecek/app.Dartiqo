@@ -44,12 +44,14 @@ public struct SeatDraft: Codable, Identifiable, Equatable {
 }
 public struct SetupDraft: Codable, Equatable {
     public var config = GameConfig()
-    public var seats = [SeatDraft(name: "Já"), SeatDraft(name: "Bot", isBot: true)]
+    public var seats = [SeatDraft(name: "Já")]
     public var starter = 0 // -1 means random; otherwise explicit roster position
     /// `true` znamená, že první místo nepatří vlastníkovi profilu.
     public var withoutMe: Bool?
     /// Zvolená varianta Ghost Mode. Volitelné pole JSON v1.
     public var ghostKind: GhostKind?
+    /// U `pickMatch` odkaz na konkrétní zápas. Volitelné pole JSON v1.
+    public var ghostMatchID: UUID?
     public var includesMe: Bool { withoutMe != true }
     public init(mode: GameMode = .x01) { config.mode = mode; config.options = MatchOptions() }
 }

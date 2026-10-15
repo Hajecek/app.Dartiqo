@@ -36,6 +36,8 @@ private struct LegCeremony: Equatable, Identifiable {
     var setClosed: Bool
     var duration: Double
     var byBullOff = false
+    var winnerPhoto: Data? = nil
+    var winnerAsset: String? = nil
 }
 private struct BoardDetailSelection: Identifiable {
     let player: Int
@@ -454,6 +456,7 @@ struct MatchView: View {
         } label: {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
+                    playerAvatar(game, index: index, size: 22)
                     Text(player.name).font(AppFont.body(14, weight: .semibold)).lineLimit(1)
                     if player.botLevel != nil {
                         Image(systemName: "cpu").font(AppFont.caption(11, weight: .semibold))
@@ -507,6 +510,26 @@ struct MatchView: View {
         .accessibilityAddTraits(active ? [.isSelected, .isButton] : .isButton)
         .accessibilityHint("Zobrazí statistiky ze zápasu")
         .accessibilityValue(active ? "Na tahu" : "")
+    }
+
+    private func playerLook(_ game: Match, index: Int) -> (photo: Data?, asset: String?) {
+        guard game.players.indices.contains(index) else { return (nil, nil) }
+        let player = game.players[index]
+        if let level = player.botLevel { return (nil, BotLevel.get(level).photo) }
+        if game.isGhost(index) { return (store.profile?.photoJPEG, nil) }
+        return (store.photo(for: player.id), nil)
+    }
+
+    private func playerAvatar(_ game: Match, index: Int, size: CGFloat) -> some View {
+        let player = game.players.indices.contains(index) ? game.players[index] : nil
+        let look = playerLook(game, index: index)
+        return Avatar(
+            name: player?.name ?? "Hráč",
+            bot: player?.botLevel != nil,
+            size: size,
+            photo: look.photo,
+            asset: look.asset
+        )
     }
 
     /// Stejný panel hráče. Mění se jen číslo, které hra skutečně sleduje.
@@ -604,7 +627,7 @@ struct MatchView: View {
                     let filled = darts.count > i
                     let suggested = (!filled && guide.route.indices.contains(i - darts.count)) ? guide.route[i - darts.count] : nil
                     let note = (!filled && suggested == nil && i == darts.count) ? guide.note : nil
-                    throwSlotTile(
+                    ThrowSlotTile(
                         index: i,
                         dart: filled ? darts[i] : nil,
                         suggestion: suggested,
@@ -712,48 +735,6 @@ struct MatchView: View {
         return "Leg \(game.leg) · Kolo \(round) · Šipky \(dartsInVisit)/3"
     }
 
-    @ViewBuilder
-    private func throwSlotTile(index: Int, dart: Dart?, suggestion: Dart?, note: String?, setupLeave: String? = nil) -> some View {
-        if let dart {
-            ThrowSlotFace(index: index, dart: dart)
-        } else if let suggestion {
-            let setup = setupLeave != nil
-            VStack(spacing: 5) {
-                HStack(spacing: 3) {
-                    Image(systemName: setup ? "arrow.turn.up.right" : "sparkles")
-                        .font(.system(size: 9, weight: .bold))
-                    Text(setup ? "Sehrávka" : "AI")
-                        .font(AppFont.caption(10, weight: .heavy))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                }
-                .foregroundStyle(.white.opacity(0.85))
-                Text(suggestion.label)
-                    .font(AppFont.display(28, weight: .heavy))
-                    .foregroundStyle(.white)
-                    .minimumScaleFactor(0.7)
-                    .lineLimit(1)
-                Text(setup ? "na \(setupLeave ?? "")" : "\(suggestion.score)")
-                    .font(AppFont.caption(12, weight: .bold))
-                    .monospacedDigit()
-                    .foregroundStyle(.white.opacity(0.75))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(setup ? MatchColors.setupTip : MatchColors.aiTip, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(setup ? MatchColors.amber : MatchColors.green.opacity(0.55), lineWidth: 1.5)
-            )
-            .accessibilityLabel(setup
-                ? "\(index + 1). šipka, sehrávka na \(setupLeave ?? ""), hoď \(suggestion.label)"
-                : "\(index + 1). šipka, AI nápověda \(suggestion.label)")
-        } else {
-            ThrowSlotFace(index: index, dart: nil, note: note)
-        }
-    }
-
     /// Spodní lišta: Liquid Glass — Zpět, režim hlasu a způsob zápisu.
     @ViewBuilder
     private func bottomBar(_ game: Match) -> some View {
@@ -838,39 +819,26 @@ struct MatchView: View {
     }
 
     private func boardInput(_ game: Match) -> some View {
-        matchDartboard(marks: game.currentDarts, interactive: true, onHit: hit)
+        let guide = checkoutGuide(game, shown: game.liveProjection, thrown: game.currentDarts.count)
+        return matchDartboard(marks: game.currentDarts, interactive: true, suggestion: guide.route.first, onHit: hit)
     }
 
     /// Stejný rám pro živý i zmrazený terč — ať po odhodu neposkočí layout.
-    private func matchDartboard(marks: [Dart], interactive: Bool, onHit: @escaping (Dart) -> Void = { _ in }) -> some View {
-        ScoringDartboard(marks: marks, interactive: interactive, onHit: onHit)
+    private func matchDartboard(marks: [Dart], interactive: Bool, suggestion: Dart? = nil, onHit: @escaping (Dart) -> Void = { _ in }) -> some View {
+        ScoringDartboard(marks: marks, interactive: interactive, suggestion: suggestion, onHit: onHit)
     }
 
-    private struct CheckoutGuide {
-        var route: [Dart] = []
-        /// Short note for the next empty slot when there is no dart suggestion.
-        var note: String? = nil
-        /// Set when `route` is a setup toward this leave, not a finish.
-        var setupLeave: String? = nil
-    }
-
-    private func checkoutGuide(_ game: Match, shown: Match, thrown: Int) -> CheckoutGuide {
-        guard !isHoldingVisit, game.currentPlayer.botLevel == nil else { return CheckoutGuide() }
-        guard game.config.mode == .x01, game.config.settings.checkoutHints else { return CheckoutGuide() }
+    private func checkoutGuide(_ game: Match, shown: Match, thrown: Int) -> ScoringChrome.CheckoutGuide {
+        guard !isHoldingVisit, game.currentPlayer.botLevel == nil else { return ScoringChrome.CheckoutGuide() }
+        guard game.config.mode == .x01 else { return ScoringChrome.CheckoutGuide() }
         let state = shown.states[game.active]
-        let dartsLeft = max(0, 3 - thrown)
-        if !state.opened {
-            return CheckoutGuide(note: "double in")
-        }
-        guard dartsLeft > 0 else { return CheckoutGuide() }
-        let rule = game.config.outRule(for: game.active)
-        if let route = Checkout.route(for: state.remaining, rule: rule, darts: dartsLeft) {
-            return CheckoutGuide(route: route)
-        }
-        if state.remaining <= 170, let setup = Checkout.setup(for: state.remaining, rule: rule, darts: dartsLeft) {
-            return CheckoutGuide(route: setup.darts, setupLeave: setup.leaveLabel)
-        }
-        return CheckoutGuide()
+        return ScoringChrome.checkoutGuide(
+            remaining: state.remaining,
+            rule: game.config.outRule(for: game.active),
+            thrown: thrown,
+            opened: state.opened,
+            enabled: game.config.settings.checkoutHints
+        )
     }
     private func dartGrid(_ game: Match, shown: Match) -> some View {
         ManualScorePad(multiplier: $multiplier, focus: padFocus(game, shown: shown), onSelect: { store.selectionHaptic() }, onHit: hit)
@@ -1370,7 +1338,9 @@ struct MatchView: View {
             legsToWin: game.config.legsToWin,
             setClosed: !game.finished && game.config.playsSets && game.states.contains { $0.legs >= game.config.legsToWin },
             duration: auto,
-            byBullOff: game.bullOffLegs?[game.leg] == winner
+            byBullOff: game.bullOffLegs?[game.leg] == winner,
+            winnerPhoto: playerLook(game, index: winner).photo,
+            winnerAsset: playerLook(game, index: winner).asset
         )
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.35)) {
             legCeremony = ceremony
@@ -1840,15 +1810,26 @@ struct MatchView: View {
         let winner = game.winner
         return VStack(spacing: 14) {
             ZStack {
-                Circle()
-                    .fill(MatchColors.amber.opacity(0.18))
-                    .frame(width: 92, height: 92)
-                Circle()
-                    .fill(LinearGradient(colors: [MatchColors.amber, MatchColors.coral], startPoint: .top, endPoint: .bottom))
-                    .frame(width: 68, height: 68)
-                Image(systemName: winner == nil ? "equal" : "trophy.fill")
-                    .font(.system(size: 30, weight: .semibold))
-                    .foregroundStyle(MatchColors.ink)
+                if let winner {
+                    playerAvatar(game, index: winner, size: 84)
+                        .overlay(Circle().strokeBorder(MatchColors.amber, lineWidth: 3))
+                    Image(systemName: "trophy.fill")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(MatchColors.ink)
+                        .padding(7)
+                        .background(MatchColors.amber, in: Circle())
+                        .offset(x: 30, y: 30)
+                } else {
+                    Circle()
+                        .fill(MatchColors.amber.opacity(0.18))
+                        .frame(width: 92, height: 92)
+                    Circle()
+                        .fill(LinearGradient(colors: [MatchColors.amber, MatchColors.coral], startPoint: .top, endPoint: .bottom))
+                        .frame(width: 68, height: 68)
+                    Image(systemName: "equal")
+                        .font(.system(size: 30, weight: .semibold))
+                        .foregroundStyle(MatchColors.ink)
+                }
             }
             .accessibilityHidden(true)
             VStack(spacing: 4) {
@@ -1892,7 +1873,8 @@ struct MatchView: View {
                         .foregroundStyle(.white.opacity(0.3))
                         .padding(.horizontal, 6)
                 }
-                VStack(spacing: 2) {
+                VStack(spacing: 4) {
+                    playerAvatar(game, index: i, size: 36)
                     Text("\(game.states[i].legs)")
                         .font(.system(size: 44, weight: .bold, design: .rounded))
                         .monospacedDigit()
@@ -1918,12 +1900,8 @@ struct MatchView: View {
         let name = game.players[index].name
         return VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 12) {
-                Text(String(name.prefix(1)).uppercased())
-                    .font(.headline)
-                    .foregroundStyle(isWinner ? MatchColors.ink : .white)
-                    .frame(width: 40, height: 40)
-                    .background(isWinner ? MatchColors.amber : Color.white.opacity(0.12), in: Circle())
-                    .accessibilityHidden(true)
+                playerAvatar(game, index: index, size: 40)
+                    .overlay(Circle().strokeBorder(isWinner ? MatchColors.amber : Color.white.opacity(0.16), lineWidth: 2))
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(name)
@@ -2593,17 +2571,20 @@ private struct LegCeremonyView: View {
             Circle()
                 .strokeBorder(accent.opacity(0.35), lineWidth: 1)
                 .frame(width: 128, height: 128)
-            Circle()
-                .fill(LinearGradient(colors: [accent, accent.opacity(0.75)], startPoint: .top, endPoint: .bottom))
-                .frame(width: 92, height: 92)
+            Avatar(
+                name: winnerName,
+                bot: ceremony.winnerAsset != nil,
+                size: 92,
+                photo: ceremony.winnerPhoto,
+                asset: ceremony.winnerAsset
+            )
             if ceremony.matchFinished {
                 Image(systemName: "trophy.fill")
-                    .font(.system(size: 40, weight: .semibold))
+                    .font(.caption.weight(.bold))
                     .foregroundStyle(MatchColors.ink)
-            } else {
-                Text(String(winnerName.prefix(1)).uppercased())
-                    .font(.system(size: 42, weight: .bold, design: .rounded))
-                    .foregroundStyle(MatchColors.ink)
+                    .padding(8)
+                    .background(accent, in: Circle())
+                    .offset(x: 34, y: 34)
             }
         }
         .accessibilityHidden(true)

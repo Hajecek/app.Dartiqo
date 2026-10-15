@@ -326,6 +326,8 @@ struct TrainingProjection: Equatable {
     var bossMax: Int?
     var hint: String?
     var routes: [[Dart]] = []
+    /// Pro double-in checkout trénink — stejná nápověda „double in“ jako v zápase.
+    var opened = true
     var bogeys: [Int] = []
     var ghost: String?
     var playerLine: String?
