@@ -247,15 +247,19 @@ struct MatchView: View {
                 } else {
                     gameStrip(game, shown: shown)
                     currentThrowStrip(game, shown: shown)
-                    // Keep bot board on one view identity so the 3rd dart / hold does not remount and flash.
+                    if showingBotBoard {
+                        let darts = stripDarts(for: game)
+                        let playerIndex = holdPlayer ?? game.active
+                        let name = game.players.indices.contains(playerIndex) ? game.players[playerIndex].name : game.currentPlayer.name
+                        matchDartboard(marks: darts, interactive: false, markBeds: true)
+                            .accessibilityElement(children: .contain)
+                            .accessibilityLabel(holdingBotVisit ? "\(name) dokončil hod" : "\(name) hází")
+                            .accessibilityValue(darts.map(\.label).joined(separator: ", "))
+                            .padding(.top, 14)
+                    } else {
                     Group {
                     if surface == .voice {
                         voiceInput(game)
-                        if showingBotBoard {
-                            botBoard(game)
-                        }
-                    } else if showingBotBoard {
-                        botBoard(game)
                     } else if isHoldingVisit {
                         // Součet už je v horním stripu — druhé okno by jen žralo místo.
                         if holdSurface != .total {
@@ -278,6 +282,7 @@ struct MatchView: View {
                     }
                     }
                     .padding(.top, surface == .grid ? 8 : 14)
+                    }
                 }
             }.padding(.horizontal, 16).padding(.vertical, surface == .grid ? 6 : 10).frame(maxWidth: 780)
         }
@@ -809,23 +814,14 @@ struct MatchView: View {
         }
     }
 
-    private func botBoard(_ game: Match) -> some View {
-        let darts = stripDarts(for: game)
-        let name = holdPlayer.map { game.players[$0].name } ?? game.currentPlayer.name
-        return matchDartboard(marks: darts, interactive: false)
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel(holdingBotVisit ? "\(name) dokončil hod" : "\(name) hází")
-            .accessibilityValue(darts.map(\.label).joined(separator: ", "))
-    }
-
     private func boardInput(_ game: Match) -> some View {
         let guide = checkoutGuide(game, shown: game.liveProjection, thrown: game.currentDarts.count)
         return matchDartboard(marks: game.currentDarts, interactive: true, suggestion: guide.route.first, onHit: hit)
     }
 
     /// Stejný rám pro živý i zmrazený terč — ať po odhodu neposkočí layout.
-    private func matchDartboard(marks: [Dart], interactive: Bool, suggestion: Dart? = nil, onHit: @escaping (Dart) -> Void = { _ in }) -> some View {
-        ScoringDartboard(marks: marks, interactive: interactive, suggestion: suggestion, onHit: onHit)
+    private func matchDartboard(marks: [Dart], interactive: Bool, suggestion: Dart? = nil, markBeds: Bool = false, onHit: @escaping (Dart) -> Void = { _ in }) -> some View {
+        ScoringDartboard(marks: marks, interactive: interactive, suggestion: suggestion, markBeds: markBeds, onHit: onHit)
     }
 
     private func checkoutGuide(_ game: Match, shown: Match, thrown: Int) -> ScoringChrome.CheckoutGuide {
@@ -1546,17 +1542,19 @@ struct MatchView: View {
         if holdDarts.count != game.currentDarts.count { holdDarts = game.currentDarts }
         let key = botTaskKey
         let thrower = game.active
-        do { try await Task.sleep(nanoseconds: UInt64(game.config.settings.botDelay * 1_000_000_000)) } catch { return }
+        let pending = game.currentDarts.count
+        let visits = game.visits.count
+        let delay = game.config.settings.botDelay
+        do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) } catch { return }
         guard !Task.isCancelled, key == botTaskKey, !isHoldingVisit, legCeremony == nil, var current = store.activeMatch else { return }
         guard current.currentPlayer.botLevel != nil || current.isGhostTurn else { return }
+        guard current.active == thrower, current.currentDarts.count == pending, current.visits.count == visits else { return }
         let dart: Dart
         if current.isGhostTurn {
             dart = GhostMode.nextDart(in: current)
         } else {
             var rng = SystemRandomNumberGenerator()
-            let projected = current.liveProjection
-            let target = Bot.target(in: projected, dartsLeft: 3 - current.currentDarts.count)
-            dart = Bot.throwDart(at: target, level: current.currentPlayer.botLevel ?? 1, using: &rng)
+            dart = BotGameController.nextDart(in: current, using: &rng)
         }
         let oldCount = current.visits.count
         do {
@@ -1636,6 +1634,7 @@ struct MatchView: View {
                     Toggle("Nápověda zavření",isOn:matchOptions.checkoutHints)
                     Toggle("Nezhasínat displej",isOn:matchOptions.keepAwake)
                     Picker("Tempo šipek bota",selection:matchOptions.botDelay) { Text("Rychlé · 0,5 s").tag(0.5); Text("Plynulé · 1,5 s").tag(1.5); Text("Klidné · 3 s").tag(3.0) }
+                    Text("Během hodu bota jde šipky zrychlit tlačítkem u terče. Zůstane to zapnuté, dokud tempo nevrátíš.").font(.footnote)
                     Toggle("Hlasové skóre",isOn:$store.data.voice)
                     Toggle("Haptika",isOn:$store.data.haptics)
                 }

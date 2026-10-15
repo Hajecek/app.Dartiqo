@@ -70,6 +70,8 @@ struct SetupView: View {
         /// `nil` = nový bot, jinak úprava existujícího místa.
         var seatID: UUID?
         var level: Int
+        var style: BotPlayingStyle
+        var adaptive: Bool
     }
     private struct GhostPickerTarget: Identifiable, Equatable {
         var id = UUID()
@@ -498,16 +500,18 @@ struct SetupView: View {
 
     private func openBotPicker(seatID: UUID) {
         guard let seat = draft.seats.first(where: { $0.id == seatID }), seat.isBot else { return }
-        botPicker = BotPickerTarget(id: seat.id, seatID: seat.id, level: seat.level)
+        botPicker = BotPickerTarget(id: seat.id, seatID: seat.id, level: seat.level, style: seat.botStyle ?? .balanced, adaptive: seat.adaptiveBot == true)
     }
 
-    private func confirmBotLevel(_ level: Int, target: BotPickerTarget) {
+    private func confirmBot(_ choice: BotChoice, target: BotPickerTarget) {
         withAnimation(motion) {
             if let seatID = target.seatID, let index = draft.seats.firstIndex(where: { $0.id == seatID }) {
-                draft.seats[index].level = level
+                draft.seats[index].level = choice.level
                 draft.seats[index].isBot = true
+                draft.seats[index].botStyle = choice.style
+                draft.seats[index].adaptiveBot = choice.adaptive ? true : nil
             } else if draft.seats.count < 4 {
-                draft.seats.append(SeatDraft(name: "Bot", isBot: true, level: level))
+                draft.seats.append(SeatDraft(name: "Bot", isBot: true, level: choice.level, botStyle: choice.style, adaptiveBot: choice.adaptive))
                 draft.starter = 0
             }
         }
@@ -578,9 +582,13 @@ struct SetupView: View {
             BotPickerSheet(
                 initialLevel: target.level,
                 title: target.seatID == nil ? "Přidat bota" : "Změnit bota",
-                confirmTitle: target.seatID == nil ? "Přidat bota" : "Potvrdit"
-            ) { level in
-                confirmBotLevel(level, target: target)
+                confirmTitle: target.seatID == nil ? "Přidat bota" : "Potvrdit",
+                adaptiveEnabled: store.data.adaptiveAI != false,
+                suggestedLevel: store.profile.map { AdaptiveBotEngine.recommendedLevel(matches: store.matches, playerID: $0.id) } ?? AdaptiveBotEngine.fallbackLevel,
+                initialStyle: target.style,
+                initialAdaptive: target.adaptive
+            ) { choice in
+                confirmBot(choice, target: target)
             }
         }
         .sheet(item: $ghostPicker) { target in
@@ -635,23 +643,23 @@ struct SetupView: View {
     }
 
     private func botEditor(_ index: Int) -> some View {
-        let level = draft.seats[index].level
-        let info = BotLevel.get(level)
+        let resolved = resolvedBot(draft.seats[index])
+        let info = BotLevel.get(resolved.level)
         return HStack(spacing: 4) {
             Button { openBotPicker(seatID: draft.seats[index].id) } label: {
                 HStack(spacing: 12) {
-                    BotPortrait(level: level, size: 64, selected: false)
+                    BotPortrait(level: resolved.level, size: 64, selected: false)
                         .id(info.photo)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(botPersona(index))
                             .font(.headline)
                             .foregroundStyle(.primary)
                             .lineLimit(1)
-                        Text("Lv \(level) · \(info.name)")
+                        Text(botSubtitle(index))
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(Theme.action)
                             .contentTransition(.opacity)
-                        Text("Průměr \(info.averageText) · klepni pro změnu")
+                        Text("Průměr \(info.averageText) · \(botStyleTitle(index))")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
@@ -665,7 +673,7 @@ struct SetupView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(botPersona(index)), úroveň \(level)")
+            .accessibilityLabel("\(botPersona(index)), úroveň \(resolved.level)")
             .accessibilityHint("Otevře výběr bota")
             removeButton(index)
         }
@@ -673,7 +681,7 @@ struct SetupView: View {
         .padding(.trailing, 6)
         .padding(.vertical, 12)
         .playerCard(seatColor(index))
-        .sensoryFeedback(.selection, trigger: level)
+        .sensoryFeedback(.selection, trigger: resolved.level)
     }
 
     private var friendPickerSlots: Int {
@@ -880,16 +888,39 @@ struct SetupView: View {
 
     private func botPersona(_ index: Int) -> String {
         let seat = draft.seats[index]
-        let persona = BotLevel.get(seat.level).persona
-        let same = draft.seats[..<index].filter { $0.isBot && $0.level == seat.level }.count
+        let level = resolvedBot(seat).level
+        let persona = BotLevel.get(level).persona
+        let same = draft.seats[..<index].filter { $0.isBot && resolvedBot($0).level == level }.count
         return same == 0 ? persona : "\(persona) \(same + 1)"
+    }
+
+    private func botSubtitle(_ index: Int) -> String {
+        let seat = draft.seats[index]
+        let resolved = resolvedBot(seat)
+        let info = BotLevel.get(resolved.level)
+        if resolved.adaptive { return "Adaptive · Lv \(resolved.level) · \(info.name)" }
+        return "Lv \(resolved.level) · \(info.name)"
+    }
+
+    private func botStyleTitle(_ index: Int) -> String {
+        (draft.seats[index].botStyle ?? .balanced).title
+    }
+
+    /// Úroveň, se kterou bot opravdu nastoupí. Adaptive se přepočítá z historie a v zápasu už zůstane.
+    private func resolvedBot(_ seat: SeatDraft) -> (level: Int, adaptive: Bool, style: BotPlayingStyle) {
+        let style = seat.botStyle ?? .balanced
+        let adaptive = seat.adaptiveBot == true && store.data.adaptiveAI != false
+        if adaptive, let id = store.profile?.id {
+            return (AdaptiveBotEngine.recommendedLevel(matches: store.matches, playerID: id), true, style)
+        }
+        return (min(BotDifficulty.count, max(1, seat.level)), false, style)
     }
 
     private func isMe(_ index: Int) -> Bool { draft.includesMe && index == 0 }
 
     private func addBot() {
         guard draft.seats.count < 4 else { return }
-        botPicker = BotPickerTarget(id: UUID(), seatID: nil, level: 3)
+        botPicker = BotPickerTarget(id: UUID(), seatID: nil, level: 3, style: .balanced, adaptive: false)
     }
 
     private func removeSeat(_ index: Int) {
@@ -1926,7 +1957,14 @@ struct SetupView: View {
               let other = draft.seats.indices.first(where: { $0 != myIndex })
         else { return nil }
         let seat = draft.seats[other]
-        guard let key = RivalKey.from(seat: seat, ghostKind: draft.ghostKind) else { return nil }
+        let resolved = seat.isBot ? resolvedBot(seat) : nil
+        let key: RivalKey?
+        if let resolved {
+            key = RivalKey(kind: .bot(resolved.level))
+        } else {
+            key = RivalKey.from(seat: seat, ghostKind: draft.ghostKind)
+        }
+        guard let key else { return nil }
         let name = seatName(other)
         if let series = HeadToHead.series(from: store.matches, me: me, key: key) {
             return series
@@ -1934,7 +1972,7 @@ struct SetupView: View {
         return .empty(
             key: key,
             name: name,
-            botLevel: seat.isBot ? seat.level : nil,
+            botLevel: resolved?.level ?? (seat.isBot ? seat.level : nil),
             isGhost: seat.ghostSeat
         )
     }
@@ -1967,8 +2005,15 @@ struct SetupView: View {
                 ghostSeat = players.count
                 players.append(Player(id: UUID(), name: offer.displayName))
             } else {
+                let resolved = seat.isBot ? resolvedBot(seat) : nil
                 let name = seat.isBot ? seatName(i) : String(seat.name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24))
-                players.append(Player(id: seat.isBot ? UUID() : seat.friendID ?? UUID(), name: name, botLevel: seat.isBot ? seat.level : nil))
+                players.append(Player(
+                    id: seat.isBot ? UUID() : seat.friendID ?? UUID(),
+                    name: name,
+                    botLevel: resolved?.level,
+                    botStyle: resolved?.style,
+                    adaptiveBot: resolved?.adaptive == true ? true : nil
+                ))
             }
         }
         guard !players.isEmpty else { return false }
@@ -2812,7 +2857,7 @@ struct BullOffView: View {
     }
 
     private func botDart(level: Int) -> Dart {
-        let spread = max(0.05, 0.75 - Double(min(10, max(1, level))) * 0.065)
+        let spread = max(0.04, 0.78 - Double(min(BotDifficulty.count, max(1, level))) * 0.034)
         let radius = sqrt(Double.random(in: 0...1)) * spread
         let angle = Double.random(in: 0..<(2 * Double.pi))
         return BoardGeometry.hit(x: cos(angle) * radius, y: sin(angle) * radius)

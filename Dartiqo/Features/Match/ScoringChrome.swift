@@ -378,10 +378,11 @@ struct ScoringDartboard: View {
     var interactive: Bool
     /// Další doporučená šipka. Na terči se rozsvítí jen to pole.
     var suggestion: Dart? = nil
+    var markBeds = false
     var onHit: (Dart) -> Void = { _ in }
 
     var body: some View {
-        TouchDartboard(marks: marks, interactive: interactive, suggestion: suggestion, onHit: onHit)
+        TouchDartboard(marks: marks, interactive: interactive, suggestion: suggestion, markBeds: markBeds, onHit: onHit)
             .allowsHitTesting(interactive)
             .frame(maxWidth: 420)
             .frame(maxWidth: .infinity)

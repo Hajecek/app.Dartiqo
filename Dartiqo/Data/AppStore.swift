@@ -58,6 +58,8 @@ struct StoredData: Codable {
     var achievementUnlocks: [AchievementUnlock]?
     /// Trvalé učení Zrcadla stylu (klíč owner|start|out).
     var ghostStyleMemories: [String: GhostStyleMemory]?
+    /// `nil` a `true` znamenají zapnuto. Vypnutí nechá bota na ručně zvolené úrovni.
+    var adaptiveAI: Bool?
 }
 struct JSONDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }

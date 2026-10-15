@@ -36,9 +36,15 @@ public struct SeatDraft: Codable, Identifiable, Equatable {
     public var friendID: UUID?
     /// Ghost Mode soupeř. Volitelné kvůli starším předvolbám.
     public var isGhost: Bool?
-    public init(name: String, isBot: Bool = false, level: Int = 3, friendID: UUID? = nil, isGhost: Bool = false) {
+    /// Styl bota. `nil` znamená vyrovnaný.
+    public var botStyle: BotPlayingStyle?
+    /// Adaptive AI. Úroveň v `level` je záloha, když je adaptace vypnutá.
+    public var adaptiveBot: Bool?
+    public init(name: String, isBot: Bool = false, level: Int = 3, friendID: UUID? = nil, isGhost: Bool = false, botStyle: BotPlayingStyle? = nil, adaptiveBot: Bool = false) {
         self.name = name; self.isBot = isBot; self.level = level; self.friendID = friendID
         self.isGhost = isGhost ? true : nil
+        self.botStyle = botStyle
+        self.adaptiveBot = adaptiveBot ? true : nil
     }
     public var ghostSeat: Bool { isGhost == true }
 }

@@ -58,17 +58,38 @@ struct BotPickerSheet: View {
     var initialLevel: Int
     var title: String = "Vyber soupeře"
     var confirmTitle: String = "Potvrdit"
-    var onConfirm: (Int) -> Void
+    var adaptiveEnabled: Bool
+    var suggestedLevel: Int
+    var initialStyle: BotPlayingStyle
+    var initialAdaptive: Bool
+    var onConfirm: (BotChoice) -> Void
 
     @State private var level: Int
+    @State private var style: BotPlayingStyle
+    @State private var adaptive: Bool
     @State private var appeared = false
 
-    init(initialLevel: Int = 3, title: String = "Vyber soupeře", confirmTitle: String = "Potvrdit", onConfirm: @escaping (Int) -> Void) {
+    init(
+        initialLevel: Int = 3,
+        title: String = "Vyber soupeře",
+        confirmTitle: String = "Potvrdit",
+        adaptiveEnabled: Bool = true,
+        suggestedLevel: Int = 4,
+        initialStyle: BotPlayingStyle = .balanced,
+        initialAdaptive: Bool = false,
+        onConfirm: @escaping (BotChoice) -> Void
+    ) {
         self.initialLevel = initialLevel
         self.title = title
         self.confirmTitle = confirmTitle
+        self.adaptiveEnabled = adaptiveEnabled
+        self.suggestedLevel = min(BotDifficulty.count, max(1, suggestedLevel))
+        self.initialStyle = initialStyle
+        self.initialAdaptive = initialAdaptive && adaptiveEnabled
         self.onConfirm = onConfirm
-        _level = State(initialValue: min(10, max(1, initialLevel)))
+        _level = State(initialValue: min(BotDifficulty.count, max(1, initialLevel)))
+        _style = State(initialValue: initialStyle)
+        _adaptive = State(initialValue: initialAdaptive && adaptiveEnabled)
     }
 
     private var info: BotLevel { BotLevel.get(level) }
@@ -82,6 +103,7 @@ struct BotPickerSheet: View {
                     hero
                     gallery
                     statsRow
+                    stylePicker
                 }
                 .padding(.horizontal, 18)
                 .padding(.top, 6)
@@ -103,25 +125,27 @@ struct BotPickerSheet: View {
             withAnimation(motion) { appeared = true }
         }
         .sensoryFeedback(.selection, trigger: level)
+        .sensoryFeedback(.selection, trigger: style)
+        .sensoryFeedback(.selection, trigger: adaptive)
         .animation(motion, value: level)
     }
 
     private var hero: some View {
         VStack(spacing: 14) {
-            BotPortrait(level: level, size: 168, selected: true, showsLevelBadge: true)
-                .id(info.photo)
+            BotPortrait(level: adaptive ? suggestedLevel : level, size: 168, selected: true, showsLevelBadge: true)
+                .id(adaptive ? "adaptive-\(suggestedLevel)" : info.photo)
                 .scaleEffect(appeared || reduceMotion ? 1 : 0.94)
                 .opacity(appeared || reduceMotion ? 1 : 0)
 
             VStack(spacing: 5) {
-                Text(info.persona)
+                Text(adaptive ? "Adaptive AI" : info.persona)
                     .font(.title2.bold())
                     .multilineTextAlignment(.center)
                     .contentTransition(.opacity)
-                Text("„\(info.nickname)“")
+                Text(adaptive ? "Podle posledních legů" : "„\(info.nickname)“")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Theme.action)
-                Text(info.name)
+                Text(adaptive ? BotLevel.get(suggestedLevel).name : info.name)
                     .font(.caption.weight(.bold))
                     .foregroundStyle(.secondary)
                     .textCase(.uppercase)
@@ -134,33 +158,67 @@ struct BotPickerSheet: View {
 
     private var gallery: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Úroveň 1–10")
+            Text("Úroveň 1–20")
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
 
+            if adaptiveEnabled {
+                Button {
+                    withAnimation(motion) { adaptive = true }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "person.and.arrow.left.and.arrow.right")
+                            .font(.subheadline.weight(.bold))
+                            .frame(width: 36, height: 36)
+                            .background(Theme.brand.opacity(adaptive ? 0.22 : 0.1), in: Circle())
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Adaptive AI")
+                                .font(.subheadline.weight(.bold))
+                            Text("Teď asi úroveň \(suggestedLevel). Mezi zápasy se přepočítá.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.leading)
+                        }
+                        Spacer(minLength: 0)
+                        if adaptive {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(Theme.brand)
+                        }
+                    }
+                    .padding(10)
+                    .background(adaptive ? Theme.brand.opacity(0.12) : Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Adaptive AI, navrhovaná úroveň \(suggestedLevel)")
+                .accessibilityAddTraits(adaptive ? .isSelected : [])
+            }
+
             LazyVGrid(columns: columns, spacing: 10) {
                 ForEach(BotLevel.all) { bot in
                     Button {
-                        withAnimation(motion) { level = bot.id }
+                        withAnimation(motion) {
+                            adaptive = false
+                            level = bot.id
+                        }
                     } label: {
                         VStack(spacing: 6) {
                             BotPortrait(
                                 level: bot.id,
                                 size: 58,
-                                selected: bot.id == level,
+                                selected: !adaptive && bot.id == level,
                                 showsLevelBadge: false
                             )
                             Text("Lv \(bot.id)")
                                 .font(.caption2.weight(.heavy).monospacedDigit())
-                                .foregroundStyle(bot.id == level ? Theme.brand : .secondary)
+                                .foregroundStyle(!adaptive && bot.id == level ? Theme.brand : .secondary)
                         }
                         .frame(maxWidth: .infinity)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("\(bot.persona), úroveň \(bot.id)")
-                    .accessibilityAddTraits(bot.id == level ? .isSelected : [])
+                    .accessibilityAddTraits(!adaptive && bot.id == level ? .isSelected : [])
                 }
             }
         }
@@ -174,10 +232,50 @@ struct BotPickerSheet: View {
 
     private var statsRow: some View {
         HStack(spacing: 8) {
-            statChip("Průměr", info.averageText)
-            statChip("Checkout", info.checkoutText)
-            statChip("Tempo", info.throwTempoLabel)
+            statChip("Průměr", shown.averageText)
+            statChip("Double", shown.checkoutText)
+            statChip("Tempo", shown.throwTempoLabel)
         }
+    }
+
+    private var shown: BotLevel { adaptive ? BotLevel.get(suggestedLevel) : info }
+
+    private var stylePicker: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Herní styl")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                ForEach(BotPlayingStyle.allCases) { item in
+                    Button {
+                        withAnimation(motion) { style = item }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(item.title)
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(style == item ? Theme.brand : .primary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            Text(item.detail)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.leading)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(10)
+                        .background(style == item ? Theme.brand.opacity(0.12) : Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(style == item ? .isSelected : [])
+                }
+            }
+        }
+        .padding(14)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(Theme.stroke, lineWidth: 1)
+        )
     }
 
     private func statChip(_ title: String, _ value: String) -> some View {
@@ -208,7 +306,7 @@ struct BotPickerSheet: View {
     private var confirmBar: some View {
         GlassEffectContainer(spacing: 10) {
             Button {
-                onConfirm(level)
+                onConfirm(BotChoice(level: adaptive ? suggestedLevel : level, style: style, adaptive: adaptive))
                 dismiss()
             } label: {
                 Text(confirmTitle)

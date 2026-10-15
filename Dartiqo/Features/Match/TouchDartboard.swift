@@ -8,6 +8,8 @@ struct TouchDartboard: View {
     var zoom: CGFloat = 1
     /// AI nápověda. Zvýrazní jen dané pole — double, triple, single nebo bull.
     var suggestion: Dart? = nil
+    /// Rozsvítí pole každého zapsaného zásahu. Poslední šipka je výraznější.
+    var markBeds = false
     var onHit: (Dart) -> Void
 
     @State private var touch: CGPoint?
@@ -152,6 +154,14 @@ struct TouchDartboard: View {
                 context.fill(path, with: .color(highlight.opacity(0.78)))
                 context.stroke(path, with: .color(highlight), lineWidth: 2.5)
             }
+            if markBeds {
+                for (index, dart) in marks.enumerated() where dart != suggestion {
+                    guard let path = highlightPath(for: dart, center: center, radius: radius, ring: ring) else { continue }
+                    let latest = index == marks.count - 1
+                    context.fill(path, with: .color(highlight.opacity(latest ? 0.72 : 0.34)))
+                    context.stroke(path, with: .color(highlight.opacity(latest ? 1 : 0.7)), lineWidth: latest ? 2.5 : 1.5)
+                }
+            }
             if let hover, hover != suggestion, let path = highlightPath(for: hover, center: center, radius: radius, ring: ring) {
                 context.fill(path, with: .color(highlight.opacity(0.28)))
                 context.stroke(path, with: .color(highlight), lineWidth: 2.5)
@@ -159,9 +169,11 @@ struct TouchDartboard: View {
             for (i, dart) in marks.enumerated() {
                 if let point = BoardGeometry.marker(for: dart) {
                     let p = CGPoint(x: center.x + point.x * radius, y: center.y + point.y * radius)
-                    // Exact pin: small core + white ring + dart index
-                    let core = CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8)
-                    let ringRect = CGRect(x: p.x - 7, y: p.y - 7, width: 14, height: 14)
+                    let latest = markBeds && i == marks.count - 1
+                    let coreRadius: CGFloat = latest ? 6 : 4
+                    let ringRadius: CGFloat = latest ? 10 : 7
+                    let core = CGRect(x: p.x - coreRadius, y: p.y - coreRadius, width: coreRadius * 2, height: coreRadius * 2)
+                    let ringRect = CGRect(x: p.x - ringRadius, y: p.y - ringRadius, width: ringRadius * 2, height: ringRadius * 2)
                     context.stroke(Path(ellipseIn: ringRect), with: .color(.white.opacity(0.95)), lineWidth: 2)
                     context.fill(Path(ellipseIn: core), with: .color(highlight))
                     context.stroke(Path(ellipseIn: core), with: .color(.black.opacity(0.55)), lineWidth: 1)

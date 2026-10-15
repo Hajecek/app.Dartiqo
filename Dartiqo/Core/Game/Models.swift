@@ -90,7 +90,17 @@ public struct Player: Codable, Identifiable, Equatable {
     public var id: UUID
     public var name: String
     public var botLevel: Int?
-    public init(id: UUID = UUID(), name: String, botLevel: Int? = nil) { self.id = id; self.name = name; self.botLevel = botLevel }
+    /// Herní styl. Chybí u člověka a u starších zápasů.
+    public var botStyle: BotPlayingStyle?
+    /// Úroveň se před zápasem zvolila podle hráče a v jeho průběhu se nemění.
+    public var adaptiveBot: Bool?
+    public init(id: UUID = UUID(), name: String, botLevel: Int? = nil, botStyle: BotPlayingStyle? = nil, adaptiveBot: Bool? = nil) {
+        self.id = id
+        self.name = name
+        self.botLevel = botLevel
+        self.botStyle = botStyle
+        self.adaptiveBot = adaptiveBot
+    }
 }
 public struct GameConfig: Codable, Equatable {
     public static let minimumScore = 2
@@ -363,7 +373,7 @@ public struct Match: Codable, Identifiable {
     }
     public var isSane: Bool {
         guard (1...4).contains(players.count), states.count == players.count, states.indices.contains(active), states.indices.contains(starter), (1...15).contains(config.legsToWin), (1...11).contains(config.setsToWin), (GameConfig.minimumScore...GameConfig.maximumScore).contains(config.startingScore), players.indices.allSatisfy({ (GameConfig.minimumScore...GameConfig.maximumScore).contains(config.startingScore(for: $0)) }), (1...30).contains(config.settings.countUpRounds), config.settings.botDelay.isFinite, (0.3...5).contains(config.settings.botDelay) else { return false }
-        guard players.allSatisfy({ $0.botLevel == nil || (1...10).contains($0.botLevel!) }), states.allSatisfy({ $0.remaining >= 0 && (1...22).contains($0.clockTarget) && (0...config.setsToWin).contains($0.sets) }), visits.allSatisfy({ players.indices.contains($0.player) && (1...3).contains($0.darts.count) && $0.darts.allSatisfy(\.isValid) }) else { return false }
+        guard players.allSatisfy({ $0.botLevel == nil || (1...BotDifficulty.count).contains($0.botLevel!) }), states.allSatisfy({ $0.remaining >= 0 && (1...22).contains($0.clockTarget) && (0...config.setsToWin).contains($0.sets) }), visits.allSatisfy({ players.indices.contains($0.player) && (1...3).contains($0.darts.count) && $0.darts.allSatisfy(\.isValid) }) else { return false }
         guard winner.map({ players.indices.contains($0) }) ?? true, legWinner.map({ players.indices.contains($0) }) ?? true else { return false }
         guard continuedPastLimitLegs?.allSatisfy({ $0 >= 1 }) ?? true else { return false }
         guard currentDarts.count <= 2, currentDarts.allSatisfy(\.isValid) else { return false }

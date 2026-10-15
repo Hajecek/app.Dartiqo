@@ -66,10 +66,14 @@ struct SettingsView: View {
                 Picker("Vzhled", selection: $store.data.appearance) { Text("Tmavý").tag("dark"); Text("Světlý").tag("light"); Text("Podle systému").tag("system") }
                 Toggle("Haptická odezva", isOn: $store.data.haptics).tint(Theme.mint)
                 Toggle("Hlasové hlášení skóre", isOn: $store.data.voice).tint(Theme.mint)
+                Toggle("Adaptivní bot", isOn: Binding(
+                    get: { store.data.adaptiveAI != false },
+                    set: { store.data.adaptiveAI = $0; store.save() }
+                )).tint(Theme.mint)
             } header: {
                 Text("Přizpůsobení")
             } footer: {
-                Text("Hlášení čte dosažené skóre nahlas. Hlasový zápis (mikrofon v zápase) je zvlášť — řekneš šipku nebo součet kola.")
+                Text("Hlášení čte dosažené skóre nahlas. Hlasový zápis (mikrofon v zápase) je zvlášť — řekneš šipku nebo součet kola. Adaptivní bot mezi zápasy srovná obtížnost s tvými posledními legy. Vypnutí ho nechá na ručně zvolené úrovni.")
             }
             Section {
                 NavigationLink {
@@ -157,7 +161,7 @@ struct RulesView: View {
             Section("Cricket") { Text("Hraje se na 15 až 20 a bull. Single je jeden zásah, double dva, triple tři. Tři zásahy zavřou číslo. Nadbytečné zásahy přidají body, pokud alespoň jeden soupeř číslo ještě nezavřel. Pro výhru musíš zavřít všechna čísla a nemít méně bodů než kterýkoli soupeř. Ve variantě bez bodů vyhrává první, kdo vše zavře.") }
             Section("Kolem hodin") { Text("Tref postupně 1, 2, …, 20. Volba pouze double / triple přijímá na číslech jen zvolený násobek, na konci vyžaduje bull 50. U libovolných zásahů stačí i outer bull 25. Násobek nepřeskakuje čísla. Správný zásah okamžitě posune další cíl, i uprostřed návštěvy.") }
             Section("Count Up") { Text("Zvolený počet kol (5 až 30) pro každého hráče, vždy tři šipky. Sčítají se všechny body. Nejvyšší skóre vítězí, shoda znamená remízu.") }
-            Section("Boti a statistiky") { Text("Bot míří na skutečné segmenty a chybuje do singlů, sousedních polí nebo mimo terč. Úroveň zvyšuje přesnost; nejde o garantovaný průměr. Průměr X01 v této aplikaci používá skutečně zapsaný počet šipek, včetně šipek před otevřením a při přehozu.") }
+            Section("Boti a statistiky") { Text("Každá šipka bota vznikne simulací zásahu na terči. Úrovně 1–20 mají dlouhodobý cíl průměru a úspěšnosti double, jednotlivá kola se liší. Styl mění skóre, zavírání a stabilitu. Adaptive AI mezi zápasy zvolí úroveň podle posledních legů a v nastavení jde vypnout. Průměr X01 používá skutečně zapsaný počet šipek, včetně šipek před otevřením a při přehozu.") }
             Section("Kalibrace terče") {
                 Text("Nastavení → Autoscore → Kalibrace terče.")
                 Text("Namiř kameru tak, aby byl celý terč ve snímku. Kruh zezelená, jakmile pozná okraj. Čísla na terči sama určí segmenty a otočení.")

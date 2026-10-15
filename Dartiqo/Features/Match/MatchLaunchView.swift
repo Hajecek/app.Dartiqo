@@ -243,7 +243,7 @@ struct MatchLaunchView: View {
 
                 if let bot {
                     levelMeter(bot.id, width: min(92, size * 0.9))
-                    Text(bot.name)
+                    Text(player.adaptiveBot == true ? "Adaptive · \(bot.name)" : bot.name)
                         .font(AppFont.caption(11, weight: .semibold))
                         .foregroundStyle(.white.opacity(0.48))
                         .lineLimit(1)
@@ -265,17 +265,16 @@ struct MatchLaunchView: View {
     }
 
     private func levelMeter(_ level: Int, width: CGFloat) -> some View {
-        let level = min(10, max(1, level))
-        return HStack(spacing: 2.5) {
-            ForEach(1...10, id: \.self) { step in
+        let level = min(BotDifficulty.count, max(1, level))
+        return Capsule()
+            .fill(Color.white.opacity(0.14))
+            .overlay(alignment: .leading) {
                 Capsule()
-                    .fill(step <= level ? Theme.brand : Color.white.opacity(0.14))
-                    .frame(height: step == level ? 9 : 5)
-                    .frame(maxWidth: .infinity)
+                    .fill(Theme.brand)
+                    .frame(width: max(6, width * CGFloat(level) / CGFloat(BotDifficulty.count)))
             }
-        }
-        .frame(width: width, height: 9)
-        .accessibilityHidden(true)
+            .frame(width: width, height: 6)
+            .accessibilityHidden(true)
     }
 
     private func avatarLook(for player: Player) -> (photo: Data?, asset: String?, bot: Bool) {
