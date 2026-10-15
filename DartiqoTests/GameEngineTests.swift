@@ -284,6 +284,21 @@ final class GameEngineTests: XCTestCase {
         XCTAssertEqual(Checkout.route(for:40),[Dart(20,2)])
         XCTAssertEqual(Checkout.route(for:36),[Dart(18,2)])
         XCTAssertEqual(Checkout.route(for:3),[Dart(1),Dart(1,2)])
+        // Pojištěné první šipky: single stejného pole musí nechat 2-šipkové zavření.
+        let covered = [119, 122, 123, 125, 126, 128, 129]
+        for score in covered {
+            let route = Checkout.route(for: score)
+            XCTAssertNotNil(route, "\(score)")
+            guard let first = route?.first else { continue }
+            XCTAssertEqual(first.multiplier, 3, "\(score) má začínat treblem")
+            XCTAssertNotEqual(first.segment, 20, "\(score) nejde přes T20 — S20 by zabilo zavření")
+            let afterSingle = score - first.segment
+            XCTAssertNotNil(Checkout.route(for: afterSingle, darts: 2), "\(score): po S\(first.segment) zbývá \(afterSingle)")
+        }
+        XCTAssertEqual(Checkout.route(for: 123)?.first, Dart(19, 3))
+        // Vysoké checkouty bez bezpečného single zůstávají na T20.
+        XCTAssertEqual(Checkout.route(for: 160)?.first, Dart(20, 3))
+        XCTAssertEqual(Checkout.route(for: 141)?.first, Dart(20, 3))
     }
     func testSetupLeavesAFinishWhenCheckoutIsImpossible() {
         for rule in OutRule.allCases {

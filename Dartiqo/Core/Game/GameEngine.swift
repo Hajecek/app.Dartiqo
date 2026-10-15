@@ -167,6 +167,8 @@ public enum Checkout {
     }()
 
     /// Legal checkout using routes players recognise — popular doubles and natural setups.
+    /// U tří šipek preferuje první ránu, po které single (špatný zásah do stejného pole) stále nechá zavření.
+    /// Např. 123 jde přes T19 (S19 → 104), ne T20 (S20 → 103, dvěma šipkami nejde).
     public static func route(for score: Int, rule: OutRule = .double, darts: Int = 3) -> [Dart]? {
         guard score > 0, darts > 0, score <= 180 else { return nil }
         let ends = finishingDarts(rule: rule)
@@ -174,18 +176,44 @@ public enum Checkout {
         for end in ends where end.score == score { return [end] }
         if darts >= 2, let two = twoDart(score: score, ends: ends) { return two }
         if darts >= 3 {
+            var fallback: [Dart]?
             for first in preferredSetups {
                 let left = score - first.score
                 guard left > 0 else { continue }
+                let path: [Dart]
                 if let end = ends.first(where: { $0.score == left }) {
-                    return [first, end]
+                    path = [first, end]
+                } else if let rest = twoDart(score: left, ends: ends) {
+                    path = [first] + rest
+                } else {
+                    continue
                 }
-                if let rest = twoDart(score: left, ends: ends) {
-                    return [first] + rest
+                if fallback == nil { fallback = path }
+                // Bull nepoužívat jako „bezpečnější“ náhradu za T20 — jen číselná pole.
+                if first.segment <= 20, singleMissStillFinishable(first, from: score, rule: rule, dartsLeft: darts - 1) {
+                    return path
                 }
             }
+            return fallback
         }
         return nil
+    }
+
+    /// `true`, když zásah do single stejného segmentu (u bull do 25) pořád nechá finish ve zbývajících šipkách.
+    private static func singleMissStillFinishable(_ dart: Dart, from score: Int, rule: OutRule, dartsLeft: Int) -> Bool {
+        guard dartsLeft > 0, dart.multiplier >= 2 else { return true }
+        let floor = rule == .straight ? 1 : 2
+        let leave: Int
+        if dart.segment == 25 {
+            leave = score - 25
+        } else if (1...20).contains(dart.segment) {
+            leave = score - dart.segment
+        } else {
+            return true
+        }
+        if leave == 0 { return rule == .straight }
+        guard leave >= floor else { return false }
+        return canFinish(leave, rule: rule, darts: dartsLeft)
     }
 
     private static func finishingDarts(rule: OutRule) -> [Dart] {
