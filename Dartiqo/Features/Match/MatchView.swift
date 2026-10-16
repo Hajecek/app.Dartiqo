@@ -220,10 +220,9 @@ struct MatchView: View {
     private func seedSurface(for game: Match) {
         guard !didSeedSurface else { return }
         didSeedSurface = true
+        // Výchozí je klasická číselná klávesnice; terč jen po ručním přepnutí.
         if game.currentDarts.isEmpty && canUseTotal(game) && game.config.settings.entry == .total {
             surface = .total
-        } else if game.config.settings.entry == .darts {
-            surface = .board
         } else {
             surface = .grid
         }
@@ -518,23 +517,17 @@ struct MatchView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     playerAvatar(game, index: index, size: 22)
-                    Text(player.name).font(AppFont.body(14, weight: .semibold)).lineLimit(1)
+                    Text(player.name)
+                        .font(AppFont.body(14, weight: .semibold))
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     if player.botLevel != nil {
                         Image(systemName: "cpu").font(AppFont.caption(11, weight: .semibold))
                     } else if game.isGhost(index) {
                         Image(systemName: "person.fill.viewfinder").font(AppFont.caption(11, weight: .semibold))
                     }
-                    Spacer(minLength: 4)
-                    if game.config.playsSets {
-                        Text("\(state.sets)")
-                            .font(AppFont.body(14, weight: .bold))
-                            .foregroundStyle(MatchColors.ink)
-                            .frame(minWidth: 24, minHeight: 24)
-                            .background(.white.opacity(0.85), in: RoundedRectangle(cornerRadius: 7))
-                            .accessibilityLabel("\(state.sets) setů")
-                    }
-                    Text("\(state.legs)").font(AppFont.body(14, weight: .bold)).foregroundStyle(.white).frame(minWidth: 24, minHeight: 24).background(MatchColors.ink, in: RoundedRectangle(cornerRadius: 7)).accessibilityLabel("\(state.legs) vyhraných legů")
                 }
+                .padding(.trailing, game.config.playsSets ? 52 : 28)
                 if game.config.hasHandicap {
                     Text(game.config.ruleLine(for: index))
                         .font(AppFont.caption(11, weight: .bold))
@@ -559,6 +552,11 @@ struct MatchView: View {
             .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 16)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(active ? MatchColors.coral : MatchColors.amber)
+            .overlay(alignment: .topTrailing) {
+                panelMatchLength(game, state: state, active: active)
+                    .padding(.top, 12)
+                    .padding(.trailing, 12)
+            }
         }
         .buttonStyle(.plain)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: active)
@@ -566,6 +564,35 @@ struct MatchView: View {
         .accessibilityAddTraits(active ? [.isSelected, .isButton] : .isButton)
         .accessibilityHint("Zobrazí statistiky ze zápasu")
         .accessibilityValue(active ? "Na tahu" : "")
+    }
+
+    /// Kompaktní stav legu/setu v rohu — neroztahuje scoreboard.
+    private func panelMatchLength(_ game: Match, state: PlayerState, active: Bool) -> some View {
+        let ink = active ? Color.white : MatchColors.ink
+        let fill = active ? Color.white.opacity(0.18) : Color.black.opacity(0.12)
+        return HStack(spacing: 0) {
+            if game.config.playsSets {
+                Text("\(state.sets)")
+                    .accessibilityLabel("\(state.sets) setů")
+                Text("–")
+                    .foregroundStyle(ink.opacity(0.45))
+                    .accessibilityHidden(true)
+            }
+            Text("\(state.legs)")
+                .accessibilityLabel("\(state.legs) vyhraných legů")
+        }
+        .font(AppFont.caption(12, weight: .bold))
+        .monospacedDigit()
+        .foregroundStyle(ink)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(fill, in: Capsule())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            game.config.playsSets
+                ? "\(state.sets) setů, \(state.legs) legů"
+                : "\(state.legs) vyhraných legů"
+        )
     }
 
     private func playerLook(_ game: Match, index: Int) -> (photo: Data?, asset: String?) {
@@ -1535,7 +1562,7 @@ struct MatchView: View {
         multiplier = 1
         revision = UUID()
         holdDarts = game.currentPlayer.botLevel != nil || game.isGhostTurn || !game.currentDarts.isEmpty ? game.currentDarts : []
-        if !game.currentDarts.isEmpty && surface == .total { surface = .board }
+        if !game.currentDarts.isEmpty && surface == .total { surface = .grid }
     }
     /// Arm hold *before* publishing the advanced match so the UI never flashes the next player's surface.
     private func applyVisitHold(game: Match, darts: [Dart], player: Int, fromBot: Bool) {
