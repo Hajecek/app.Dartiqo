@@ -279,11 +279,22 @@ public struct PlayTime {
 
     /// „2 h 15 min“, „45 min“, „<1 min“.
     public static func format(_ seconds: TimeInterval) -> String {
-        let minutes = Int((seconds / 60).rounded())
-        if minutes < 1 { return seconds > 0 ? "<1 min" : "0 min" }
-        let hours = minutes / 60
-        if hours == 0 { return "\(minutes) min" }
-        return minutes % 60 == 0 ? "\(hours) h" : "\(hours) h \(minutes % 60) min"
+        let parts = components(seconds)
+        if parts.totalMinutes < 1 { return seconds > 0 ? "<1 min" : "0 min" }
+        if parts.hours == 0 { return "\(parts.totalMinutes) min" }
+        return parts.minutes == 0 ? "\(parts.hours) h" : "\(parts.hours) h \(parts.minutes) min"
+    }
+
+    /// Hodiny a zbytek minut po zaokrouhlení na minutu. Stejný základ jako `format`.
+    public static func components(_ seconds: TimeInterval) -> Components {
+        let totalMinutes = max(0, Int((seconds / 60).rounded()))
+        return Components(hours: totalMinutes / 60, minutes: totalMinutes % 60, totalMinutes: totalMinutes)
+    }
+
+    public struct Components: Equatable {
+        public var hours: Int
+        public var minutes: Int
+        public var totalMinutes: Int
     }
 }
 

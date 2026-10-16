@@ -608,14 +608,10 @@ private struct PlayTimeCard: View {
                             .foregroundStyle(playTimeTint(kind))
                     }
                     VStack(spacing: 0) {
-                        Text(PlayTime.format(time.total))
-                            .font(.system(.headline, design: .rounded).weight(.heavy))
-                            .monospacedDigit()
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.6)
+                        PlayTimeLabel(seconds: time.total, layout: .ring(large: false))
+                            .frame(maxWidth: 66)
                         Text("celkem").font(.caption2).foregroundStyle(.secondary)
                     }
-                    .padding(.horizontal, 14)
                 }
                 .frame(width: 104, height: 104)
                 .accessibilityHidden(true)
@@ -739,17 +735,13 @@ private struct PlayTimeDetailView: View {
                         .cornerRadius(4)
                         .foregroundStyle(playTimeTint(kind))
                 }
-                VStack(spacing: 2) {
-                    Text(PlayTime.format(time.total))
-                        .font(.system(.title2, design: .rounded).weight(.heavy))
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.55)
+                VStack(spacing: 1) {
+                    PlayTimeLabel(seconds: time.total, layout: .ring(large: true))
+                        .frame(maxWidth: 92)
                     Text("celkem")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                .padding(.horizontal, 20)
             }
             .frame(width: 140, height: 140)
 

@@ -6,8 +6,10 @@ public enum BotTargetSelector {
         in game: Match,
         dartsLeft: Int,
         profile: BotProfile,
+        thrown: [Dart]? = nil,
         using rng: inout R
     ) -> Dart {
+        let visitDarts = thrown ?? game.currentDarts
         switch game.config.mode {
         case .x01:
             let state = game.currentState
@@ -17,15 +19,19 @@ public enum BotTargetSelector {
                 rule: game.config.outRule(for: game.active),
                 opened: state.opened,
                 profile: profile,
+                thrown: visitDarts,
                 using: &rng
             )
-        case .cricket, .aroundClock, .countUp:
+        case .countUp:
+            return countUpAim(in: game, profile: profile, thrown: visitDarts, using: &rng)
+        case .cricket, .aroundClock:
             return modeAim(in: game, dartsLeft: dartsLeft)
         }
     }
 
     /// Stejné cíle jako dřív u kriketu, hodin a count-upu. U X01 optimální cesta bez náhodného zjednodušení.
-    public static func deterministicAim(in game: Match, dartsLeft: Int) -> Dart {
+    public static func deterministicAim(in game: Match, dartsLeft: Int, thrown: [Dart]? = nil) -> Dart {
+        let visitDarts = thrown ?? game.currentDarts
         switch game.config.mode {
         case .x01:
             let profile = BotProfile.reference(level: game.currentPlayer.botLevel ?? 10)
@@ -35,11 +41,35 @@ public enum BotTargetSelector {
                 dartsLeft: dartsLeft,
                 rule: game.config.outRule(for: game.active),
                 opened: state.opened,
-                profile: profile
+                profile: profile,
+                thrown: visitDarts
+            )
+        case .countUp:
+            let profile = BotProfile.reference(level: game.currentPlayer.botLevel ?? 10)
+            return BotCheckoutEngine.scoringAim(
+                remaining: 501,
+                rule: .straight,
+                profile: profile,
+                thrown: visitDarts
             )
         default:
             return modeAim(in: game, dartsLeft: dartsLeft)
         }
+    }
+
+    private static func countUpAim<R: RandomNumberGenerator>(
+        in game: Match,
+        profile: BotProfile,
+        thrown: [Dart],
+        using rng: inout R
+    ) -> Dart {
+        BotCheckoutEngine.scoringAim(
+            remaining: 501,
+            rule: .straight,
+            profile: profile,
+            thrown: thrown,
+            using: &rng
+        )
     }
 
     private static func modeAim(in game: Match, dartsLeft: Int) -> Dart {
@@ -69,7 +99,7 @@ public enum BotTargetSelector {
             case .triples: return Dart(segment, 3)
             }
         case .countUp:
-            return Dart(20, 3)
+            return deterministicAim(in: game, dartsLeft: dartsLeft)
         }
     }
 }

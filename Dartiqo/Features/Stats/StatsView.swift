@@ -393,34 +393,70 @@ struct HistoryView: View {
             .padding(.vertical, 10)
             .background(Theme.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
 
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("POSLEDNÍ FORMA")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.secondary)
-                    HStack(spacing: 6) {
-                        ForEach(recent) { game in
-                            let item = outcome(game)
-                            Text(item.shortTitle)
-                                .font(.caption2.weight(.heavy))
-                                .foregroundStyle(item == .loss || item == .practice ? Color.primary : Color.white)
-                                .frame(width: 24, height: 24)
-                                .background(item.color, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                        }
-                    }
+            let total = matches.reduce(0) { $0 + $1.playedDuration }
+            if PlayTime.components(total).hours > 0 {
+                VStack(alignment: .leading, spacing: 12) {
+                    recentForm(recent)
+                    boardTotal(total)
                 }
-                Spacer(minLength: 8)
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(PlayTime.format(matches.reduce(0) { $0 + $1.playedDuration }))
-                        .font(.system(.headline, design: .rounded).weight(.bold))
-                        .monospacedDigit()
-                    Text("celkem u terče")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            } else {
+                HStack(alignment: .center, spacing: 10) {
+                    recentForm(recent)
+                    Spacer(minLength: 8)
+                    boardTotal(total)
                 }
             }
         }
         .surface()
+    }
+
+    private func recentForm(_ recent: [Match]) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("POSLEDNÍ FORMA")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.secondary)
+            HStack(spacing: 6) {
+                ForEach(recent) { game in
+                    let item = outcome(game)
+                    Text(item.shortTitle)
+                        .font(.caption2.weight(.heavy))
+                        .foregroundStyle(item == .loss || item == .practice ? Color.primary : Color.white)
+                        .frame(width: 24, height: 24)
+                        .background(item.color, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                }
+            }
+        }
+    }
+
+    /// Celkový čas pod formou. V hodinách jde na celou šířku, ať se „8 h 29 min“ nesrazí se štítky.
+    private func boardTotal(_ seconds: TimeInterval) -> some View {
+        let parts = PlayTime.components(seconds)
+        return Group {
+            if parts.hours > 0 {
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    PlayTimeLabel(seconds: seconds, layout: .inline)
+                    Spacer(minLength: 8)
+                    Text("celkem u terče")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            } else {
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(PlayTime.format(seconds))
+                        .font(.system(.headline, design: .rounded).weight(.bold))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                    Text("celkem u terče")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .fixedSize()
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Celkem u terče \(PlayTime.format(seconds))")
     }
 
     private func recordFact(_ value: String, _ label: String, _ tint: Color) -> some View {
@@ -543,14 +579,12 @@ struct HistoryView: View {
             .padding(.vertical, 10)
             .background(Theme.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
 
-            HStack {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Label("Celkem u terče", systemImage: "clock")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                Spacer()
-                Text(PlayTime.format(seconds))
-                    .font(.system(.headline, design: .rounded).weight(.bold))
-                    .monospacedDigit()
+                Spacer(minLength: 8)
+                PlayTimeLabel(seconds: seconds, layout: .inline)
             }
         }
         .surface()

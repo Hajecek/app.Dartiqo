@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Lobby ve stylu herní aplikace. Navigace a tab bar zůstávají systémové.
 struct HomeView: View {
@@ -6,6 +7,8 @@ struct HomeView: View {
     @State private var preview: LockedPreview?
     @State private var showDaily = false
     @State private var showStreak = false
+    @State private var openLocalSetup = false
+    @State private var showQuickPlay = false
 
     private let canvas = Color.black
 
@@ -48,6 +51,14 @@ struct HomeView: View {
         .sheet(isPresented: $showStreak) {
             StreakSheet()
                 .environmentObject(store)
+        }
+        .sheet(isPresented: $showQuickPlay) {
+            Text(":test")
+                .font(.title2.bold())
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .navigationDestination(isPresented: $openLocalSetup) {
+            SetupView(mode: .x01, preset: store.lastSetup, coversLiveBar: true)
         }
     }
 
@@ -154,14 +165,27 @@ struct HomeView: View {
     private var actionGrid: some View {
         VStack(spacing: 12) {
             HStack(spacing: 12) {
-                NavigationLink { SetupView(mode: .x01, preset: store.lastSetup, coversLiveBar: true) } label: {
-                    LobbyCard(
-                        title: "Hrát lokálně",
-                        detail: "X01 s kamarády nebo boty",
-                        symbol: "target",
-                        colors: [Color(red: 1.0, green: 0.42, blue: 0.29), Color(red: 0.86, green: 0.20, blue: 0.20)],
-                        height: 190
+                LobbyCard(
+                    title: "Hrát lokálně",
+                    detail: "X01 s kamarády nebo boty",
+                    symbol: "target",
+                    colors: [Color(red: 1.0, green: 0.42, blue: 0.29), Color(red: 0.86, green: 0.20, blue: 0.20)],
+                    height: 190
+                )
+                .overlay {
+                    TapOrHoldOverlay(
+                        onTap: { openLocalSetup = true },
+                        onLongPress: {
+                            store.tapHaptic(.medium)
+                            showQuickPlay = true
+                        }
                     )
+                }
+                .accessibilityAddTraits(.isButton)
+                .accessibilityHint("Podrž pro rychlou hru")
+                .accessibilityAction(.default) { openLocalSetup = true }
+                .accessibilityAction(named: "Rychlá hra") {
+                    showQuickPlay = true
                 }
                 NavigationLink { TrainingCenterView() } label: {
                     LobbyCard(
@@ -215,6 +239,77 @@ struct HomeView: View {
         }
         .buttonStyle(.plain)
         .accessibilityHint("Otevře, co v kariéře přibude")
+    }
+}
+
+/// Klepnutí a podržení na kartě ve scrollu. SwiftUI gesto na tlačítku scroll polyká.
+private struct TapOrHoldOverlay: UIViewRepresentable {
+    var onTap: () -> Void
+    var onLongPress: () -> Void
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        view.isAccessibilityElement = false
+
+        let longPress = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.longPress(_:)))
+        longPress.minimumPressDuration = 0.45
+        longPress.allowableMovement = 12
+        longPress.cancelsTouchesInView = true
+        longPress.delegate = context.coordinator
+        view.addGestureRecognizer(longPress)
+
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tap(_:)))
+        tap.cancelsTouchesInView = false
+        tap.delegate = context.coordinator
+        view.addGestureRecognizer(tap)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.onTap = onTap
+        context.coordinator.onLongPress = onLongPress
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIView, context: Context) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions()
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onTap: onTap, onLongPress: onLongPress)
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var onTap: () -> Void
+        var onLongPress: () -> Void
+        private var held = false
+
+        init(onTap: @escaping () -> Void, onLongPress: @escaping () -> Void) {
+            self.onTap = onTap
+            self.onLongPress = onLongPress
+        }
+
+        @objc func longPress(_ recognizer: UILongPressGestureRecognizer) {
+            guard recognizer.state == .began else { return }
+            held = true
+            onLongPress()
+        }
+
+        @objc func tap(_ recognizer: UITapGestureRecognizer) {
+            guard recognizer.state == .ended else { return }
+            if held {
+                held = false
+                return
+            }
+            onTap()
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+        ) -> Bool {
+            other is UIPanGestureRecognizer
+        }
     }
 }
 

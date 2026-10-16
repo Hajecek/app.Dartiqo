@@ -200,7 +200,7 @@ public enum Checkout {
     }
 
     /// `true`, když zásah do single stejného segmentu (u bull do 25) pořád nechá finish ve zbývajících šipkách.
-    private static func singleMissStillFinishable(_ dart: Dart, from score: Int, rule: OutRule, dartsLeft: Int) -> Bool {
+    static func singleMissStillFinishable(_ dart: Dart, from score: Int, rule: OutRule, dartsLeft: Int) -> Bool {
         guard dartsLeft > 0, dart.multiplier >= 2 else { return true }
         let floor = rule == .straight ? 1 : 2
         let leave: Int
@@ -229,14 +229,47 @@ public enum Checkout {
         }
     }
 
+    /// Trojky, na které se normálně míří. Nižší trojky (T9 a dolů) zůstávají až jako nouzovka.
+    private static let normalTrebleSegments = [20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10]
+    /// Doubly, které po trojce dávají smysl. Bez D6 a D2: 72 je T16–D12, 68 je T20–D4, ne dvě dvojky.
+    private static let favouriteFinishSegments: Set<Int> = [20, 16, 8, 12, 10, 4, 18]
+
     /// Prefer leaving a popular double; pick the most natural setup that scores the remainder.
+    /// Když by první šipka byla taky double (72 → D16 D20), vezme se trojka na normální číslo (T16 D12).
     private static func twoDart(score: Int, ends: [Dart]) -> [Dart]? {
+        let straight = paired(score: score, ends: ends, setups: preferredSetups)
+        if let straight, isSetupDouble(straight[0]),
+           let normal = trebleOntoFavouriteDouble(score: score, ends: ends) {
+            return normal
+        }
+        return straight
+    }
+
+    private static func paired(score: Int, ends: [Dart], setups: [Dart]) -> [Dart]? {
         for end in ends {
             let need = score - end.score
             guard need > 0 else { continue }
-            if let setup = preferredSetups.first(where: { $0.score == need }) {
+            if let setup = setups.first(where: { $0.score == need }) {
                 return [setup, end]
             }
+        }
+        return nil
+    }
+
+    private static func isSetupDouble(_ dart: Dart) -> Bool {
+        dart.multiplier == 2 && dart.segment <= 20
+    }
+
+    /// Nejvyšší běžná trojka, po které zbývá double, na který se opravdu míří.
+    private static func trebleOntoFavouriteDouble(score: Int, ends: [Dart]) -> [Dart]? {
+        for segment in normalTrebleSegments {
+            let treble = Dart(segment, 3)
+            let left = score - treble.score
+            guard left > 0 else { continue }
+            guard let end = ends.first(where: {
+                $0.score == left && $0.multiplier == 2 && favouriteFinishSegments.contains($0.segment)
+            }) else { continue }
+            return [treble, end]
         }
         return nil
     }

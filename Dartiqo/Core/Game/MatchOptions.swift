@@ -26,6 +26,57 @@ public struct MatchOptions: Codable, Equatable {
     public static let dartLimitRounds = 3...100
     public init() {}
 }
+
+/// Co se ve hře ukáže jako tříšipkový průměr. Chybějící hodnota znamená celý zápas.
+public enum AverageScope: String, Codable, CaseIterable, Identifiable {
+    case match, leg, both, perLeg, hidden
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .match: return "Celý zápas"
+        case .leg: return "Jen tento leg"
+        case .both: return "Zápas i leg"
+        case .perLeg: return "Každý leg zvlášť"
+        case .hidden: return "Skrýt průměr"
+        }
+    }
+    public var detail: String {
+        switch self {
+        case .match: return "Jeden průměr za všechny legy dohromady."
+        case .leg: return "Počítá se jen rozehraná hra. Nový leg začíná od nuly."
+        case .both: return "Na kartě jsou obě čísla vedle sebe."
+        case .perLeg: return "Pod tabulkou má každá hra vlastní průměr."
+        case .hidden: return "Průměr z plochy zápasu zmizí."
+        }
+    }
+    public var symbol: String {
+        switch self {
+        case .match: return "chart.line.uptrend.xyaxis"
+        case .leg: return "flag.fill"
+        case .both: return "square.split.2x1"
+        case .perLeg: return "rectangle.split.3x1"
+        case .hidden: return "eye.slash"
+        }
+    }
+}
+
+/// Volby zobrazení během zápasu. Volitelná pole, aby starší soubor dál šel načíst.
+public struct MatchDisplay: Codable, Equatable {
+    public var averageScope: AverageScope?
+    public var showFirst9: Bool?
+    public var showLastVisit: Bool?
+    public var showBestVisit: Bool?
+    public var showDartCount: Bool?
+
+    public init() {}
+
+    public var scope: AverageScope { averageScope ?? .match }
+    public var first9: Bool { showFirst9 == true }
+    public var lastVisit: Bool { showLastVisit == true }
+    public var bestVisit: Bool { showBestVisit == true }
+    public var dartCount: Bool { showDartCount == true }
+    public var showsExtraNumbers: Bool { first9 || lastVisit || bestVisit || dartCount }
+}
 public struct SeatDraft: Codable, Identifiable, Equatable {
     public var id = UUID()
     public var name: String

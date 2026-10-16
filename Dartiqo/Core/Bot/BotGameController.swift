@@ -26,9 +26,17 @@ public enum BotGameController {
     ) -> SimulatedDart {
         let profile = profile(for: game, override: override)
         let form = fixed ?? BotFormEngine.form(in: game, profile: profile)
+        // Projekce spočítá zbývající skóre, ale smaže pending šipky — ty předáme zvlášť kvůli rotaci terci.
+        let thrown = game.currentDarts
         let projected = game.liveProjection
-        let dartsLeft = 3 - game.currentDarts.count
-        let aim = BotTargetSelector.aim(in: projected, dartsLeft: dartsLeft, profile: profile, using: &rng)
+        let dartsLeft = 3 - thrown.count
+        let aim = BotTargetSelector.aim(
+            in: projected,
+            dartsLeft: dartsLeft,
+            profile: profile,
+            thrown: thrown,
+            using: &rng
+        )
         let state = projected.currentState
         let shift = BotCheckoutEngine.safetyShift(
             aim: aim,

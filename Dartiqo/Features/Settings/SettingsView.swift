@@ -168,7 +168,7 @@ struct RulesView: View {
                 Text("V zápasu zvol způsob zápisu Kamera. Ukáže se živý obraz a nová šipka se zapíše, jakmile zůstane v terči. Šipku mimo terč doplň tlačítkem Mimo. Telefon po kalibraci nepřemisťuj.")
             }
             Section("XP") {
-                Text("Body dávají dokončené zápasy a uložené tréninky.")
+                Text("Body dávají uložené tréninky a dokončené zápasy proti botovi nebo ověřenému online soupeři. Lokální zápas na jednom zařízení XP nepřiděluje.")
                 NavigationLink("Za co dostávám XP") { XPInfoView() }
             }
         }.navigationTitle("Jak hrát").navigationBarTitleDisplayMode(.inline)
@@ -177,39 +177,48 @@ struct RulesView: View {
 
 /// Za co se dává XP — jen zdroje bodů, bez křivky levelů.
 struct XPInfoView: View {
+    private var xp: MatchXPConfig { .standard }
+
     var body: some View {
         List {
-            Section("Zápas — výsledek") {
-                Label("+40 XP za dohraný zápas", systemImage: "flag.checkered")
-                Label("+50 XP výhra · +15 remíza · −25 prohra", systemImage: "trophy.fill")
-                Text("Prohra bere XP schválně — ať je důvod vyhrát.")
+            Section("Zápas — základ") {
+                Label("+\(xp.playedXP) XP za odehraný zápas", systemImage: "flag.checkered")
+                Label("+\(xp.completedXP) XP za dokončený zápas", systemImage: "checkmark.circle.fill")
+                Label("+\(xp.winXP) XP výhra · +\(xp.drawXP) remíza · \(xp.lossXP) prohra", systemImage: "trophy.fill")
+                Text("XP se připíše až po dokončení. Nedokončený a zrušený zápas nedá nic. Výsledková odměna je jen jedna a prohra se odečítá od ostatních XP.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-            Section("Průměr (X01)") {
-                ForEach(MatchRewards.averageBands, id: \.label) { band in
+            Section("Průměr na 3 šipky") {
+                ForEach(xp.averageBands, id: \.label) { band in
                     Label("\(band.label) = +\(band.xp) XP", systemImage: "chart.line.uptrend.xyaxis")
                 }
+                Text("Jen v X01, od \(xp.fullAwardLegs) dokončených legů a aspoň \(xp.minimumAverageDarts) šipek.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
-            Section("Zavírání % (X01)") {
-                ForEach(MatchRewards.checkoutRateBands, id: \.label) { band in
-                    Label("\(band.label) % = +\(band.xp) XP", systemImage: "percent")
+            Section("Úspěšnost zavírání") {
+                Label("0 % = 0 XP", systemImage: "percent")
+                ForEach(xp.checkoutBands, id: \.label) { band in
+                    Label("\(band.label) = +\(band.xp) XP", systemImage: "percent")
                 }
+                Text("Úspěšná zavření dělená pokusy o double. Bonus chce aspoň \(xp.fullAwardLegs) dokončené legy a \(xp.minimumCheckoutAttempts) pokusy.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
-            Section("Checkout skóre (X01)") {
-                ForEach(MatchRewards.checkoutScoreBands, id: \.label) { band in
-                    Label("\(band.label) = +\(band.xp) XP", systemImage: "flag.fill")
-                }
+            Section("Speciální bonusy") {
+                Label("+\(xp.oneEightyXP) XP za 180 · max \(xp.oneEightyCap)", systemImage: "flame.fill")
+                Label("+\(xp.highCheckoutXP) XP za zavření \(xp.highCheckoutMinimum)+ · max \(xp.highCheckoutCap)", systemImage: "flag.fill")
+                Text("Jen skutečně zapsané hody a jen od \(xp.fullAwardLegs) dokončených legů. Kratší zápas má jen odehrání, dokončení a výsledek.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
-            Section("Nejlepší kolo (X01)") {
-                ForEach(MatchRewards.bestVisitBands, id: \.label) { band in
-                    Label("\(band.label) = +\(band.xp) XP", systemImage: "bolt.fill")
-                }
-                Label("+8 XP za vyhraný leg (max 24)", systemImage: "rectangle.split.3x1.fill")
-            }
-            Section("Zápas — ostatní režimy") {
-                Label("Cricket / Count-Up: pásma bodů 20–49 / 50–99 / 100–149 / 150–199 / 200+", systemImage: "number")
-                Label("Around the Clock: pásma postupu 5–9 / 10–14 / 15–19 / 20 / hotovo", systemImage: "clock.fill")
+            Section("Ochrana před farmením") {
+                Text("První \(xp.repeatFullCount) dokončené zápasy proti stejnému soupeři za 24 hodin mají 100 % XP. Čtvrtý a pátý 50 %. Šestý a každý další 0 %.")
+                Text("Proti botovi se počítá \(Int((xp.botCoefficient * 100).rounded())) % XP, nejvýš \(xp.botDailyCap) zápasů denně, a jen když bot taky hodil.")
+                Text("Lokální zápas, sólo a ghost XP nepřidělují. Plné XP jsou pro ověřený online zápas proti skutečnému hráči. Trénink má vlastní XP, ne zápasové.")
+                Text("Podezřelý průběh, třeba rozbitý zápis nebo opakované výhry bez hodu soupeře, XP pozastaví. Samotný vysoký průměr nebo rychlá výhra podvod neznamená.")
+                Text("Každý zápas má jedno id a XP se k němu zapíšou jen jednou, včetně důvodu a rozpisu. Obnovení obrazovky je nepřidá znovu.")
             }
             Section("Trénink") {
                 Text("XP se započítá až po uložení dokončené hry, ve které padla aspoň jedna šipka. Restart, přerušení a prázdná hra nic nedají. Stejná hra se nezapočítá dvakrát.")
@@ -219,9 +228,9 @@ struct XPInfoView: View {
                 Label("+40 za nový rekord", systemImage: "medal.fill")
                 Label("+15 při přesnosti aspoň 50 % nebo sérii 3 zásahů", systemImage: "flame.fill")
                 Label("+50 u denní výzvy, +40 u týdenní", systemImage: "flag.fill")
-            }
-            Section("Ochrana před farmením") {
                 Text("Čtvrté a další dokončení stejné tréninkové hry v jeden den dají jen 10 % základu, bez bonusů. U pokročilé obtížnosti to znamená 4 XP.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
         }
         .navigationTitle("Za co dostávám XP")
@@ -237,7 +246,7 @@ struct MatchXPBreakdownSheet: View {
         XPBreakdownSheet(
             title: "XP za zápas",
             accessibilityTotal: "\(breakdown.total) XP za zápas",
-            footer: "Každý řádek je pásmo od–do, nebo výsledek zápasu. Prohra bere XP.",
+            footer: breakdown.explanation,
             lines: breakdown.lines.map {
                 XPBreakdownRow(id: $0.id, title: $0.title, detail: $0.detail, symbol: $0.symbol, amount: $0.amount)
             },

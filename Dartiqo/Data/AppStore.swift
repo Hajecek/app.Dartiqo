@@ -56,10 +56,14 @@ struct StoredData: Codable {
     var xpEvents: [XPEvent]?
     var trainingPlan: [String: TrainingPlan]?
     var achievementUnlocks: [AchievementUnlock]?
+    /// Zápasové XP zapsané jednou pro hráče a zápas. Trénink zůstává v `xpEvents`.
+    var matchXPAwards: [MatchXPAward]?
     /// Trvalé učení Zrcadla stylu (klíč owner|start|out).
     var ghostStyleMemories: [String: GhostStyleMemory]?
     /// `nil` a `true` znamenají zapnuto. Vypnutí nechá bota na ručně zvolené úrovni.
     var adaptiveAI: Bool?
+    /// Jak se během hry kreslí průměr a další čísla. `nil` = celkový průměr zápasu, nic navíc.
+    var matchDisplay: MatchDisplay?
 }
 struct JSONDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
@@ -96,6 +100,7 @@ enum AppSection: Hashable {
                 data = decoded
             }
         } catch { needsRecovery = true; storageError = "Data se nepodařilo načíst. Původní soubor nebyl přepsán. Použij obrazovku obnovy pro uložení kopie dat. \(error.localizedDescription)" }
+        if !needsRecovery { backfillMatchXP() }
         locked = data.biometricLock && profile != nil
     }
 #if DEBUG
@@ -107,6 +112,7 @@ enum AppSection: Hashable {
         self.data = data
         locked = false
         needsRecovery = false
+        backfillMatchXP()
     }
 #endif
     var presets: [GamePreset] { (data.presets ?? []).filter { $0.owner == profile?.id } }
@@ -257,15 +263,18 @@ enum AppSection: Hashable {
     }
     var xp: Int {
         guard let id = profile?.id else { return 0 }
-        let played = matches.reduce(0) { $0 + MatchRewards.award(match: $1, playerID: id).total }
+        let played = (data.matchXPAwards ?? []).filter { $0.owner == id }.reduce(0) { $0 + $1.amount }
         let trained = (data.xpEvents ?? []).filter { $0.owner == id }.reduce(0) { $0 + $1.amount }
         return max(0, played + trained)
     }
 
-    /// Rozklad XP za konkrétní zápas pro přihlášený profil.
+    /// Rozklad XP za konkrétní zápas. Uložená odměna má přednost, ať se po čase nepřepočítá jinak.
     func matchXP(for match: Match) -> MatchXPBreakdown {
         guard let id = profile?.id else { return MatchXPBreakdown() }
-        return MatchRewards.award(match: match, playerID: id)
+        if let stored = data.matchXPAwards?.first(where: { $0.owner == id && $0.matchID == match.id }) {
+            return stored.breakdown
+        }
+        return MatchRewards.award(match: match, playerID: id, history: data.matches)
     }
     var level: Int { PlayerLevel.level(forXP: xp) }
     /// XP v aktuálním levelu / kolik chce další level / progress 0…1.
@@ -400,6 +409,7 @@ enum AppSection: Hashable {
     func finish() {
         guard let match = activeMatch, match.finished else { return }
         if !data.matches.contains(where: { $0.id == match.id }) {
+            commitMatchXP(for: match)
             var archived = match
             archived.undoStack = []
             data.matches.append(archived)
@@ -410,7 +420,33 @@ enum AppSection: Hashable {
     func deleteMatch(_ id: UUID) {
         guard data.matches.contains(where: { $0.id == id }) else { return }
         data.matches.removeAll { $0.id == id }
+        data.matchXPAwards?.removeAll { $0.matchID == id }
         save()
+    }
+
+    /// Jednorázově doplní odměny ke starším dohraným zápasům. Stejné id znovu nezapíše.
+    private func backfillMatchXP() {
+        let before = data.matchXPAwards?.count ?? 0
+        for match in data.matches where match.finished {
+            commitMatchXP(for: match)
+        }
+        if (data.matchXPAwards?.count ?? 0) != before { save() }
+    }
+
+    /// Zapíše XP všem místním profilům v zápase. Historie v tu chvíli tenhle zápas ještě neobsahuje, nebo ho výpočet vynechá.
+    private func commitMatchXP(for match: Match) {
+        guard match.finished else { return }
+        var awards = data.matchXPAwards ?? []
+        let profiles = Set(data.profiles.map(\.id))
+        for (index, player) in match.players.enumerated() {
+            guard player.botLevel == nil, !match.isGhost(index), profiles.contains(player.id) else { continue }
+            let key = MatchXPAward.key(owner: player.id, match: match.id)
+            if awards.contains(where: { $0.id == key }) { continue }
+            let breakdown = MatchRewards.award(match: match, playerID: player.id, history: data.matches)
+            let award = MatchXPAward(owner: player.id, matchID: match.id, breakdown: breakdown, createdAt: match.completedAt ?? Date())
+            _ = MatchXPBook.insert(award, into: &awards)
+        }
+        data.matchXPAwards = awards
     }
     func deleteTraining(_ id: UUID) {
         guard let owner = profile?.id else { return }
@@ -476,7 +512,8 @@ enum AppSection: Hashable {
     }
     func deleteProfile() {
         guard let id = profile?.id else { return }
-        data.matches.removeAll { $0.players.contains { $0.id == id } }
+        let removedMatchIDs = Set(data.matches.filter { $0.players.contains { $0.id == id } }.map(\.id))
+        data.matches.removeAll { removedMatchIDs.contains($0.id) }
         data.activeMatches[id.uuidString] = nil
         data.presets?.removeAll { $0.owner == id }; data.lastSetups?[id.uuidString] = nil
         data.profiles.removeAll { $0.id == id }; data.selectedProfile = nil
@@ -484,6 +521,7 @@ enum AppSection: Hashable {
         data.activeTraining?[id.uuidString] = nil
         data.trainingFavorites?[id.uuidString] = nil
         data.xpEvents?.removeAll { $0.owner == id }
+        data.matchXPAwards?.removeAll { $0.owner == id || removedMatchIDs.contains($0.matchID) }
         data.trainingPlan?[id.uuidString] = nil
         data.achievementUnlocks?.removeAll { $0.owner == id }
         save()

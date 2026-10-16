@@ -143,9 +143,16 @@ struct TrainingCenterView: View {
                     .padding(.vertical, 5)
                     .background(.black.opacity(0.08), in: Capsule())
             }
-            HStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 0) {
                 compactStat(accuracy, "přesnost")
-                compactStat(PlayTime.format(store.trainingPlayed), "u terče")
+                VStack(alignment: .leading, spacing: 1) {
+                    PlayTimeLabel(seconds: store.trainingPlayed, layout: .inline)
+                        .foregroundStyle(.black)
+                    Text("u terče")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.black.opacity(0.55))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 compactStat("\(store.trainingWeekXP)", "XP / týden")
             }
             Group {

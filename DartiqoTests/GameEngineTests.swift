@@ -116,6 +116,7 @@ final class GameEngineTests: XCTestCase {
         XCTAssertEqual(days.filter { Calendar.current.isDateInToday($0.date) }.reduce(0) { $0 + $1.seconds }, 3_300)
         XCTAssertEqual(PlayTime.format(3_300), "55 min")
         XCTAssertEqual(PlayTime.format(8_100), "2 h 15 min")
+        XCTAssertEqual(PlayTime.components(30_540), PlayTime.Components(hours: 8, minutes: 29, totalMinutes: 509))
     }
 
     func testCheckoutBeforeLimitStillWins() throws {
@@ -284,6 +285,11 @@ final class GameEngineTests: XCTestCase {
         XCTAssertEqual(Checkout.route(for:40),[Dart(20,2)])
         XCTAssertEqual(Checkout.route(for:36),[Dart(18,2)])
         XCTAssertEqual(Checkout.route(for:3),[Dart(1),Dart(1,2)])
+        // Dvě dvojky ne: 72 je T16 D12, ne D16 D20. Stejně 68 a 80 jdou přes trojku.
+        XCTAssertEqual(Checkout.route(for:72),[Dart(16,3),Dart(12,2)])
+        XCTAssertEqual(Checkout.route(for:68),[Dart(20,3),Dart(4,2)])
+        XCTAssertEqual(Checkout.route(for:80),[Dart(20,3),Dart(10,2)])
+        XCTAssertEqual(Checkout.route(for:132),[Dart(20,3),Dart(16,3),Dart(12,2)])
         // Pojištěné první šipky: single stejného pole musí nechat 2-šipkové zavření.
         let covered = [119, 122, 123, 125, 126, 128, 129]
         for score in covered {
@@ -535,6 +541,34 @@ final class GameEngineTests: XCTestCase {
         XCTAssertTrue(match.finished)
         XCTAssertEqual(match.winner, 0)
         XCTAssertEqual(match.states[0].sets, 2)
+    }
+
+    func testAverageSplitsByLegAndIgnoresAnOpenVisit() throws {
+        var match = game(legs: 2)
+        try match.submit([Dart(20, 3), Dart(20, 3), Dart(20, 3)])
+        try match.submit([Dart(20), Dart(20), Dart(20)])
+        match.leg = 2
+        try match.submit([Dart(20), Dart(5), Dart(1)])
+        XCTAssertEqual(match.average(for: 0, leg: 1), 180, accuracy: 0.001)
+        XCTAssertEqual(match.average(for: 0, leg: 2), 26, accuracy: 0.001)
+        XCTAssertEqual(match.average(for: 0), 103, accuracy: 0.001)
+        XCTAssertEqual(match.first9Average(for: 0, leg: 1), 180, accuracy: 0.001)
+        XCTAssertEqual(match.thrownDarts(for: 0, leg: 2), 3)
+        XCTAssertEqual(match.lastTurnScore(for: 0), 26)
+        XCTAssertEqual(match.bestTurn(for: 0), 180)
+
+        try match.submit([Dart(1), Dart(1), Dart(1)])
+        try match.recordDart(Dart(20, 3))
+        let live = match.liveProjection
+        XCTAssertEqual(match.lastTurnScore(for: 0), 26)
+        XCTAssertEqual(match.bestTurn(for: 0), 180)
+        XCTAssertEqual(live.average(for: 0, leg: 2), 64.5, accuracy: 0.001)
+        XCTAssertEqual(live.lastTurnScore(for: 0), 26)
+        XCTAssertEqual(live.bestTurn(for: 0), 180)
+
+        let display = try JSONDecoder().decode(MatchDisplay.self, from: Data("{}".utf8))
+        XCTAssertEqual(display.scope, .match)
+        XCTAssertFalse(display.showsExtraNumbers)
     }
 
     func testBoardMarkersRoundTrip() {

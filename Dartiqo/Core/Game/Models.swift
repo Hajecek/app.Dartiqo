@@ -330,6 +330,8 @@ public struct Match: Codable, Identifiable {
     public var ghostVisits: [[Dart]]?
     public var ghostVisitIndex: Int?
     public var ghostPlayerIndex: Int?
+    /// Plné XP jen pro zápas, který ověřil server. Rozhraní zápasu to nenastavuje.
+    public var verifiedOnline: Bool?
 
     public mutating func addPlayTime(from start: Date, to end: Date) {
         let span = end.timeIntervalSince(start)
@@ -359,9 +361,32 @@ public struct Match: Codable, Identifiable {
     }
     public var isGhostTurn: Bool { isGhost(active) }
     public var tracksGhostAverage: Bool { ghostKind == .beatPB || ghostKind == .mirror }
-    public func average(for player: Int) -> Double {
-        let v = visits.filter { $0.player == player }; let darts = v.reduce(0) { $0 + $1.darts.count }
-        return darts == 0 ? 0 : Double(v.reduce(0) { $0 + $1.credited }) / Double(darts) * 3
+    /// Tříšipkový průměr. Bez `leg` je to celý zápas, jinak jen jedna hra.
+    public func average(for player: Int, leg: Int? = nil) -> Double {
+        let darts = thrownDarts(for: player, leg: leg)
+        guard darts > 0 else { return 0 }
+        let points = visits.filter { $0.player == player && (leg == nil || $0.leg == leg) }.reduce(0) { $0 + $1.credited }
+        return Double(points) / Double(darts) * 3
+    }
+    public func thrownDarts(for player: Int, leg: Int? = nil) -> Int {
+        visits.filter { $0.player == player && (leg == nil || $0.leg == leg) }.reduce(0) { $0 + $1.darts.count }
+    }
+    /// Průměr úvodních tří kol v jednom legu. Rozjeté kolo se počítá hned.
+    public func first9Average(for player: Int, leg: Int) -> Double {
+        let opening = visits.filter { $0.player == player && $0.leg == leg }.prefix(3)
+        let darts = opening.reduce(0) { $0 + $1.darts.count }
+        guard darts > 0 else { return 0 }
+        return Double(opening.reduce(0) { $0 + $1.credited }) * 3 / Double(darts)
+    }
+    /// Poslední dokončené kolo. Rozhozené šipky uprostřed návštěvy se neberou.
+    public func lastTurnScore(for player: Int) -> Int? {
+        visits.last { $0.player == player && Self.visitIsComplete($0) }?.credited
+    }
+    public func bestTurn(for player: Int) -> Int {
+        visits.filter { $0.player == player && Self.visitIsComplete($0) }.map(\.credited).max() ?? 0
+    }
+    private static func visitIsComplete(_ visit: Visit) -> Bool {
+        visit.darts.count >= 3 || visit.bust || visit.checkout
     }
     public func best(for player: Int) -> Int { visits.filter { $0.player == player }.map(\.credited).max() ?? 0 }
     public var snapshot: GameSnapshot {

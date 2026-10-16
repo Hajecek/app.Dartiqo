@@ -33,6 +33,28 @@ final class BotEngineTests: XCTestCase {
         XCTAssertEqual(Dart.miss.score, 0)
     }
 
+    func testScore126OpensOnNineteenBecauseSingleEighteenCannotFinish() {
+        let strong = BotProfile.reference(level: 16)
+        let aim = BotCheckoutEngine.planned(
+            remaining: 126,
+            dartsLeft: 3,
+            rule: .double,
+            opened: true,
+            profile: strong
+        )
+        XCTAssertEqual(aim, Dart(19, 3))
+        XCTAssertNil(Checkout.route(for: 108, darts: 2))
+        XCTAssertEqual(Checkout.route(for: 107, darts: 2), [Dart(19, 3), Dart(25, 2)])
+        let afterSingleNineteen = BotCheckoutEngine.planned(
+            remaining: 107,
+            dartsLeft: 2,
+            rule: .double,
+            opened: true,
+            profile: strong
+        )
+        XCTAssertEqual(afterSingleNineteen, Dart(19, 3))
+    }
+
     func testCheckoutAimChangesAfterEachDart() {
         var game = x01()
         game.players[0].botLevel = 14
@@ -49,6 +71,127 @@ final class BotEngineTests: XCTestCase {
         XCTAssertEqual(Bot.target(in: game, dartsLeft: 1), Dart(16, 2))
         game.states[0].remaining = 16
         XCTAssertEqual(Bot.target(in: game, dartsLeft: 1), Dart(8, 2))
+    }
+
+    func testLiveVisitAimsNextTrebleAfterCover() throws {
+        var game = x01()
+        game.players[0].botLevel = 16
+        game.states[0].remaining = 501
+        // pending šipka v návštěvě — liveProjection ji „spotřebuje“, thrown musí jít zvlášť
+        try game.recordDart(Dart(20, 3))
+        XCTAssertEqual(game.currentDarts.count, 1)
+        XCTAssertTrue(game.liveProjection.currentDarts.isEmpty)
+        let planned = BotTargetSelector.deterministicAim(
+            in: game.liveProjection,
+            dartsLeft: 2,
+            thrown: game.currentDarts
+        )
+        XCTAssertEqual(planned, Dart(19, 3))
+        var switched = 0
+        for seed in 1...40 {
+            var rng = BotRNG(seed: UInt64(seed))
+            let shot = BotGameController.simulateDart(in: game, using: &rng)
+            if shot.aim == Dart(19, 3) { switched += 1 }
+        }
+        XCTAssertGreaterThan(switched, 25, "Po T20 má bot většinou mířit T19, přešlo jen \(switched)/40")
+    }
+
+    func testScoringSetupFollowsHandbook() {
+        let strong = BotProfile.reference(level: 14)
+        func aim(_ score: Int, darts: Int = 3) -> Dart? {
+            ScoringSetup.aim(remaining: score, dartsLeft: darts, rule: .double, profile: strong)
+        }
+        // 273: T19, T19, S19 → 140
+        XCTAssertEqual(aim(273), Dart(19, 3))
+        XCTAssertEqual(aim(216, darts: 2), Dart(19, 3))
+        XCTAssertEqual(aim(159, darts: 1), Dart(19))
+        // 305 a 308 začínají na 18; po S18 se přechází na T20
+        XCTAssertEqual(aim(305), Dart(18, 3))
+        XCTAssertEqual(aim(287, darts: 2), Dart(20, 3))
+        XCTAssertEqual(aim(308), Dart(18, 3))
+        XCTAssertEqual(aim(309), Dart(19, 3))
+        XCTAssertEqual(aim(303), Dart(19, 3))
+        XCTAssertEqual(aim(302), Dart(18, 3))
+        XCTAssertEqual(aim(300), Dart(20, 3))
+        XCTAssertEqual(aim(310), Dart(20, 3))
+        XCTAssertEqual(aim(250), Dart(20, 3))
+        // 265 začíná na 19. Po T19 se dál míří na T19, single není plán.
+        XCTAssertEqual(aim(265), Dart(19, 3))
+        XCTAssertEqual(aim(246, darts: 2), Dart(19, 3))
+        XCTAssertEqual(aim(208, darts: 2), Dart(19, 3))
+        XCTAssertEqual(aim(189, darts: 1), Dart(19))
+        XCTAssertEqual(aim(262), Dart(19, 3))
+        XCTAssertEqual(aim(259), Dart(19, 3))
+        // Poslední šipka se dopočítá na nejlepší nechání: 227 − T19 = 170.
+        XCTAssertEqual(aim(227, darts: 1), Dart(19, 3))
+        XCTAssertEqual(aim(230, darts: 1), Dart(20, 3))
+        XCTAssertEqual(aim(221, darts: 1), Dart(17, 3))
+        XCTAssertEqual(aim(187, darts: 1), Dart(17))
+        // 158 − T20 = 98, dvoušipkové zavření na 20 a 19.
+        XCTAssertEqual(aim(158, darts: 1), Dart(20, 3))
+        XCTAssertEqual(Checkout.route(for: 98, darts: 2), [Dart(20, 3), Dart(19, 2)])
+        // Vysoké skóre: 501 jen skóruje (nil → rotace), 489/488 nezačínají na 20.
+        XCTAssertNil(aim(501))
+        XCTAssertEqual(aim(489), Dart(19, 3))
+        XCTAssertEqual(aim(488), Dart(18, 3))
+        XCTAssertEqual(
+            BotCheckoutEngine.scoringAim(remaining: 273, rule: .double, profile: strong),
+            Dart(19, 3)
+        )
+        XCTAssertEqual(
+            BotCheckoutEngine.scoringAim(remaining: 501, rule: .double, profile: strong),
+            Dart(20, 3)
+        )
+        let weak = BotProfile.reference(level: 2)
+        XCTAssertNil(ScoringSetup.aim(remaining: 273, dartsLeft: 3, rule: .double, profile: weak))
+    }
+
+    func testScoringAimMovesDownTreblesAfterCover() {
+        let strong = BotProfile.reference(level: 16)
+        let ladder = BotCheckoutEngine.scoringLadder(for: strong)
+        XCTAssertEqual(ladder.prefix(3).map { $0 }, [20, 19, 18])
+        XCTAssertEqual(BotCheckoutEngine.scoringBedIndex(thrown: [], ladder: ladder, profile: strong), 0)
+        // Zakryté T20 → další šipka na T19.
+        XCTAssertEqual(
+            BotCheckoutEngine.scoringBedIndex(thrown: [Dart(20, 3)], ladder: ladder, profile: strong),
+            1
+        )
+        // Zakryté T20 i T19 → třetí šipka na T18.
+        XCTAssertEqual(
+            BotCheckoutEngine.scoringBedIndex(thrown: [Dart(20, 3), Dart(19, 3)], ladder: ladder, profile: strong),
+            2
+        )
+        // Vedle T20 (1 nebo 5) — lepší bot „přečte“ miss a jde na 19.
+        XCTAssertEqual(
+            BotCheckoutEngine.scoringBedIndex(thrown: [Dart(1)], ladder: ladder, profile: strong),
+            1
+        )
+        XCTAssertEqual(
+            BotCheckoutEngine.scoringBedIndex(thrown: [Dart(5)], ladder: ladder, profile: strong),
+            1
+        )
+        XCTAssertEqual(
+            BotCheckoutEngine.scoringAim(remaining: 501, rule: .double, profile: strong, thrown: [Dart(1)]),
+            Dart(19, 3)
+        )
+        let afterCover = BotCheckoutEngine.scoringAim(
+            remaining: 501,
+            rule: .double,
+            profile: strong,
+            thrown: [Dart(20, 3)]
+        )
+        XCTAssertEqual(afterCover, Dart(19, 3))
+        let weak = BotProfile.reference(level: 2)
+        let weakLadder = BotCheckoutEngine.scoringLadder(for: weak)
+        // Slabý bot po zásahu / sousedovi často zůstane na stejné terci (deterministicky pod prahem).
+        XCTAssertEqual(
+            BotCheckoutEngine.scoringBedIndex(thrown: [Dart(20, 3)], ladder: weakLadder, profile: weak),
+            0
+        )
+        XCTAssertEqual(
+            BotCheckoutEngine.scoringBedIndex(thrown: [Dart(1)], ladder: weakLadder, profile: weak),
+            0
+        )
     }
 
     func testOutRulesAndBustStayLegal() throws {
