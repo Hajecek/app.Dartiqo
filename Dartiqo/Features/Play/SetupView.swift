@@ -95,10 +95,21 @@ struct SetupView: View {
     @State private var openSoloTraining = false
     private let presetScores = [101, 301, 501, 701, 1001]
     private var options: Binding<MatchOptions> { Binding(get: { draft.config.settings }, set: { draft.config.options = $0 }) }
-    init(mode: GameMode, preset: SetupDraft? = nil, onHome: (() -> Void)? = nil, coversLiveBar: Bool = false) {
+    init(
+        mode: GameMode,
+        preset: SetupDraft? = nil,
+        onHome: (() -> Void)? = nil,
+        coversLiveBar: Bool = false,
+        startAtOpening: Bool = false
+    ) {
         self.onHome = onHome
         self.coversLiveBar = coversLiveBar
-        _draft = State(initialValue: preset ?? SetupDraft(mode: mode))
+        let draft = preset ?? SetupDraft(mode: mode)
+        _draft = State(initialValue: draft)
+        // Rychlá hra přeskočí sestavení a rovnou nabídne, kdo hází první.
+        if startAtOpening {
+            _step = State(initialValue: draft.seats.count > 1 ? 4 : 3)
+        }
     }
     private var canContinue: Bool {
         guard !draft.seats.isEmpty else { return false }

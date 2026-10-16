@@ -9,6 +9,10 @@ struct HomeView: View {
     @State private var showStreak = false
     @State private var openLocalSetup = false
     @State private var showQuickPlay = false
+    @State private var quickSetup: SetupDraft?
+    @State private var openQuickSetup = false
+    @State private var launchQuickMatch = false
+    @State private var quickMatchIntro = true
 
     private let canvas = Color.black
 
@@ -53,12 +57,40 @@ struct HomeView: View {
                 .environmentObject(store)
         }
         .sheet(isPresented: $showQuickPlay) {
-            Text(":test")
-                .font(.title2.bold())
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            QuickPlaySheet(
+                onPick: { draft in
+                    showQuickPlay = false
+                    quickSetup = draft
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 280_000_000)
+                        openQuickSetup = true
+                    }
+                },
+                onResume: {
+                    showQuickPlay = false
+                    quickMatchIntro = false
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 280_000_000)
+                        launchQuickMatch = true
+                    }
+                }
+            )
+            .environmentObject(store)
+        }
+        .fullScreenCover(isPresented: $launchQuickMatch) {
+            MatchLaunchView(intro: quickMatchIntro)
+                .environmentObject(store)
         }
         .navigationDestination(isPresented: $openLocalSetup) {
             SetupView(mode: .x01, preset: store.lastSetup, coversLiveBar: true)
+        }
+        .navigationDestination(isPresented: $openQuickSetup) {
+            SetupView(
+                mode: quickSetup?.config.mode ?? .x01,
+                preset: quickSetup,
+                coversLiveBar: true,
+                startAtOpening: true
+            )
         }
     }
 
@@ -380,6 +412,227 @@ private struct LobbyCard: View {
         }
         .contentShape(shape)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// Rychlý lokální zápas — výběr formátu, pak stejný start jako u běžného zápasu.
+private struct QuickPlaySheet: View {
+    @EnvironmentObject private var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+    var onPick: (SetupDraft) -> Void
+    var onResume: () -> Void
+
+    @State private var replace = false
+    @State private var pending: SetupDraft?
+
+    private var options: [QuickPlayOption] {
+        QuickPlayOption.build(store: store)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("Vyber formát. Pak zvolíš, kdo hází první — stejně jako u běžného zápasu.")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.68))
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    VStack(spacing: 10) {
+                        ForEach(options) { option in
+                            Button {
+                                pick(option.draft)
+                            } label: {
+                                optionRow(option)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .padding(16)
+                .padding(.bottom, 12)
+            }
+            .scrollIndicators(.hidden)
+            .background(Color.black.ignoresSafeArea())
+            .navigationTitle("Rychlá hra")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.subheadline.weight(.bold))
+                    }
+                    .accessibilityLabel("Zavřít")
+                }
+            }
+            .toolbarColorScheme(.dark, for: .navigationBar)
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+        .confirmationDialog("Máš rozehraný zápas", isPresented: $replace, titleVisibility: .visible) {
+            Button("Pokračovat v rozehraném") {
+                pending = nil
+                onResume()
+            }
+            Button("Zahodit rozehraný a spustit nový", role: .destructive) {
+                if let draft = pending {
+                    pending = nil
+                    onPick(draft)
+                }
+            }
+            Button("Zrušit", role: .cancel) { pending = nil }
+        }
+    }
+
+    private func optionRow(_ option: QuickPlayOption) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        return HStack(spacing: 14) {
+            Image(systemName: option.symbol)
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 48, height: 48)
+                .background(
+                    LinearGradient(colors: option.colors, startPoint: .topLeading, endPoint: .bottomTrailing),
+                    in: Circle()
+                )
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(option.title)
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Text(option.detail)
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.62))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.bold))
+                .foregroundStyle(.white.opacity(0.45))
+                .accessibilityHidden(true)
+        }
+        .padding(14)
+        .background(Color.white.opacity(0.06), in: shape)
+        .overlay(shape.stroke(.white.opacity(0.1), lineWidth: 1))
+        .contentShape(shape)
+        .accessibilityElement(children: .combine)
+        .accessibilityHint("Otevře výběr, kdo hází první")
+    }
+
+    private func pick(_ draft: SetupDraft) {
+        store.tapHaptic(.medium)
+        if let active = store.activeMatch, !active.finished {
+            pending = draft
+            replace = true
+        } else {
+            onPick(draft)
+        }
+    }
+}
+
+private struct QuickPlayOption: Identifiable {
+    let id: String
+    let title: String
+    let detail: String
+    let symbol: String
+    let colors: [Color]
+    let draft: SetupDraft
+
+    static func build(store: AppStore) -> [QuickPlayOption] {
+        var items: [QuickPlayOption] = []
+        let botLevel = preferredBotLevel(store: store)
+
+        if let last = store.lastSetup, store.canStartLocalMatch(from: last) {
+            items.append(QuickPlayOption(
+                id: "last",
+                title: "Poslední sestava",
+                detail: last.config.summary,
+                symbol: "arrow.counterclockwise",
+                colors: [Color(red: 1.0, green: 0.42, blue: 0.29), Color(red: 0.86, green: 0.20, blue: 0.20)],
+                draft: last
+            ))
+        }
+
+        for preset in store.presets where store.canStartLocalMatch(from: preset.setup) {
+            items.append(QuickPlayOption(
+                id: "preset-\(preset.id.uuidString)",
+                title: preset.name,
+                detail: preset.setup.config.summary,
+                symbol: "bookmark.fill",
+                colors: [Color(red: 0.95, green: 0.72, blue: 0.22), Color(red: 0.85, green: 0.45, blue: 0.10)],
+                draft: preset.setup
+            ))
+        }
+
+        items.append(contentsOf: [
+            QuickPlayOption(
+                id: "501",
+                title: "501",
+                detail: "1 leg · Double out · proti botovi",
+                symbol: "target",
+                colors: [Color(red: 1.0, green: 0.42, blue: 0.29), Color(red: 0.86, green: 0.20, blue: 0.20)],
+                draft: quickDraft(mode: .x01, score: 501, botLevel: botLevel)
+            ),
+            QuickPlayOption(
+                id: "301",
+                title: "301",
+                detail: "1 leg · Double out · proti botovi",
+                symbol: "target",
+                colors: [Color(red: 0.98, green: 0.55, blue: 0.22), Color(red: 0.88, green: 0.28, blue: 0.14)],
+                draft: quickDraft(mode: .x01, score: 301, botLevel: botLevel)
+            ),
+            QuickPlayOption(
+                id: "cricket",
+                title: "Cricket",
+                detail: "1 leg · s body · proti botovi",
+                symbol: GameMode.cricket.symbol,
+                colors: [Color(red: 0.22, green: 0.72, blue: 0.48), Color(red: 0.10, green: 0.48, blue: 0.32)],
+                draft: quickDraft(mode: .cricket, botLevel: botLevel)
+            ),
+            QuickPlayOption(
+                id: "clock",
+                title: "Kolem hodin",
+                detail: "1–20 + bull · proti botovi",
+                symbol: GameMode.aroundClock.symbol,
+                colors: [Color(red: 0.28, green: 0.55, blue: 0.98), Color(red: 0.12, green: 0.28, blue: 0.78)],
+                draft: quickDraft(mode: .aroundClock, botLevel: botLevel)
+            ),
+            QuickPlayOption(
+                id: "countup",
+                title: "Count Up",
+                detail: "Nejvyšší skóre · proti botovi",
+                symbol: GameMode.countUp.symbol,
+                colors: [Color(red: 0.62, green: 0.36, blue: 0.96), Color(red: 0.38, green: 0.16, blue: 0.72)],
+                draft: quickDraft(mode: .countUp, botLevel: botLevel)
+            ),
+        ])
+        return items
+    }
+
+    private static func preferredBotLevel(store: AppStore) -> Int {
+        if let last = store.lastSetup,
+           let bot = last.seats.first(where: \.isBot) {
+            return min(BotDifficulty.count, max(1, bot.level))
+        }
+        if let id = store.profile?.id {
+            return AdaptiveBotEngine.recommendedLevel(matches: store.matches, playerID: id)
+        }
+        return 3
+    }
+
+    private static func quickDraft(mode: GameMode, score: Int = 501, botLevel: Int) -> SetupDraft {
+        var draft = SetupDraft(mode: mode)
+        draft.config.startingScore = score
+        draft.config.outRule = .double
+        draft.config.legsToWin = 1
+        draft.config.setsToWin = 1
+        draft.config.format = .firstTo
+        draft.seats = [
+            SeatDraft(name: "Já"),
+            SeatDraft(name: "Bot", isBot: true, level: botLevel, adaptiveBot: true),
+        ]
+        return draft
     }
 }
 

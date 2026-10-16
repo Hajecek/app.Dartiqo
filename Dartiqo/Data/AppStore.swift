@@ -261,6 +261,133 @@ enum AppSection: Hashable {
         get { guard let id = profile?.id.uuidString else { return nil }; return data.activeMatches[id] }
         set { guard let id = profile?.id.uuidString else { return }; data.activeMatches[id] = newValue; save() }
     }
+
+    /// Sestava jde spustit jako lokální zápas (aspoň jeden soupeř, platní hráči / ghost).
+    func canStartLocalMatch(from draft: SetupDraft) -> Bool {
+        guard profile != nil, !draft.seats.isEmpty else { return false }
+        let opponents = draft.seats.indices.filter { !(draft.includesMe && $0 == 0) }
+        guard !opponents.isEmpty else { return false }
+        for i in draft.seats.indices {
+            let seat = draft.seats[i]
+            let isMe = draft.includesMe && i == 0
+            if isMe { continue }
+            if seat.ghostSeat {
+                guard draft.config.mode == .x01, let kind = draft.ghostKind else { return false }
+                guard ghostOffer(
+                    kind,
+                    startingScore: draft.config.startingScore,
+                    outRule: draft.config.outRule,
+                    matchID: draft.ghostMatchID
+                ) != nil else { return false }
+            } else if !seat.isBot {
+                if seat.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return false }
+            }
+        }
+        return true
+    }
+
+    /// Spustí lokální zápas ze sestavy. `firstPlayer == nil` = náhodný začátek při víc hráčích.
+    @discardableResult
+    func startLocalMatch(from source: SetupDraft, firstPlayer: Int? = nil) -> Bool {
+        guard let profile, canStartLocalMatch(from: source) else { return false }
+        var draft = source
+
+        for i in draft.seats.indices {
+            let seat = draft.seats[i]
+            let isMe = draft.includesMe && i == 0
+            if !isMe && !seat.isBot && !seat.ghostSeat && seat.friendID == nil {
+                draft.seats[i].friendID = addFriend(seat.name)?.id
+            }
+        }
+
+        var players: [Player] = []
+        var activeGhost: GhostOffer?
+        var ghostSeat = -1
+        for i in draft.seats.indices {
+            let seat = draft.seats[i]
+            let isMe = draft.includesMe && i == 0
+            if isMe {
+                players.append(Player(id: profile.id, name: profile.name))
+            } else if seat.ghostSeat {
+                guard let kind = draft.ghostKind,
+                      let offer = ghostOffer(
+                        kind,
+                        startingScore: draft.config.startingScore,
+                        outRule: draft.config.outRule,
+                        matchID: draft.ghostMatchID
+                      )
+                else { return false }
+                activeGhost = offer
+                ghostSeat = players.count
+                players.append(Player(id: UUID(), name: offer.displayName))
+            } else {
+                let resolved = resolvedBot(seat)
+                let name: String
+                if seat.isBot {
+                    name = botPersona(seat, before: i, in: draft.seats)
+                } else {
+                    name = String(seat.name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24))
+                }
+                players.append(Player(
+                    id: seat.isBot ? UUID() : seat.friendID ?? UUID(),
+                    name: name,
+                    botLevel: seat.isBot ? resolved.level : nil,
+                    botStyle: seat.isBot ? resolved.style : nil,
+                    adaptiveBot: seat.isBot && resolved.adaptive ? true : nil
+                ))
+            }
+        }
+        guard !players.isEmpty else { return false }
+
+        notePlayed(with: draft.seats.compactMap(\.friendID))
+        if [.aroundClock, .countUp].contains(draft.config.mode) {
+            draft.config.legsToWin = 1
+            draft.config.setsToWin = 1
+        }
+        draft.config.startingScore = min(GameConfig.maximumScore, max(GameConfig.minimumScore, draft.config.startingScore))
+        let hasHandicap = draft.config.mode == .x01 && draft.seats.contains { !($0.handicap?.isEmpty ?? true) }
+        draft.config.handicaps = hasHandicap ? draft.seats.map { $0.handicap ?? Handicap() } : nil
+
+        let first: Int
+        if players.count <= 1 {
+            first = 0
+        } else if let firstPlayer {
+            first = min(max(0, firstPlayer), players.count - 1)
+        } else {
+            first = Int.random(in: 0..<players.count)
+        }
+        draft.starter = first
+        remember(draft)
+
+        var match = Match(config: draft.config, players: players, firstPlayer: first)
+        if let offer = activeGhost, ghostSeat >= 0 {
+            match.ghostKind = offer.kind
+            match.ghostLabel = offer.kind.title
+            match.ghostAverage = offer.average
+            match.ghostVisits = offer.visits
+            match.ghostVisitIndex = 0
+            match.ghostPlayerIndex = ghostSeat
+        }
+        activeMatch = match
+        feedback()
+        return true
+    }
+
+    private func resolvedBot(_ seat: SeatDraft) -> (level: Int, adaptive: Bool, style: BotPlayingStyle) {
+        let style = seat.botStyle ?? .balanced
+        let adaptive = seat.adaptiveBot == true && data.adaptiveAI != false
+        if adaptive, let id = profile?.id {
+            return (AdaptiveBotEngine.recommendedLevel(matches: matches, playerID: id), true, style)
+        }
+        return (min(BotDifficulty.count, max(1, seat.level)), false, style)
+    }
+
+    private func botPersona(_ seat: SeatDraft, before index: Int, in seats: [SeatDraft]) -> String {
+        let level = resolvedBot(seat).level
+        let persona = BotLevel.get(level).persona
+        let same = seats[..<index].filter { $0.isBot && resolvedBot($0).level == level }.count
+        return same == 0 ? persona : "\(persona) \(same + 1)"
+    }
     var xp: Int {
         guard let id = profile?.id else { return 0 }
         let played = (data.matchXPAwards ?? []).filter { $0.owner == id }.reduce(0) { $0 + $1.amount }
