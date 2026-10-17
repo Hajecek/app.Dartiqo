@@ -16,6 +16,11 @@ enum ScoringChrome {
         reduceMotion ? 0.45 : max(1.8, min(2.8, botDelay + 0.6))
     }
 
+    /// U čísel není co prohlížet na terči — jen krátká odezva a hned další hráč.
+    static func gridVisitHoldSeconds(reduceMotion: Bool) -> Double {
+        reduceMotion ? 0.15 : 0.3
+    }
+
     /// Nápověda zavření / sehrávky do tří slotů (zápas i trénink).
     struct CheckoutGuide: Equatable {
         var route: [Dart] = []
@@ -239,7 +244,7 @@ struct ManualScorePad: View {
         VStack(spacing: 8) {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5), spacing: 6) {
                 ForEach(1...20, id: \.self) { number in
-                    Button { onHit(Dart(number, multiplier)) } label: {
+                    Button { score(Dart(number, multiplier)) } label: {
                         Text("\(number)")
                             .font(AppFont.display(24, weight: .bold))
                             .foregroundStyle(accent)
@@ -256,7 +261,7 @@ struct ManualScorePad: View {
             HStack(spacing: 6) {
                 Button {
                     guard !bullDisabled else { return }
-                    onHit(Dart(25, min(max(multiplier, 1), 2)))
+                    score(Dart(25, min(max(multiplier, 1), 2)))
                 } label: {
                     Text(multiplier == 2 ? "50" : "25")
                         .font(AppFont.display(24, weight: .bold))
@@ -272,7 +277,7 @@ struct ManualScorePad: View {
 
                 Button {
                     guard !bullDisabled else { return }
-                    onHit(.miss)
+                    score(.miss)
                 } label: {
                     Text("0")
                         .font(AppFont.display(24, weight: .bold))
@@ -296,6 +301,12 @@ struct ManualScorePad: View {
 
     private var multiplierName: String {
         multiplier == 3 ? "Triple" : multiplier == 2 ? "Double" : "Single"
+    }
+
+    /// Po zápisu šipky vypne Double / Triple — další hod začíná jako single.
+    private func score(_ dart: Dart) {
+        onHit(dart)
+        multiplier = 1
     }
 
     private func tileFill(focused: Bool, dimmed: Bool = false) -> Color {

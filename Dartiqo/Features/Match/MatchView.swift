@@ -330,8 +330,8 @@ struct MatchView: View {
                     if surface == .voice {
                         voiceInput(game)
                     } else if isHoldingVisit {
-                        // Součet už je v horním stripu — druhé okno by jen žralo místo.
-                        if holdSurface != .total {
+                        // Součet i čísla: není co ukazovat na terči — jen krátká odezva a další hráč.
+                        if holdSurface != .total && holdSurface != .grid {
                             frozenHumanSurface(game)
                         }
                     } else if surface == .total && canUseTotal(game) {
@@ -365,11 +365,8 @@ struct MatchView: View {
         switch holdSurface {
         case .board:
             matchDartboard(marks: holdDarts, interactive: false)
-        case .total:
+        case .total, .grid:
             EmptyView()
-        case .grid:
-            matchDartboard(marks: holdDarts, interactive: false)
-                .opacity(0.96)
         case .voice:
             visitSummaryCard(title: "Hlasové kolo", value: holdDarts.map(\.label).joined(separator: " · "))
         case .camera:
@@ -496,50 +493,123 @@ struct MatchView: View {
     private func pauseScreen(_ game: Match) -> some View {
         let shown = game.liveProjection
         let seconds = frozenBoardSeconds(game)
+        let turn = isHoldingVisit ? (holdPlayer ?? game.active) : game.active
         return ScrollView {
-            VStack(spacing: 22) {
-                VStack(spacing: 8) {
-                    Image(systemName: "pause.circle.fill")
-                        .font(.system(size: 52, weight: .semibold))
-                        .foregroundStyle(MatchColors.amber)
-                        .accessibilityHidden(true)
-                    Text("Hra pozastavená")
-                        .font(AppFont.title(32))
-                        .foregroundStyle(.white)
-                    Label(pauseClock(seconds), systemImage: "clock")
-                        .font(AppFont.title(22))
-                        .monospacedDigit()
-                        .foregroundStyle(.white.opacity(0.72))
-                        .accessibilityLabel("Čas u terče \(pauseClockSpoken(seconds))")
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.top, 12)
-
-                VStack(spacing: 8) {
+            VStack(spacing: 18) {
+                pauseHero(game, seconds: seconds, turn: turn)
+                VStack(spacing: 12) {
                     ForEach(game.players.indices, id: \.self) { index in
                         pausePlayerRow(game, shown: shown, index: index)
                     }
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.top, 8)
+            .padding(.top, 12)
             .padding(.bottom, 16)
             .frame(maxWidth: 780)
             .frame(maxWidth: .infinity)
         }
         .scrollIndicators(.hidden)
+        .safeAreaInset(edge: .top, spacing: 0) { pauseTopBar }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            Button("Pokračovat") { resumeFromPause() }
-                .buttonStyle(PrimaryButton())
-                .padding(.horizontal, 16)
-                .padding(.top, 10)
-                .padding(.bottom, 6)
-                .frame(maxWidth: 780)
-                .frame(maxWidth: .infinity)
-                .background(MatchColors.background)
+            Button { resumeFromPause() } label: {
+                Label("Pokračovat", systemImage: "play.fill")
+                    .font(.headline)
+                    .labelStyle(.titleAndIcon)
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, minHeight: 54)
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .glassEffect(.regular.interactive(), in: Capsule())
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 8)
+            .frame(maxWidth: 780)
+            .frame(maxWidth: .infinity)
+            .accessibilityHint("Vrátí tě do rozehrané hry")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(MatchColors.background.ignoresSafeArea())
+        .background {
+            ZStack {
+                MatchColors.background
+                RadialGradient(
+                    colors: [MatchColors.amber.opacity(0.28), .clear],
+                    center: .top,
+                    startRadius: 0,
+                    endRadius: 420
+                )
+            }
+            .ignoresSafeArea()
+        }
+    }
+
+    private var pauseTopBar: some View {
+        Label("Pozastaveno", systemImage: "pause.fill")
+            .font(.subheadline.weight(.semibold))
+            .labelStyle(.titleAndIcon)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .glassEffect(.regular, in: Capsule())
+            .accessibilityAddTraits(.isHeader)
+            .frame(maxWidth: .infinity)
+            .padding(.top, 6)
+            .padding(.bottom, 4)
+    }
+
+    private func pauseHero(_ game: Match, seconds: TimeInterval, turn: Int) -> some View {
+        let parts = pauseClockParts(seconds)
+        return VStack(spacing: 14) {
+            HStack(alignment: .top, spacing: 10) {
+                ForEach(Array(parts.enumerated()), id: \.offset) { index, part in
+                    if index > 0 {
+                        Text(":")
+                            .font(AppFont.display(44, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.28))
+                            .padding(.top, 6)
+                            .accessibilityHidden(true)
+                    }
+                    VStack(spacing: 2) {
+                        Text(part.value)
+                            .font(AppFont.display(56, weight: .bold))
+                            .monospacedDigit()
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+                        Text(part.unit)
+                            .font(AppFont.caption(12, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.45))
+                    }
+                    .frame(minWidth: 64)
+                }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Čas u terče \(pauseClockSpoken(seconds))")
+
+            Text(pauseStatusLine(game, turn: turn))
+                .font(AppFont.body(15, weight: .medium))
+                .foregroundStyle(.white.opacity(0.62))
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 18)
+        .padding(.bottom, 4)
+    }
+
+    private func pauseStatusLine(_ game: Match, turn: Int) -> String {
+        var parts: [String] = []
+        if game.config.mode == .x01 {
+            parts.append("\(game.config.startingScore)")
+        } else {
+            parts.append(game.config.mode.title)
+        }
+        if game.players.indices.contains(turn), game.legWinner == nil, !game.finished {
+            parts.append(playerTurnCaption(game, player: turn))
+        } else if showsMatchLength(game) {
+            parts.append("Leg \(game.leg)")
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func pausePlayerRow(_ game: Match, shown: Match, index: Int) -> some View {
@@ -547,58 +617,89 @@ struct MatchView: View {
         let score = panelScore(game, shown: shown, state: shown.states[index], index: index)
         let onTurn = game.legWinner == nil && !game.finished && (isHoldingVisit ? holdPlayer == index : game.active == index)
         let facts = pauseFacts(game, shown: shown, index: index)
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 10) {
-                playerAvatar(game, index: index, size: 36)
-                VStack(alignment: .leading, spacing: 2) {
+        let caption = pausePlayerCaption(game, index: index)
+        let tint = onTurn ? MatchColors.coral : Color.white
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                playerAvatar(game, index: index, size: 46)
+                    .overlay(Circle().strokeBorder(onTurn ? MatchColors.coral : Color.white.opacity(0.16), lineWidth: onTurn ? 2 : 1))
+                VStack(alignment: .leading, spacing: 3) {
                     Text(player.name)
-                        .font(AppFont.body(16, weight: .semibold))
+                        .font(AppFont.body(17, weight: .semibold))
                         .foregroundStyle(.white)
                         .lineLimit(1)
-                    Text(pausePlayerCaption(game, index: index, onTurn: onTurn))
-                        .font(AppFont.caption(12, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.55))
-                        .lineLimit(1)
+                    if !caption.isEmpty {
+                        Text(caption)
+                            .font(AppFont.caption(12, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.55))
+                            .lineLimit(1)
+                    }
                 }
                 Spacer(minLength: 8)
-                VStack(alignment: .trailing, spacing: 0) {
-                    Text(score.headline)
-                        .font(AppFont.display(32, weight: .bold))
-                        .monospacedDigit()
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                    Text(pauseScoreCaption(game))
-                        .font(AppFont.caption(11, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.45))
+                if onTurn {
+                    Text("Na tahu")
+                        .font(AppFont.caption(11, weight: .heavy))
+                        .foregroundStyle(MatchColors.ink)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(MatchColors.coral, in: Capsule())
                 }
             }
-            ScrollView(.horizontal) {
-                HStack(spacing: 6) {
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(score.headline)
+                    .font(AppFont.display(48, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundStyle(tint)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                Spacer(minLength: 8)
+                Text(pauseScoreCaption(game))
+                    .font(AppFont.caption(12, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.45))
+            }
+
+            if !facts.isEmpty {
+                Rectangle()
+                    .fill(.white.opacity(0.08))
+                    .frame(height: 1)
+                HStack(spacing: 0) {
                     ForEach(facts, id: \.title) { fact in
-                        extraPill(title: fact.title, value: fact.value, accessibility: "\(player.name), \(fact.title)")
+                        VStack(spacing: 2) {
+                            Text(fact.value)
+                                .font(AppFont.body(16, weight: .bold))
+                                .monospacedDigit()
+                                .foregroundStyle(.white)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                            Text(fact.title)
+                                .font(AppFont.caption(11, weight: .bold))
+                                .foregroundStyle(.white.opacity(0.45))
+                                .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("\(player.name), \(fact.title) \(fact.value)")
                     }
                 }
             }
-            .scrollIndicators(.hidden)
         }
-        .padding(12)
+        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            (onTurn ? MatchColors.coral.opacity(0.22) : Color.white.opacity(0.05)),
-            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            (onTurn ? MatchColors.coral.opacity(0.12) : Color.white.opacity(0.05)),
+            in: RoundedRectangle(cornerRadius: 22, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(onTurn ? MatchColors.coral.opacity(0.55) : Color.white.opacity(0.08), lineWidth: onTurn ? 1.5 : 1)
         )
         .accessibilityElement(children: .combine)
     }
 
-    private func pausePlayerCaption(_ game: Match, index: Int, onTurn: Bool) -> String {
-        var parts: [String] = []
-        if showsMatchLength(game) {
-            parts.append(matchLengthLine(game, state: game.states[index]))
-        }
-        if onTurn { parts.append("Na tahu") }
-        if parts.isEmpty { return game.config.mode.shortTitle }
-        return parts.joined(separator: " · ")
+    private func pausePlayerCaption(_ game: Match, index: Int) -> String {
+        guard showsMatchLength(game), game.states.indices.contains(index) else { return "" }
+        return matchLengthLine(game, state: game.states[index])
     }
 
     private func pauseScoreCaption(_ game: Match) -> String {
@@ -648,15 +749,18 @@ struct MatchView: View {
         return max(0, total)
     }
 
-    private func pauseClock(_ seconds: TimeInterval) -> String {
+    private func pauseClockParts(_ seconds: TimeInterval) -> [(value: String, unit: String)] {
         let total = max(0, Int(seconds.rounded()))
         let hours = total / 3600
         let minutes = (total % 3600) / 60
         let secs = total % 60
+        var parts: [(value: String, unit: String)] = []
         if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, secs)
+            parts.append((String(hours), "hod"))
         }
-        return String(format: "%d:%02d", minutes, secs)
+        parts.append((String(format: hours > 0 ? "%02d" : "%d", minutes), "min"))
+        parts.append((String(format: "%02d", secs), "s"))
+        return parts
     }
 
     private func pauseClockSpoken(_ seconds: TimeInterval) -> String {
@@ -2160,7 +2264,15 @@ struct MatchView: View {
         let legOver = store.activeMatch?.legWinner != nil
         // Keep the whole throw screen visible long enough to read before the turn flips.
         // A winning visit goes straight to the ceremony, which shows the checkout itself.
-        let hold = legOver ? 0.35 : ScoringChrome.visitHoldSeconds(botDelay: delay, reduceMotion: reduceMotion)
+        // Čísla: bez náhledu terče, jen krátká odezva.
+        let hold: Double
+        if legOver {
+            hold = 0.35
+        } else if holdSurface == .grid {
+            hold = ScoringChrome.gridVisitHoldSeconds(reduceMotion: reduceMotion)
+        } else {
+            hold = ScoringChrome.visitHoldSeconds(botDelay: delay, reduceMotion: reduceMotion)
+        }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(hold * 1_000_000_000))
             guard isHoldingVisit, holdDarts == darts, correcting == nil else { return }

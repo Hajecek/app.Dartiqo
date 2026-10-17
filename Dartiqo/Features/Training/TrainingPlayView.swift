@@ -250,7 +250,8 @@ struct TrainingPlayView: View {
     @ViewBuilder
     private var input: some View {
         if isHoldingVisit {
-            if holdSurface != .total {
+            // Čísla i součet: bez náhledu terče — jen krátká odezva.
+            if holdSurface != .total && holdSurface != .grid {
                 ScoringDartboard(marks: holdDarts, interactive: false)
             }
         } else {
@@ -668,7 +669,9 @@ struct TrainingPlayView: View {
         if hold == .total {
             store.feedback(darts.reduce(0) { $0 + $1.score })
         }
-        let delay = ScoringChrome.visitHoldSeconds(reduceMotion: reduceMotion)
+        let delay = hold == .grid
+            ? ScoringChrome.gridVisitHoldSeconds(reduceMotion: reduceMotion)
+            : ScoringChrome.visitHoldSeconds(reduceMotion: reduceMotion)
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard generation == holdGeneration, isHoldingVisit, holdDarts == darts else { return }
