@@ -1694,26 +1694,40 @@ struct MatchDetailView: View {
 }
 
 private struct ThrowPreviewRow: View {
-    @EnvironmentObject private var store: AppStore
     let match: Match
     let visit: Visit
 
     var body: some View {
-        HStack(spacing: 12) {
-            Avatar(name: match.players[visit.player].name, bot: match.players[visit.player].botLevel != nil, size: 34, photo: store.photo(for: match.players[visit.player].id), asset: match.players[visit.player].botLevel.map { BotLevel.get($0).photo })
+        HStack(spacing: 10) {
+            Circle()
+                .fill(Theme.playerColor(visit.player))
+                .frame(width: 8, height: 8)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 3) {
                 Text("\(match.players[visit.player].name) · leg \(visit.leg)")
                     .font(.subheadline.weight(.semibold))
-                Text(visit.enteredAsTotal == true ? "Zadáno součtem" : visit.darts.map(\.label).joined(separator: " · "))
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .lineLimit(1)
+                Text(visit.enteredAsTotal == true ? "Součet" : visit.darts.map { $0.segment == 0 ? "Mimo" : $0.label }.joined(separator: "  "))
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            Spacer()
-            Text(visit.bust ? "BUST" : "\(visit.credited)")
-                .font(.system(.headline, design: .rounded).weight(.bold))
-                .monospacedDigit()
-                .foregroundStyle(visit.bust ? .red : visit.checkout ? Theme.positive : .primary)
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 1) {
+                Text(visit.bust ? "BUST" : "\(visit.credited)")
+                    .font(.system(.headline, design: .rounded).weight(.bold))
+                    .monospacedDigit()
+                    .foregroundStyle(visit.bust || visit.credited == 180 ? .red : visit.checkout ? Theme.positive : .primary)
+                if match.config.mode == .x01 {
+                    Text("zbývá \(visit.remaining)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
         }
-        .padding(.vertical, 9)
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .combine)
     }
 }
 
