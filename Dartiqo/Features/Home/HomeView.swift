@@ -272,74 +272,122 @@ struct HomeView: View {
     }
 }
 
-/// Klepnutí a podržení na kartě ve scrollu. SwiftUI gesto na tlačítku scroll polyká.
+/// Klepnutí otevře hru, podržení na místě rychlou hru. Tah ve scrollu nespustí ani jedno
+/// a nesmí spolknout následující klepnutí.
 private struct TapOrHoldOverlay: UIViewRepresentable {
     var onTap: () -> Void
     var onLongPress: () -> Void
 
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
-        view.backgroundColor = .clear
-        view.isAccessibilityElement = false
-
-        let longPress = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.longPress(_:)))
-        longPress.minimumPressDuration = 0.45
-        longPress.allowableMovement = 12
-        longPress.cancelsTouchesInView = true
-        longPress.delegate = context.coordinator
-        view.addGestureRecognizer(longPress)
-
-        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tap(_:)))
-        tap.cancelsTouchesInView = false
-        tap.delegate = context.coordinator
-        view.addGestureRecognizer(tap)
-        return view
+    func makeUIView(context: Context) -> TapOrHoldControl {
+        let control = TapOrHoldControl()
+        control.onTap = onTap
+        control.onLongPress = onLongPress
+        return control
     }
 
-    func updateUIView(_ uiView: UIView, context: Context) {
-        context.coordinator.onTap = onTap
-        context.coordinator.onLongPress = onLongPress
+    func updateUIView(_ uiView: TapOrHoldControl, context: Context) {
+        uiView.onTap = onTap
+        uiView.onLongPress = onLongPress
     }
 
-    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIView, context: Context) -> CGSize? {
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: TapOrHoldControl, context: Context) -> CGSize? {
         proposal.replacingUnspecifiedDimensions()
     }
+}
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onTap: onTap, onLongPress: onLongPress)
+/// Tlačítko ve scrollu: pustění prstu je klepnutí, klid 0,45 s otevře sheet.
+/// Scroll dotek zruší, takže tah jen posune obsah.
+private final class TapOrHoldControl: UIControl {
+    var onTap: () -> Void = {}
+    var onLongPress: () -> Void = {}
+
+    private enum Phase {
+        case pressing
+        case held
+        case dragged
     }
 
-    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
-        var onTap: () -> Void
-        var onLongPress: () -> Void
-        private var held = false
+    private var phase: Phase = .pressing
+    private var originInWindow: CGPoint = .zero
+    private var holdTimer: Timer?
 
-        init(onTap: @escaping () -> Void, onLongPress: @escaping () -> Void) {
-            self.onTap = onTap
-            self.onLongPress = onLongPress
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        isAccessibilityElement = false
+        isMultipleTouchEnabled = false
+        addTarget(self, action: #selector(touchUp), for: .touchUpInside)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    deinit {
+        holdTimer?.invalidate()
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        phase = .pressing
+        originInWindow = touches.first?.location(in: nil) ?? .zero
+        scheduleHold()
+        super.touchesBegan(touches, with: event)
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesMoved(touches, with: event)
+        guard phase == .pressing, let touch = touches.first else { return }
+        let point = touch.location(in: nil)
+        let dx = point.x - originInWindow.x
+        let dy = point.y - originInWindow.y
+        let distance = (dx * dx + dy * dy).squareRoot()
+        // Měří se na obrazovce. Karta při scrollu jede s prstem, takže poloha v ní zůstává skoro stejná.
+        if distance > 12 {
+            cancelHold()
         }
-
-        @objc func longPress(_ recognizer: UILongPressGestureRecognizer) {
-            guard recognizer.state == .began else { return }
-            held = true
-            onLongPress()
+        if distance > 28 {
+            phase = .dragged
         }
+    }
 
-        @objc func tap(_ recognizer: UITapGestureRecognizer) {
-            guard recognizer.state == .ended else { return }
-            if held {
-                held = false
-                return
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        cancelHold()
+        super.touchesEnded(touches, with: event)
+        phase = .pressing
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        cancelHold()
+        phase = .dragged
+        super.touchesCancelled(touches, with: event)
+    }
+
+    private func scheduleHold() {
+        holdTimer?.invalidate()
+        let timer = Timer(timeInterval: 0.45, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.fireHold()
             }
-            onTap()
         }
+        holdTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
 
-        func gestureRecognizer(
-            _ gestureRecognizer: UIGestureRecognizer,
-            shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
-        ) -> Bool {
-            other is UIPanGestureRecognizer
-        }
+    private func cancelHold() {
+        holdTimer?.invalidate()
+        holdTimer = nil
+    }
+
+    private func fireHold() {
+        holdTimer = nil
+        guard phase == .pressing, isTracking else { return }
+        phase = .held
+        onLongPress()
+    }
+
+    @objc private func touchUp() {
+        guard phase == .pressing else { return }
+        onTap()
     }
 }
 
