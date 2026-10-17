@@ -200,7 +200,11 @@ extension Match {
         guard (0...180).contains(score) else { throw ScoreEntryError.impossible }
         let remaining = currentState.remaining
         let rule = config.outRule(for: active)
-        if score > remaining || (remaining - score == 1 && rule != .straight) { throw ScoreEntryError.useBust }
+        if score > remaining || (remaining - score == 1 && rule != .straight) {
+            guard let route = Self.scoringRoute(score), !route.isEmpty else { throw ScoreEntryError.impossible }
+            try recordBust(darts: route.count)
+            return
+        }
         var darts: [Dart]
         if score == remaining {
             guard (1...3).contains(checkoutDarts), let route = Checkout.route(for: score, rule: rule, darts: checkoutDarts) else { throw ScoreEntryError.finish }

@@ -635,12 +635,14 @@ enum AppSection: Hashable {
         section = .home
         homeGeneration += 1
     }
-    func feedback(_ score: Int? = nil, announce: Bool = true) {
+    func feedback(_ score: Int? = nil, announce: Bool = true, spoken: String? = nil) {
         tapHaptic(.light)
         // Při hlasovém zápisu nemluvit — TTS bojuje s mikrofonem a AVAudioSession.
-        guard announce, data.voice, let score else { return }
+        guard announce, data.voice else { return }
+        let phrase = spoken ?? score.map(String.init)
+        guard let phrase else { return }
         speaker.stopSpeaking(at: .immediate)
-        let line = AVSpeechUtterance(string: "\(score)")
+        let line = AVSpeechUtterance(string: phrase)
         line.voice = AVSpeechSynthesisVoice(language: "cs-CZ")
         speaker.speak(line)
     }

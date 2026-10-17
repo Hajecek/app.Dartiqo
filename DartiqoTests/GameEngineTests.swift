@@ -400,6 +400,33 @@ final class GameEngineTests: XCTestCase {
         var m = game(doubleIn:true)
         XCTAssertThrowsError(try m.submitTotal(60)); XCTAssertTrue(m.visits.isEmpty)
     }
+    func testTotalOverthrowIsRecordedAsBust() throws {
+        var match = game()
+        match.states[0].remaining = 8
+        try match.submitTotal(16)
+        XCTAssertTrue(match.visits[0].bust)
+        XCTAssertEqual(match.visits[0].credited, 0)
+        XCTAssertEqual(match.visits[0].darts.count, 1)
+        XCTAssertEqual(match.states[0].remaining, 8)
+        XCTAssertEqual(match.active, 1)
+
+        match.active = 0
+        match.states[0].remaining = 8
+        try match.submitTotal(7)
+        XCTAssertTrue(match.visits.last?.bust == true)
+        XCTAssertEqual(match.states[0].remaining, 8)
+
+        var straight = game(out: .straight)
+        straight.states[0].remaining = 8
+        try straight.submitTotal(7)
+        XCTAssertFalse(straight.visits[0].bust)
+        XCTAssertEqual(straight.states[0].remaining, 1)
+
+        var impossible = game()
+        impossible.states[0].remaining = 8
+        XCTAssertThrowsError(try impossible.submitTotal(179))
+        XCTAssertTrue(impossible.visits.isEmpty)
+    }
     func testExplicitBustPreservesScoreAndUndo() throws {
         var m = game(); m.states[0].remaining = 40
         try m.recordBust(darts:2)

@@ -74,6 +74,8 @@ struct MatchView: View {
     @State private var holdSurface: ScoringSurface = .grid
     @State private var holdPlayer: Int?
     @State private var legCeremony: LegCeremony?
+    /// Token oslavné animace 180 — `nil` = skrytá.
+    @State private var oneEightyFlash: UUID?
     /// Další leg už sedí pod krytím a ceremonie se prolíná pryč.
     @State private var ceremonyLeaving = false
     /// Zavírání už běží — druhé klepnutí nesmí posunout další leg.
@@ -144,13 +146,19 @@ struct MatchView: View {
                 legCeremonyScreen(ceremony)
                     .ignoresSafeArea()
             }
+            if oneEightyFlash != nil {
+                OneEightyCelebrationOverlay {
+                    oneEightyFlash = nil
+                }
+                .zIndex(2)
+            }
         }
         .onGeometryChange(for: CGFloat.self, of: { $0.safeAreaInsets.top }) { _, top in
             var quiet = Transaction(animation: nil)
             quiet.disablesAnimations = true
             withTransaction(quiet) {
                 currentChromeInset = top
-                if legCeremony == nil, top > 1 { preservedChromeInset = top }
+                if !hidesMatchChrome, top > 1 { preservedChromeInset = top }
             }
         }
         .navigationBarTitleDisplayMode(.inline)
@@ -159,16 +167,18 @@ struct MatchView: View {
         .toolbarBackground(.visible, for: .navigationBar)
         .preferredColorScheme(.dark)
         .tint(.white)
-        .toolbar(leavingHome || legCeremony != nil ? .hidden : .automatic, for: .navigationBar)
-        .statusBarHidden(legCeremony != nil)
-        .transaction(value: legCeremony != nil) { transaction in
+        .toolbar(leavingHome || hidesMatchChrome ? .hidden : .automatic, for: .navigationBar)
+        .statusBarHidden(hidesMatchChrome)
+        .transaction(value: hidesMatchChrome) { transaction in
             transaction.animation = nil
             transaction.disablesAnimations = true
         }
     }
+    /// Ceremonie legu i oslavná 180 — schovat lištu i stavový řádek.
+    private var hidesMatchChrome: Bool { legCeremony != nil || oneEightyFlash != nil }
     /// Mezera po schované liště. Hra zůstane tam, kde bude i s toolbarem, a ceremonie se přes ni jen prolne.
     private var ceremonyChromeGap: CGFloat {
-        guard legCeremony != nil else { return 0 }
+        guard hidesMatchChrome else { return 0 }
         let gap = preservedChromeInset - currentChromeInset
         return gap > 1 ? gap : 0
     }
@@ -423,12 +433,19 @@ struct MatchView: View {
         case .total, .grid:
             EmptyView()
         case .voice:
-            visitSummaryCard(title: "Hlasové kolo", value: holdDarts.map(\.label).joined(separator: " · "))
+            if holdingBust(game) {
+                let labels = game.visits.last?.enteredAsTotal == true ? [] : holdDarts.map(\.label)
+                VisitHoldSummaryCard(title: "Přehoz", value: "BUST", labels: labels)
+            } else {
+                visitSummaryCard(title: "Hlasové kolo", value: holdDarts.map(\.label).joined(separator: " · "))
+            }
         case .camera:
             VStack(spacing: 10) {
                 Text("Kamera").font(AppFont.caption(13, weight: .semibold)).foregroundStyle(MatchColors.ink.opacity(0.55))
-                Text("\(holdDarts.reduce(0) { $0 + $1.score })")
-                    .font(AppFont.display(48, weight: .bold)).foregroundStyle(MatchColors.ink).monospacedDigit()
+                Text(holdingBust(game) ? "BUST" : "\(holdDarts.reduce(0) { $0 + $1.score })")
+                    .font(AppFont.display(48, weight: .bold))
+                    .foregroundStyle(holdingBust(game) ? ScoringChrome.coral : MatchColors.ink)
+                    .monospacedDigit()
                 CameraHitChips(
                     labels: holdDarts.map(\.label),
                     ink: MatchColors.ink,
@@ -709,7 +726,7 @@ struct MatchView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
                 Spacer(minLength: 8)
-                Text(pauseScoreCaption(game))
+                Text(score.headline == "BUST" ? "přehoz" : pauseScoreCaption(game))
                     .font(AppFont.caption(12, weight: .bold))
                     .foregroundStyle(.white.opacity(0.45))
             }
@@ -890,8 +907,9 @@ struct MatchView: View {
                         .minimumScaleFactor(0.5)
                         .lineLimit(1)
                         .foregroundStyle(active ? Color.white : MatchColors.ink)
-                        .contentTransition(.numericText(value: score.headlineNumber))
-                        .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: score.headlineNumber)
+                        .contentTransition(score.headline == "BUST" ? .opacity : .numericText(value: score.headlineNumber))
+                        .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: score.headline)
+                        .accessibilityLabel(score.headline == "BUST" ? "Přehoz" : score.headline)
                         .frame(maxWidth: .infinity, minHeight: 80, maxHeight: 80, alignment: .leading)
                     if !chips.isEmpty, !perLeg {
                         panelChipRow(chips)
@@ -1161,6 +1179,9 @@ struct MatchView: View {
         case .x01:
             let average = shown.average(for: index)
             let text = String(format: "%.1f", average)
+            if holdingBust(game), holdPlayer == index {
+                return ("BUST", Double(state.remaining), "Ø", text, average, "Přehoz, zbývá \(state.remaining), průměr \(text)")
+            }
             return ("\(state.remaining)", Double(state.remaining), "Ø", text, average, "Průměr \(text)")
         case .aroundClock:
             let done = min(21, max(0, state.clockTarget - 1))
@@ -1349,7 +1370,9 @@ struct MatchView: View {
     /// Current throw: tři šipky, nebo jeden součet kola (hlas / číselný zápis).
     @ViewBuilder
     private func currentThrowStrip(_ game: Match, shown: Match) -> some View {
-        if let total = heldTotalScore(game) {
+        if holdingBust(game) {
+            bustScoreStrip(game)
+        } else if let total = heldTotalScore(game) {
             totalScoreStrip(value: "\(total)", filled: true)
         } else if showsTotalScoreStrip(game) {
             let display = liveTotalDisplay()
@@ -1407,6 +1430,12 @@ struct MatchView: View {
         return "—"
     }
 
+    /// Držené kolo je přehoz. Skóre se vrací a na ploše má být BUST, ne nula.
+    private func holdingBust(_ game: Match) -> Bool {
+        guard isHoldingVisit, let player = holdPlayer, let visit = game.visits.last else { return false }
+        return visit.bust && visit.player == player && visit.leg == game.leg
+    }
+
     /// Součet zadaný hlasem / číslem — ne syntetické T20 (60·60·60).
     private func heldTotalScore(_ game: Match) -> Int? {
         guard isHoldingVisit else { return nil }
@@ -1456,6 +1485,41 @@ struct MatchView: View {
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityLabel(filled ? "Součet kola \(value)" : "Součet kola")
+    }
+
+    private func bustScoreStrip(_ game: Match) -> some View {
+        let labels: String = {
+            guard let visit = game.visits.last, visit.bust, visit.enteredAsTotal != true else { return "" }
+            return visit.darts.map(\.label).joined(separator: " · ")
+        }()
+        return HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(labels.isEmpty ? "PŘEHOZ" : labels)
+                    .font(AppFont.caption(10, weight: .heavy))
+                    .tracking(labels.isEmpty ? 1.0 : 0)
+                    .foregroundStyle(.white.opacity(0.55))
+                    .lineLimit(1)
+                Text("BUST")
+                    .font(AppFont.display(34, weight: .bold))
+                    .foregroundStyle(ScoringChrome.coral)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "arrow.uturn.backward.circle.fill")
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(ScoringChrome.coral)
+                .frame(width: 44, height: 44)
+                .background(Color.white.opacity(0.10), in: Circle())
+                .accessibilityHidden(true)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity)
+        .frame(height: 72)
+        .frame(minHeight: 36)
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(labels.isEmpty ? "Přehoz" : "Přehoz, \(labels)")
     }
 
     private func matchProgressStrip(_ game: Match) -> some View {
@@ -1577,7 +1641,10 @@ struct MatchView: View {
         var dartsUsed: Int?
         var dartLimit: Int?
 
+        var isBust = false
+
         var dartTitle: String {
+            if isBust { return "Přehoz" }
             if visitDone { return "Kolo hotovo" }
             if isTotal { return "Součet kola" }
             return "\(min(3, dartsThrown + 1)). šipka"
@@ -1608,12 +1675,16 @@ struct MatchView: View {
             visitDone: isHoldingVisit,
             isTotal: showsTotalScoreStrip(game) || (isHoldingVisit && holdSurface == .total),
             dartsUsed: dartsUsed,
-            dartLimit: dartLimit
+            dartLimit: dartLimit,
+            isBust: holdingBust(game) && player == holdPlayer
         )
     }
 
     private func playerTurnCaption(_ game: Match, player: Int) -> String {
         let turn = turnSnapshot(game, player: player)
+        if turn.isBust {
+            return "Leg \(game.leg) · Kolo \(turn.round) · Přehoz"
+        }
         if turn.isTotal {
             return "Leg \(game.leg) · Kolo \(turn.round) · Součet"
         }
@@ -1857,9 +1928,10 @@ struct MatchView: View {
                 .monospacedDigit()
                 .minimumScaleFactor(0.5)
                 .lineLimit(1)
-                .contentTransition(.numericText(value: score.headlineNumber))
+                .foregroundStyle(.white)
+                .contentTransition(score.headline == "BUST" ? .opacity : .numericText(value: score.headlineNumber))
             HStack(spacing: 6) {
-                Text(progressScoreUnit(game))
+                Text(score.headline == "BUST" ? "přehoz" : progressScoreUnit(game))
                     .font(AppFont.caption(11, weight: .semibold))
                     .opacity(0.65)
                 Text("·")
@@ -1889,7 +1961,7 @@ struct MatchView: View {
         .clipShape(shape)
         .overlay(shape.strokeBorder(onTurn ? Color.white.opacity(0.18) : Color.white.opacity(0.08), lineWidth: 1))
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(name), \(progressScoreUnit(game)) \(score.headline), \(score.statAccessibility)\(badge.map { ", \($0)" } ?? "")")
+        .accessibilityLabel("\(name), \(score.headline == "BUST" ? "přehoz" : progressScoreUnit(game)) \(score.headline), \(score.statAccessibility)\(badge.map { ", \($0)" } ?? "")")
     }
 
     private func progressScoreUnit(_ game: Match) -> String {
@@ -2249,7 +2321,7 @@ struct MatchView: View {
         }()
         let headline: String = {
             if unavailable != nil { return "Nedostupné" }
-            if isHoldingVisit { return holdSurface == .total ? "Součet zapsán" : "Kolo hotovo" }
+            if isHoldingVisit { return holdingBust(game) ? "Přehoz" : (holdSurface == .total ? "Součet zapsán" : "Kolo hotovo") }
             if botIsThrowing || holdingBotVisit { return "Vypnuto" }
             if paused { return "Pauza" }
             if recognizing { return "Zapisuju" }
@@ -2259,6 +2331,7 @@ struct MatchView: View {
         let detail: String? = {
             if let unavailable { return unavailable }
             if isHoldingVisit {
+                if holdingBust(game) { return "BUST" }
                 if holdSurface == .total {
                     return "Součet \(holdDarts.reduce(0) { $0 + $1.score })"
                 }
@@ -2603,7 +2676,11 @@ struct MatchView: View {
             try game.recordDart(dart)
             let visitFinished = game.visits.count > count
             if visitFinished, let visit = game.visits.last {
-                store.feedback(visit.credited, announce: surface != .voice)
+                if visit.bust {
+                    store.feedback(announce: surface != .voice, spoken: "Přehoz")
+                } else {
+                    store.feedback(visit.credited, announce: surface != .voice)
+                }
                 multiplier = 1
                 applyVisitHold(game: game, darts: visit.darts, player: thrower, fromBot: false)
             } else {
@@ -2622,6 +2699,7 @@ struct MatchView: View {
         isHoldingVisit = false
         holdPlayer = nil
         legCeremony = nil
+        oneEightyFlash = nil
         ceremonyLeaving = false
         ceremonyDismissing = false
         holdDarts = []
@@ -2638,6 +2716,7 @@ struct MatchView: View {
         if isHoldingVisit {
             isHoldingVisit = false
             holdPlayer = nil
+            oneEightyFlash = nil
         }
         game.undoLastInput()
         withAnimation(reduceMotion ? nil : .snappy(duration: 0.35)) { store.activeMatch = game }
@@ -2653,6 +2732,15 @@ struct MatchView: View {
         holdDarts = darts
         holdPlayer = player
         holdSurface = fromBot ? .board : surface
+        let celebrate180 = game.visits.last.map {
+            OneEightyCelebration.shouldPlay(credited: $0.credited, bust: $0.bust, reduceMotion: reduceMotion)
+        } == true
+        if celebrate180 {
+            oneEightyFlash = UUID()
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } else if game.visits.last?.bust == true {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+        }
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) {
@@ -2661,21 +2749,28 @@ struct MatchView: View {
         withAnimation(reduceMotion ? nil : .snappy(duration: 0.35)) {
             store.activeMatch = game
         }
-        scheduleVisitHold(darts: darts)
+        scheduleVisitHold(darts: darts, celebrate180: celebrate180)
     }
-    @MainActor private func scheduleVisitHold(darts: [Dart]) {
+    @MainActor private func scheduleVisitHold(darts: [Dart], celebrate180: Bool = false) {
         let delay = store.activeMatch?.config.settings.botDelay ?? 1.5
         let legOver = store.activeMatch?.legWinner != nil
         // Keep the whole throw screen visible long enough to read before the turn flips.
         // A winning visit goes straight to the ceremony, which shows the checkout itself.
         // Čísla: bez náhledu terče, jen krátká odezva.
-        let hold: Double
+        var hold: Double
         if legOver {
             hold = 0.35
         } else if holdSurface == .grid {
             hold = ScoringChrome.gridVisitHoldSeconds(reduceMotion: reduceMotion)
         } else {
             hold = ScoringChrome.visitHoldSeconds(botDelay: delay, reduceMotion: reduceMotion)
+        }
+        // 180 GIF (~2,9 s) — hold nesmí skončit uprostřed animace.
+        if celebrate180 {
+            hold = max(hold, OneEightyCelebration.duration)
+        }
+        if store.activeMatch?.visits.last?.bust == true {
+            hold = max(hold, reduceMotion ? 0.9 : 1.6)
         }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(hold * 1_000_000_000))
@@ -3058,7 +3153,11 @@ struct MatchView: View {
             let visitFinished = current.visits.count > oldCount
             let shownDarts = visitFinished ? (current.visits.last?.darts ?? []) : current.currentDarts
             if visitFinished {
-                store.feedback(current.visits.last?.credited)
+                if let visit = current.visits.last, visit.bust {
+                    store.feedback(spoken: "Přehoz")
+                } else {
+                    store.feedback(current.visits.last?.credited)
+                }
                 applyVisitHold(game: current, darts: shownDarts, player: thrower, fromBot: true)
             } else {
                 holdDarts = shownDarts
@@ -3092,7 +3191,11 @@ struct MatchView: View {
             try game.submitTotal(score, checkoutDarts: darts)
             if let visit = game.visits.last {
                 sumText = ""
-                store.feedback(score, announce: surface != .voice)
+                if visit.bust {
+                    store.feedback(announce: surface != .voice, spoken: "Přehoz")
+                } else {
+                    store.feedback(score, announce: surface != .voice)
+                }
                 applyVisitHold(game: game, darts: visit.darts, player: thrower, fromBot: false)
                 // Vždy součet jako jedno číslo — ne tři syntetické šipky.
                 holdSurface = .total
@@ -3108,7 +3211,7 @@ struct MatchView: View {
             try game.recordBust(darts: count)
             if let visit = game.visits.last {
                 sumText = ""
-                store.feedback(0, announce: surface != .voice)
+                store.feedback(announce: surface != .voice, spoken: "Přehoz")
                 applyVisitHold(game: game, darts: visit.darts, player: thrower, fromBot: false)
             } else {
                 store.activeMatch = game; sumText = ""; store.feedback(0, announce: surface != .voice)
@@ -3815,7 +3918,7 @@ struct MatchView: View {
             Button {
                 store.finish()
                 store.activeMatch = Match(config: game.config, players: game.players, firstPlayer: (game.starter + 1) % game.players.count)
-                multiplier = 1; sumText = ""; paused = false; holdDarts = []; isHoldingVisit = false; holdPlayer = nil; legCeremony = nil; ceremonyLeaving = false; ceremonyDismissing = false; resultShown = false; revision = UUID()
+                multiplier = 1; sumText = ""; paused = false; holdDarts = []; isHoldingVisit = false; holdPlayer = nil; legCeremony = nil; oneEightyFlash = nil; ceremonyLeaving = false; ceremonyDismissing = false; resultShown = false; revision = UUID()
             } label: {
                 Label("Odveta", systemImage: "arrow.clockwise")
                     .font(.headline)

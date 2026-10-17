@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import UIKit
 
 private enum TrainingColors {
     static let background = Color(red: 0.055, green: 0.10, blue: 0.08)
@@ -31,6 +32,7 @@ struct TrainingPlayView: View {
     @State private var isHoldingVisit = false
     @State private var holdSurface: ScoringSurface = .grid
     @State private var holdGeneration = 0
+    @State private var oneEightyFlash: UUID?
     @State private var confirmQuit = false
     @State private var pulse = 0
     @State private var previousBest: TrainingResult?
@@ -103,7 +105,14 @@ struct TrainingPlayView: View {
         .scrollIndicators(.hidden)
         .scrollDisabled(surface == .grid && !isHoldingVisit && !finished)
         .background(TrainingColors.background)
-        .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if oneEightyFlash == nil { bottomBar }
+        }
+        .overlay {
+            if oneEightyFlash != nil {
+                OneEightyCelebrationOverlay { oneEightyFlash = nil }
+            }
+        }
         .alert("Zápis", isPresented: Binding(
             get: { entryError != nil },
             set: { if !$0 { entryError = nil } }
@@ -118,6 +127,12 @@ struct TrainingPlayView: View {
         .toolbarBackground(.visible, for: .navigationBar)
         .preferredColorScheme(.dark)
         .tint(.white)
+        .toolbar(oneEightyFlash != nil ? .hidden : .automatic, for: .navigationBar)
+        .statusBarHidden(oneEightyFlash != nil)
+        .transaction(value: oneEightyFlash != nil) { transaction in
+            transaction.animation = nil
+            transaction.disablesAnimations = true
+        }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
                 Button { confirmQuit = true } label: { Image(systemName: "xmark") }
@@ -154,7 +169,8 @@ struct TrainingPlayView: View {
     }
 
     private var scoreboard: some View {
-        let headline = projection.target.isEmpty ? projection.scoreText : projection.target
+        let busted = isHoldingVisit && projection.feedback == .bust
+        let headline = busted ? "BUST" : (projection.target.isEmpty ? projection.scoreText : projection.target)
         let numeric = Double(projection.score)
         return VStack(alignment: .leading, spacing: 2) {
             Text(definition.title)
@@ -166,11 +182,12 @@ struct TrainingPlayView: View {
                 .minimumScaleFactor(0.4)
                 .lineLimit(1)
                 .foregroundStyle(.white)
-                .contentTransition(.numericText(value: numeric))
+                .contentTransition(busted ? .opacity : .numericText(value: numeric))
                 .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+                .accessibilityLabel(busted ? "Přehoz" : headline)
             HStack(spacing: 8) {
                 capsule(projection.scoreText)
-                capsule(isHoldingVisit ? "kolo hotovo" : "šipky \(projection.dartsLeft)")
+                capsule(busted ? "přehoz" : (isHoldingVisit ? "kolo hotovo" : "šipky \(projection.dartsLeft)"))
                 capsule("kolo \(projection.visit)")
                 if let lives = projection.lives { capsule("životy \(lives)") }
             }
@@ -194,7 +211,9 @@ struct TrainingPlayView: View {
 
     private var throwStrip: some View {
         Group {
-            if isHoldingVisit && holdSurface == .total {
+            if isHoldingVisit && projection.feedback == .bust {
+                VisitHoldSummaryCard(title: "Přehoz", value: "BUST", labels: holdDarts.map(\.label))
+            } else if isHoldingVisit && holdSurface == .total {
                 VisitHoldSummaryCard(
                     title: "Součet zapsán",
                     value: "\(holdDarts.reduce(0) { $0 + $1.score })",
@@ -609,7 +628,11 @@ struct TrainingPlayView: View {
         session = current
         visitBuffer = buffer
         store.stageTraining(current)
-        store.feedback(dart.segment == 0 ? nil : dart.score, announce: surface != .total)
+        if after.feedback == .bust {
+            store.feedback(announce: surface != .total, spoken: "Přehoz")
+        } else {
+            store.feedback(dart.segment == 0 ? nil : dart.score, announce: surface != .total)
+        }
         pulse += 1
         if current.status == .completed { commitIfNeeded() }
 
@@ -633,7 +656,7 @@ struct TrainingPlayView: View {
         for dart in darts {
             guard throwDartQuiet(dart) else { break }
             recorded.append(dart)
-            if projection.finished { break }
+            if projection.finished || projection.feedback == .bust { break }
         }
         sumText = ""
         if !recorded.isEmpty {
@@ -662,15 +685,34 @@ struct TrainingPlayView: View {
         holdDarts = darts
         holdSurface = hold
         visitBuffer = []
+        let credited = darts.reduce(0) { $0 + $1.score }
+        let busted = projection.feedback == .bust
+        let celebrate180 = OneEightyCelebration.shouldPlay(credited: credited, bust: busted, reduceMotion: reduceMotion)
+        if celebrate180 {
+            oneEightyFlash = UUID()
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+        } else if busted {
+            UINotificationFeedbackGenerator().notificationOccurred(.error)
+        }
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) { isHoldingVisit = true }
         if hold == .total {
-            store.feedback(darts.reduce(0) { $0 + $1.score })
+            if busted {
+                store.feedback(spoken: "Přehoz")
+            } else {
+                store.feedback(credited)
+            }
         }
-        let delay = hold == .grid
+        var delay = hold == .grid
             ? ScoringChrome.gridVisitHoldSeconds(reduceMotion: reduceMotion)
             : ScoringChrome.visitHoldSeconds(reduceMotion: reduceMotion)
+        if celebrate180 {
+            delay = max(delay, OneEightyCelebration.duration)
+        }
+        if busted {
+            delay = max(delay, reduceMotion ? 0.9 : 1.6)
+        }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard generation == holdGeneration, isHoldingVisit, holdDarts == darts else { return }
@@ -701,6 +743,7 @@ struct TrainingPlayView: View {
         guard var current = session, !saved else { return }
         if isHoldingVisit {
             holdGeneration += 1
+            oneEightyFlash = nil
             let count = holdDarts.count
             for _ in 0..<count { TrainingEngine.undo(&current) }
             withAnimation(reduceMotion ? nil : .snappy(duration: 0.28)) {
