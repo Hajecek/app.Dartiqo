@@ -1601,12 +1601,12 @@ struct MatchDetailView: View {
                     HeatmapView(darts: marks, title: match.players[index].name)
                 } label: {
                     HStack(spacing: 16) {
-                        TouchDartboard(marks: marks, interactive: false, showMarkNumbers: false) { _ in }
+                        SegmentRoseChart(darts: marks, title: "", compact: true)
                             .frame(width: 108, height: 108)
-                            .allowsHitTesting(false)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                         VStack(alignment: .leading, spacing: 5) {
-                            Text("Mapa dopadů").font(.headline)
-                            Text(czechCount(marks.count, "umístěná šipka", "umístěné šipky", "umístěných šipek"))
+                            Text("Rozložení hodů").font(.headline)
+                            Text(boardSummary(marks))
                                 .font(.subheadline).foregroundStyle(.secondary)
                         }
                         Spacer()
@@ -1617,6 +1617,12 @@ struct MatchDetailView: View {
                 .buttonStyle(.plain)
             }
         }
+    }
+
+    private func boardSummary(_ marks: [Dart]) -> String {
+        let count = czechCount(marks.count, "šipka", "šipky", "šipek")
+        guard let best = SegmentSpread.make(marks).best, best.count > 0 else { return count }
+        return "Nejvíc na \(best.segment) · \(count)"
     }
 
     private func playerName(_ index: Int) -> String {

@@ -4,7 +4,6 @@ import SwiftUI
 struct MatchSettingsSheet: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
-    @Binding var paused: Bool
     var options: Binding<MatchOptions>
     var mode: GameMode
     var showsBotTempo: Bool
@@ -12,13 +11,6 @@ struct MatchSettingsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    Button(paused ? "Pokračovat ve hře" : "Pozastavit hru", systemImage: paused ? "play.fill" : "pause.fill") {
-                        paused.toggle()
-                        dismiss()
-                    }
-                }
-
                 if mode == .x01 {
                     averageSection
                     extraNumbersSection

@@ -340,33 +340,33 @@ struct ProfileView: View {
     private func board(_ stats: PlayerStats) -> some View {
         if !stats.positioned.isEmpty {
             block("Kam házíš", symbol: "target") {
-                NavigationLink {
-                    HeatmapView(darts: stats.positioned, title: "\(mode.shortTitle) · \(periodTitle)")
-                } label: {
-                    HStack(spacing: 16) {
-                        TouchDartboard(marks: stats.positioned, interactive: false, showMarkNumbers: false) { _ in }
-                            .frame(width: 112, height: 112)
-                            .allowsHitTesting(false)
-                        VStack(alignment: .leading, spacing: 6) {
-                            if let top = HeatmapView.topFields(stats.positioned).first {
-                                Text("Nejčastěji \(top.label)")
-                                    .font(.headline)
-                            }
-                            Text("\(stats.positioned.count) šipek na terči")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                            Label("Otevřít mapu", systemImage: "arrow.up.left.and.arrow.down.right")
-                                .font(.subheadline.weight(.semibold))
+                VStack(alignment: .leading, spacing: 12) {
+                    SegmentRoseChart(darts: stats.positioned, title: "Podíl zásahů")
+                    NavigationLink {
+                        HeatmapView(darts: stats.positioned, title: "\(mode.shortTitle) · \(periodTitle)")
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "scope")
+                                .font(.body.weight(.semibold))
                                 .foregroundStyle(Theme.accent)
+                                .frame(width: 36, height: 36)
+                                .background(Theme.accent.opacity(0.12), in: Circle())
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Přesná místa")
+                                    .font(.subheadline.weight(.semibold))
+                                Text("\(stats.positioned.count) šipek na terči")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: "chevron.right")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(.tertiary)
                         }
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.right")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(.tertiary)
+                        .surface()
                     }
-                    .surface()
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
         }
     }
@@ -1197,11 +1197,12 @@ struct HeatmapView: View {
         let singles = darts.count - triples - doubles - bulls - misses
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                SegmentRoseChart(darts: darts, title: "Podíl zásahů")
                 ZoomableDartboard(marks: darts, zoomed: $zoomed)
                     .padding(8)
                     .background(Color.black, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
                     .environment(\.colorScheme, .dark)
-                Text("Roztáhni prsty nebo dvakrát klepni pro detail segmentu.")
+                Text("Přesná místa. Roztáhni prsty nebo dvakrát klepni pro detail segmentu.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
 

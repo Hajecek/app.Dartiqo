@@ -28,11 +28,17 @@ private struct LegCeremony: Equatable, Identifiable {
     var leg: Int
     var matchFinished: Bool
     var legs: [Int]
+    var sets: [Int] = []
     var names: [String]
     var checkoutScore: Int
     var checkoutDarts: [String]
     var isCheckout: Bool
     var legsToWin: Int
+    var setsToWin: Int = 1
+    /// Kolik teček se má ukázat. U best of je to celé pole, ne jen počet k výhře.
+    var legSlots: Int = 0
+    var setSlots: Int = 0
+    var playsSets: Bool = false
     var setClosed: Bool
     var duration: Double
     var byBullOff = false
@@ -55,6 +61,7 @@ struct MatchView: View {
     @State private var paused = false
     @State private var showLeave = false
     @State private var showLog = false
+    @State private var showProgress = false
     @State private var showSettings = false
     @State private var sumText = ""
     @State private var finishPrompt = false
@@ -66,11 +73,9 @@ struct MatchView: View {
     @State private var holdSurface: ScoringSurface = .grid
     @State private var holdPlayer: Int?
     @State private var legCeremony: LegCeremony?
-    /// Ceremony už odchází — krytí jen bledne, systémový sheet se nespouští.
+    /// Další leg už sedí pod krytím a ceremonie se prolíná pryč.
     @State private var ceremonyLeaving = false
-    /// Nový leg nejdřív dosedne, teprve pak bot hází.
-    @State private var boardReady = true
-    /// Statistiky po konci zápasu naskočí až po odchodu ceremonie.
+    /// Statistiky po konci zápasu jsou připravené, než ceremonie zmizí.
     @State private var resultShown = false
     @State private var boardDetail: BoardDetailSelection?
     @State private var statsPlayer: BoardDetailSelection?
@@ -83,6 +88,9 @@ struct MatchView: View {
     @State private var leavingHome = false
     /// Začátek právě běžícího úseku hry. Stopky stojí při pauze, mimo hru a na pozadí.
     @State private var clockStart: Date?
+    /// Poslední hod, zápis nebo krok ve hře. Po dvou minutách ticha se zápas sám pozastaví.
+    @State private var lastActivity = Date()
+    private let idlePauseAfter: TimeInterval = 120
     @StateObject private var voice = VoiceScoreListener()
     /// Šipky po jedné, nebo součet celého kola.
     @State private var voiceMode: VoiceScoreMode = .darts
@@ -109,7 +117,10 @@ struct MatchView: View {
                 if leavingHome {
                     MatchSavedSplash()
                 } else if let game = store.activeMatch {
-                    if game.finished && !isHoldingVisit {
+                    if paused && !(game.finished && !isHoldingVisit) {
+                        pauseScreen(game)
+                            .transition(.opacity)
+                    } else if game.finished && !isHoldingVisit {
                         result(game)
                             .transition(.opacity)
                     } else {
@@ -134,7 +145,7 @@ struct MatchView: View {
         .toolbarBackground(.visible, for: .navigationBar)
         .preferredColorScheme(.dark)
         .tint(.white)
-        .toolbar(leavingHome || (legCeremony != nil && !ceremonyLeaving) ? .hidden : .automatic, for: .navigationBar)
+        .toolbar(leavingHome || paused || (legCeremony != nil && !ceremonyLeaving) ? .hidden : .automatic, for: .navigationBar)
         .statusBarHidden(legCeremony != nil)
     }
     private var matchCovers: some View {
@@ -160,7 +171,9 @@ struct MatchView: View {
                     playerStatsSheet(game, player: selection.player)
                 }
             }
+            .sheet(isPresented: $showProgress) { progressSheet }
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: isHoldingVisit)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: paused)
     }
     private var matchPrompts: some View {
         matchCovers
@@ -195,7 +208,6 @@ struct MatchView: View {
     }
     private var settingsSheet: some View {
         MatchSettingsSheet(
-            paused: $paused,
             options: matchOptions,
             mode: store.activeMatch?.config.mode ?? .x01,
             showsBotTempo: settingsShowsBotTempo
@@ -216,6 +228,11 @@ struct MatchView: View {
             if game.currentPlayer.botLevel != nil || game.isGhostTurn { holdDarts = game.currentDarts }
         }
         syncClock()
+        lastActivity = Date()
+    }
+    private func resumeFromPause() {
+        lastActivity = Date()
+        paused = false
     }
     private func seedSurface(for game: Match) {
         guard !didSeedSurface else { return }
@@ -235,9 +252,13 @@ struct MatchView: View {
 
     @ToolbarContentBuilder
     private var matchToolbar: some ToolbarContent {
-        ToolbarItem(placement: .cancellationAction) {
+        ToolbarItemGroup(placement: .cancellationAction) {
             Button { showLeave = true } label: { Image(systemName: "xmark") }
                 .accessibilityLabel("Odejít ze hry")
+            if store.activeMatch?.finished != true {
+                Button { paused = true } label: { Image(systemName: "pause.fill") }
+                    .accessibilityLabel("Pozastavit hru")
+            }
         }
         ToolbarItem(placement: .principal) {
             if let game = store.activeMatch {
@@ -256,12 +277,12 @@ struct MatchView: View {
     private var botTaskKey: String {
         guard let g = store.activeMatch else { return "none" }
         // isHoldingVisit / legCeremony intentionally omitted — must not cancel mid-throw.
-        return "\(g.id)-\(g.active)-\(g.leg)-\(g.visits.last?.id.uuidString ?? "start")-\(g.currentDarts.map(\.label).joined())-\(paused)-\(showSettings)-\(showLog)-\(showLeave)-\(statsPlayer != nil)-\(scenePhase == .active)-\(g.finished)-\(g.legWinner ?? -1)-\(revision)"
+        return "\(g.id)-\(g.active)-\(g.leg)-\(g.visits.last?.id.uuidString ?? "start")-\(g.currentDarts.map(\.label).joined())-\(paused)-\(showSettings)-\(showLog)-\(showProgress)-\(showLeave)-\(statsPlayer != nil)-\(scenePhase == .active)-\(g.finished)-\(g.legWinner ?? -1)-\(revision)"
     }
     private var botIsThrowing: Bool {
         guard let game = store.activeMatch, !isHoldingVisit else { return false }
-        // Během odchodu ceremonie už má být vidět terč, na který bot vzápětí hází.
-        if legCeremony != nil && !ceremonyLeaving { return false }
+        // Bot čeká, dokud ceremonie úplně nezmizí — šipka nesmí naskočit v prolínání.
+        if legCeremony != nil { return false }
         return game.currentPlayer.botLevel != nil || game.isGhostTurn
     }
     private var holdingBotVisit: Bool {
@@ -287,10 +308,7 @@ struct MatchView: View {
                         ghostRaceStrip(human: shown.average(for: human), ghost: ghostAvg)
                     }
                 }
-                if paused {
-                    Label("Hra je pozastavená", systemImage: "pause.circle.fill").font(AppFont.title()).padding(24)
-                    Button("Pokračovat") { paused = false }.buttonStyle(PrimaryButton())
-                } else if game.needsBullOff && !isHoldingVisit {
+                if game.needsBullOff && !isHoldingVisit {
                     bullOffCard(game)
                 } else if game.legWinner != nil && !isHoldingVisit && legCeremony == nil {
                     // Ceremony overlay handles continuation; keep a quiet placeholder underneath.
@@ -338,11 +356,8 @@ struct MatchView: View {
             }.padding(.horizontal, 16).padding(.vertical, surface == .grid ? 6 : 10).frame(maxWidth: 780)
         }
         .scrollIndicators(.hidden)
-        .scrollDisabled(surface == .grid && !paused && !showingBotBoard && !isHoldingVisit && !liveStatsNeedRoom(game))
+        .scrollDisabled(surface == .grid && !showingBotBoard && !isHoldingVisit && !liveStatsNeedRoom(game))
         .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar(game) }
-        .opacity(boardReady || reduceMotion ? 1 : 0)
-        .scaleEffect(boardReady || reduceMotion ? 1 : 0.965, anchor: .top)
-        .animation(reduceMotion ? nil : .spring(response: 0.82, dampingFraction: 0.9), value: boardReady)
     }
 
     @ViewBuilder
@@ -477,11 +492,189 @@ struct MatchView: View {
     private func visitSummaryCard(title: String, value: String) -> some View {
         VisitHoldSummaryCard(title: title, value: value, labels: holdDarts.map(\.label))
     }
+    /// Vlastní obrazovka pauzy. Čas u terče už stojí, dole je jen pokračování.
+    private func pauseScreen(_ game: Match) -> some View {
+        let shown = game.liveProjection
+        let seconds = frozenBoardSeconds(game)
+        return ScrollView {
+            VStack(spacing: 22) {
+                VStack(spacing: 8) {
+                    Image(systemName: "pause.circle.fill")
+                        .font(.system(size: 52, weight: .semibold))
+                        .foregroundStyle(MatchColors.amber)
+                        .accessibilityHidden(true)
+                    Text("Hra pozastavená")
+                        .font(AppFont.title(32))
+                        .foregroundStyle(.white)
+                    Label(pauseClock(seconds), systemImage: "clock")
+                        .font(AppFont.title(22))
+                        .monospacedDigit()
+                        .foregroundStyle(.white.opacity(0.72))
+                        .accessibilityLabel("Čas u terče \(pauseClockSpoken(seconds))")
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 12)
+
+                VStack(spacing: 8) {
+                    ForEach(game.players.indices, id: \.self) { index in
+                        pausePlayerRow(game, shown: shown, index: index)
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 16)
+            .frame(maxWidth: 780)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollIndicators(.hidden)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            Button("Pokračovat") { resumeFromPause() }
+                .buttonStyle(PrimaryButton())
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+                .padding(.bottom, 6)
+                .frame(maxWidth: 780)
+                .frame(maxWidth: .infinity)
+                .background(MatchColors.background)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(MatchColors.background.ignoresSafeArea())
+    }
+
+    private func pausePlayerRow(_ game: Match, shown: Match, index: Int) -> some View {
+        let player = game.players[index]
+        let score = panelScore(game, shown: shown, state: shown.states[index], index: index)
+        let onTurn = game.legWinner == nil && !game.finished && (isHoldingVisit ? holdPlayer == index : game.active == index)
+        let facts = pauseFacts(game, shown: shown, index: index)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                playerAvatar(game, index: index, size: 36)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(player.name)
+                        .font(AppFont.body(16, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Text(pausePlayerCaption(game, index: index, onTurn: onTurn))
+                        .font(AppFont.caption(12, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text(score.headline)
+                        .font(AppFont.display(32, weight: .bold))
+                        .monospacedDigit()
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                    Text(pauseScoreCaption(game))
+                        .font(AppFont.caption(11, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.45))
+                }
+            }
+            ScrollView(.horizontal) {
+                HStack(spacing: 6) {
+                    ForEach(facts, id: \.title) { fact in
+                        extraPill(title: fact.title, value: fact.value, accessibility: "\(player.name), \(fact.title)")
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            (onTurn ? MatchColors.coral.opacity(0.22) : Color.white.opacity(0.05)),
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
+        .accessibilityElement(children: .combine)
+    }
+
+    private func pausePlayerCaption(_ game: Match, index: Int, onTurn: Bool) -> String {
+        var parts: [String] = []
+        if showsMatchLength(game) {
+            parts.append(matchLengthLine(game, state: game.states[index]))
+        }
+        if onTurn { parts.append("Na tahu") }
+        if parts.isEmpty { return game.config.mode.shortTitle }
+        return parts.joined(separator: " · ")
+    }
+
+    private func pauseScoreCaption(_ game: Match) -> String {
+        switch game.config.mode {
+        case .x01: return "zbývá"
+        case .cricket: return game.config.settings.cricketNoScore ? "zavřeno" : "body"
+        case .countUp: return "body"
+        case .aroundClock: return "cíl"
+        }
+    }
+
+    private func pauseFacts(_ game: Match, shown: Match, index: Int) -> [(title: String, value: String)] {
+        switch game.config.mode {
+        case .x01:
+            let darts = shown.thrownDarts(for: index)
+            let average = darts == 0 ? "—" : String(format: "%.1f", shown.average(for: index))
+            let best = shown.lastTurnScore(for: index).map(String.init) ?? "—"
+            var facts = [("Ø", average), ("Max", best), ("Šipky", "\(darts)")]
+            let finish = CheckoutStats.make(from: shown, player: index)
+            if let percentage = finish.percentage {
+                facts.append(("Double", "\(Int(percentage.rounded())) %"))
+            }
+            return facts
+        case .cricket, .countUp:
+            let best = shown.lastTurnScore(for: index).map(String.init) ?? "—"
+            return [
+                ("Kola", "\(shown.states[index].rounds)"),
+                ("Max", best),
+                ("Šipky", "\(shown.thrownDarts(for: index))")
+            ]
+        case .aroundClock:
+            let done = min(21, max(0, shown.states[index].clockTarget - 1))
+            return [
+                ("Hotovo", "\(done)/21"),
+                ("Šipky", "\(shown.thrownDarts(for: index))"),
+                ("Návštěvy", "\(shown.visits.filter { $0.player == index }.count)")
+            ]
+        }
+    }
+
+    /// Už připsaný čas plus běžící úsek, dokud ho pauza nestačí uložit. Pak už se nehýbe.
+    private func frozenBoardSeconds(_ game: Match) -> TimeInterval {
+        var total = game.playSeconds ?? 0
+        if let start = clockStart {
+            total += Date().timeIntervalSince(start)
+        }
+        return max(0, total)
+    }
+
+    private func pauseClock(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds.rounded()))
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let secs = total % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, secs)
+        }
+        return String(format: "%d:%02d", minutes, secs)
+    }
+
+    private func pauseClockSpoken(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds.rounded()))
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let secs = total % 60
+        var parts: [String] = []
+        if hours > 0 { parts.append(czechCount(hours, one: "hodina", few: "hodiny", many: "hodin")) }
+        if minutes > 0 || hours > 0 { parts.append(czechCount(minutes, one: "minuta", few: "minuty", many: "minut")) }
+        parts.append(czechCount(secs, one: "sekunda", few: "sekundy", many: "sekund"))
+        return parts.joined(separator: " a ")
+    }
+
     private func scoreboard(_ game: Match,shown: Match) -> some View {
         let columns = min(2, game.players.count)
         let rows = stride(from: 0, to: game.players.count, by: columns).map { Array($0..<min($0 + columns, game.players.count)) }
         let activeIndex = isHoldingVisit ? (holdPlayer ?? game.active) : game.active
-        let rowCount = max(1, rows.count)
         return Grid(horizontalSpacing: 0, verticalSpacing: 0) {
             ForEach(rows, id: \.first) { row in
                 GridRow {
@@ -493,17 +686,13 @@ struct MatchView: View {
             }
         }
         .clipShape(
-            ScoreboardBannerCutout(
-                centerX: ScoreboardBannerCutout.centerX(
-                    activeIndex: activeIndex,
-                    columns: columns
-                ),
-                cutFromTop: activeIndex / columns == 0,
-                rowCount: rowCount
+            ScoreboardBottomCutout(
+                centerX: ScoreboardBottomCutout.centerX(activeIndex: activeIndex, columns: columns)
             )
         )
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: activeIndex)
     }
+
     private func playerPanel(_ game: Match, shown: Match, index: Int) -> some View {
         let player = game.players[index]
         let ceremonyOpen = legCeremony != nil && !ceremonyLeaving
@@ -527,7 +716,6 @@ struct MatchView: View {
                         Image(systemName: "person.fill.viewfinder").font(AppFont.caption(11, weight: .semibold))
                     }
                 }
-                .padding(.trailing, game.config.playsSets ? 52 : 28)
                 if game.config.hasHandicap {
                     Text(game.config.ruleLine(for: index))
                         .font(AppFont.caption(11, weight: .bold))
@@ -552,11 +740,6 @@ struct MatchView: View {
             .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 16)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(active ? MatchColors.coral : MatchColors.amber)
-            .overlay(alignment: .topTrailing) {
-                panelMatchLength(game, state: state, active: active)
-                    .padding(.top, 12)
-                    .padding(.trailing, 12)
-            }
         }
         .buttonStyle(.plain)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: active)
@@ -566,33 +749,22 @@ struct MatchView: View {
         .accessibilityValue(active ? "Na tahu" : "")
     }
 
-    /// Kompaktní stav legu/setu v rohu — neroztahuje scoreboard.
-    private func panelMatchLength(_ game: Match, state: PlayerState, active: Bool) -> some View {
-        let ink = active ? Color.white : MatchColors.ink
-        let fill = active ? Color.white.opacity(0.18) : Color.black.opacity(0.12)
-        return HStack(spacing: 0) {
-            if game.config.playsSets {
-                Text("\(state.sets)")
-                    .accessibilityLabel("\(state.sets) setů")
-                Text("–")
-                    .foregroundStyle(ink.opacity(0.45))
-                    .accessibilityHidden(true)
-            }
-            Text("\(state.legs)")
-                .accessibilityLabel("\(state.legs) vyhraných legů")
+    /// X01 a Cricket jedou na legy. Kolem hodin a Count Up končí jedním během.
+    private func showsMatchLength(_ game: Match) -> Bool {
+        switch game.config.mode {
+        case .x01, .cricket:
+            return game.config.playsSets || game.config.legsToWin > 1
+        case .aroundClock, .countUp:
+            return false
         }
-        .font(AppFont.caption(12, weight: .bold))
-        .monospacedDigit()
-        .foregroundStyle(ink)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(fill, in: Capsule())
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(
-            game.config.playsSets
-                ? "\(state.sets) setů, \(state.legs) legů"
-                : "\(state.legs) vyhraných legů"
-        )
+    }
+
+    /// Textový stav na pauze. V zápase je skóre v horní liště.
+    private func matchLengthLine(_ game: Match, state: PlayerState) -> String {
+        let legs = czechCount(state.legs, one: "leg", few: "legy", many: "legů")
+        guard game.config.playsSets else { return legs }
+        let sets = czechCount(state.sets, one: "set", few: "sety", many: "setů")
+        return "\(sets) · \(legs)"
     }
 
     private func playerLook(_ game: Match, index: Int) -> (photo: Data?, asset: String?) {
@@ -1004,32 +1176,436 @@ struct MatchView: View {
 
     private func matchProgressStrip(_ game: Match) -> some View {
         let player = isHoldingVisit ? (holdPlayer ?? game.active) : game.active
-        return Text(playerTurnCaption(game, player: player))
-            .font(AppFont.caption(11, weight: .bold))
-            .foregroundStyle(.white.opacity(0.78))
-            .monospacedDigit()
-            .lineLimit(1)
-            .minimumScaleFactor(0.8)
-            .frame(maxWidth: .infinity, minHeight: 26)
-            .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .contentTransition(.opacity)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.35), value: game.leg)
-            .accessibilityLabel(playerTurnCaption(game, player: player))
+        let showsLength = showsMatchLength(game)
+        let showsSets = showsLength && game.config.playsSets
+        return Button {
+            showProgress = true
+        } label: {
+            HStack(spacing: 0) {
+                Text(playerTurnCaption(game, player: player))
+                    .font(AppFont.caption(12, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.78))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.55)
+                    .frame(maxWidth: .infinity)
+                if showsSets {
+                    progressDivider
+                    progressScore(game, title: "Sety", values: game.states.map(\.sets), total: game.config.shownSets)
+                }
+                if showsLength {
+                    progressDivider
+                    progressScore(game, title: "Legy", values: game.states.map(\.legs), total: game.config.shownLegs)
+                }
+                Image(systemName: "chevron.down")
+                    .font(AppFont.caption(10, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .padding(.leading, 6)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 8)
+            .frame(minHeight: 36)
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: progressSignature(game))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(progressAccessibility(game, player: player))
+        .accessibilityHint("Otevře okno se skóre a aktuální šipkou")
+        .accessibilityAddTraits(.isButton)
     }
 
-    private func playerTurnCaption(_ game: Match, player: Int) -> String {
+    private var progressDivider: some View {
+        Rectangle()
+            .fill(.white.opacity(0.18))
+            .frame(width: 1, height: 16)
+            .padding(.horizontal, 8)
+            .accessibilityHidden(true)
+    }
+
+    private func progressScore(_ game: Match, title: String, values: [Int], total: Int) -> some View {
+        HStack(spacing: 5) {
+            Text(title)
+                .font(AppFont.caption(13, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.78))
+            HStack(spacing: 4) {
+                ForEach(values.indices, id: \.self) { index in
+                    if index > 0 {
+                        Text(":")
+                            .font(AppFont.body(15, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.38))
+                    }
+                    Text("\(values[index])")
+                        .font(AppFont.body(16, weight: .heavy))
+                        .monospacedDigit()
+                        .foregroundStyle(progressTint(game, player: index))
+                        .contentTransition(.numericText(value: Double(values[index])))
+                }
+            }
+            Text("(z \(total))")
+                .font(AppFont.caption(12, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(.white.opacity(0.42))
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.55)
+        .frame(maxWidth: .infinity)
+    }
+
+    /// Stejné barvy jako karty hráčů, ať číslo patří ke své straně.
+    private func progressTint(_ game: Match, player: Int) -> Color {
+        guard game.players.indices.contains(player) else { return MatchColors.amber }
+        if game.players.count <= 2 {
+            let ceremonyOpen = legCeremony != nil && !ceremonyLeaving
+            let active = (!isHoldingVisit && !ceremonyOpen && game.active == player)
+                || (isHoldingVisit && holdPlayer == player)
+            return active ? MatchColors.coral : MatchColors.amber
+        }
+        return Theme.playerColor(player)
+    }
+
+    private func progressSignature(_ game: Match) -> String {
+        let active = isHoldingVisit ? (holdPlayer ?? game.active) : game.active
+        let scores = game.states.map { "\($0.sets)-\($0.legs)" }.joined(separator: ",")
+        return "\(active)-\(game.leg)-\(scores)"
+    }
+
+    private func progressAccessibility(_ game: Match, player: Int) -> String {
+        var parts = [playerTurnCaption(game, player: player)]
+        if showsMatchLength(game), game.config.playsSets {
+            let sets = game.players.indices.map { "\(game.players[$0].name) \(game.states[$0].sets)" }.joined(separator: ", ")
+            parts.append("Sety z \(game.config.shownSets): \(sets)")
+        }
+        if showsMatchLength(game) {
+            let legs = game.players.indices.map { "\(game.players[$0].name) \(game.states[$0].legs)" }.joined(separator: ", ")
+            parts.append("Legy z \(game.config.shownLegs): \(legs)")
+        }
+        return parts.joined(separator: ". ")
+    }
+
+    /// Kolo, šipka v návštěvě a případný limit šipek. Stejná čísla má lišta i okno průběhu.
+    private struct TurnSnapshot {
+        var round: Int
+        var dartsThrown: Int
+        var visitDone: Bool
+        var isTotal: Bool
+        var dartsUsed: Int?
+        var dartLimit: Int?
+
+        var dartTitle: String {
+            if visitDone { return "Kolo hotovo" }
+            if isTotal { return "Součet kola" }
+            return "\(min(3, dartsThrown + 1)). šipka"
+        }
+
+        func detail(leg: Int) -> String {
+            var parts = ["Kolo \(round)", "Leg \(leg)"]
+            if let dartsUsed, let dartLimit {
+                parts.append("\(dartsUsed) z \(dartLimit) šipek")
+            }
+            return parts.joined(separator: " · ")
+        }
+    }
+
+    private func turnSnapshot(_ game: Match, player: Int) -> TurnSnapshot {
         let completedRounds = game.visits.lazy.filter { $0.leg == game.leg && $0.player == player }.count
         let round = isHoldingVisit ? max(1, completedRounds) : completedRounds + 1
         let heldDarts = isHoldingVisit ? holdDarts.count : game.currentDarts.count
-        let dartsInVisit = min(3, heldDarts)
-        if showsTotalScoreStrip(game) || (isHoldingVisit && holdSurface == .total) {
-            return "Leg \(game.leg) · Kolo \(round) · Součet"
-        }
+        var dartsUsed: Int?
+        var dartLimit: Int?
         if game.config.mode == .x01, let limit = game.config.settings.dartLimit {
-            let used = min(limit, isHoldingVisit ? completedRounds * 3 : completedRounds * 3 + heldDarts)
-            return "Leg \(game.leg) · Kolo \(round) · Šipky \(used)/\(limit)"
+            dartLimit = limit
+            dartsUsed = min(limit, isHoldingVisit ? completedRounds * 3 : completedRounds * 3 + heldDarts)
         }
-        return "Leg \(game.leg) · Kolo \(round) · Šipky \(dartsInVisit)/3"
+        return TurnSnapshot(
+            round: round,
+            dartsThrown: min(3, heldDarts),
+            visitDone: isHoldingVisit,
+            isTotal: showsTotalScoreStrip(game) || (isHoldingVisit && holdSurface == .total),
+            dartsUsed: dartsUsed,
+            dartLimit: dartLimit
+        )
+    }
+
+    private func playerTurnCaption(_ game: Match, player: Int) -> String {
+        let turn = turnSnapshot(game, player: player)
+        if turn.isTotal {
+            return "Leg \(game.leg) · Kolo \(turn.round) · Součet"
+        }
+        if let used = turn.dartsUsed, let limit = turn.dartLimit {
+            return "Leg \(game.leg) · Kolo \(turn.round) · Šipky \(used)/\(limit)"
+        }
+        return "Leg \(game.leg) · Kolo \(turn.round) · Šipky \(turn.dartsThrown)/3"
+    }
+
+    @ViewBuilder
+    private var progressSheet: some View {
+        if let game = store.activeMatch {
+            let shown = game.liveProjection
+            let player = isHoldingVisit ? (holdPlayer ?? game.active) : game.active
+            NavigationStack {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        progressSectionTitle("Skóre")
+                        progressScoreGrid(game, shown: shown, active: player)
+                        progressThrowCard(game, shown: shown, player: player)
+                        if showsMatchLength(game) {
+                            progressLengthCard(game)
+                        }
+                    }
+                    .padding(16)
+                    .padding(.bottom, 8)
+                }
+                .scrollIndicators(.hidden)
+                .background(MatchColors.background.ignoresSafeArea())
+                .navigationTitle("Průběh")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Hotovo") { showProgress = false }
+                    }
+                }
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(MatchColors.background)
+            .preferredColorScheme(.dark)
+        }
+    }
+
+    private func progressSectionTitle(_ title: String) -> some View {
+        Text(title.uppercased())
+            .font(AppFont.caption(11, weight: .heavy))
+            .tracking(1.1)
+            .foregroundStyle(.white.opacity(0.45))
+    }
+
+    private func progressScoreGrid(_ game: Match, shown: Match, active: Int) -> some View {
+        let columns = min(2, max(1, game.players.count))
+        let rows = stride(from: 0, to: game.players.count, by: columns).map { Array($0..<min($0 + columns, game.players.count)) }
+        return Grid(horizontalSpacing: 8, verticalSpacing: 8) {
+            ForEach(rows, id: \.first) { row in
+                GridRow {
+                    ForEach(row, id: \.self) { index in
+                        progressScoreCell(game, shown: shown, index: index, active: active)
+                    }
+                    if row.count < columns {
+                        Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                    }
+                }
+            }
+        }
+    }
+
+    private func progressScoreCell(_ game: Match, shown: Match, index: Int, active: Int) -> some View {
+        let name = game.players.indices.contains(index) ? game.players[index].name : "Hráč"
+        let state = shown.states.indices.contains(index) ? shown.states[index] : PlayerState(config: game.config, player: index)
+        let score = panelScore(game, shown: shown, state: state, index: index)
+        let onTurn = index == active
+        let badge = isHoldingVisit && onTurn ? "hotovo" : (onTurn ? "na tahu" : nil)
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                playerAvatar(game, index: index, size: 22)
+                Text(name)
+                    .font(AppFont.body(14, weight: .semibold))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let badge {
+                    Text(badge)
+                        .font(AppFont.caption(10, weight: .heavy))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.white.opacity(0.18), in: Capsule())
+                }
+            }
+            Text(score.headline)
+                .font(AppFont.display(40, weight: .bold))
+                .monospacedDigit()
+                .minimumScaleFactor(0.5)
+                .lineLimit(1)
+                .contentTransition(.numericText(value: score.headlineNumber))
+            Text(progressScoreUnit(game))
+                .font(AppFont.caption(11, weight: .semibold))
+                .opacity(0.7)
+            Text("\(score.statTitle) \(score.statValue)")
+                .font(AppFont.caption(12, weight: .bold))
+                .monospacedDigit()
+                .opacity(0.85)
+        }
+        .foregroundStyle(.white)
+        .padding(14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(onTurn ? MatchColors.coral : Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(name), \(progressScoreUnit(game)) \(score.headline), \(score.statAccessibility)\(badge.map { ", \($0)" } ?? "")")
+    }
+
+    private func progressScoreUnit(_ game: Match) -> String {
+        switch game.config.mode {
+        case .x01: return "zbývá"
+        case .cricket: return game.config.settings.cricketNoScore ? "zavřeno" : "body"
+        case .aroundClock: return "cíl"
+        case .countUp: return "body"
+        }
+    }
+
+    private func progressThrowCard(_ game: Match, shown: Match, player: Int) -> some View {
+        let turn = turnSnapshot(game, player: player)
+        let darts = stripDarts(for: game)
+        let guide = checkoutGuide(game, shown: shown, thrown: darts.count)
+        let name = game.players.indices.contains(player) ? game.players[player].name : "Hráč"
+        let suggestion = (!turn.visitDone && !turn.isTotal) ? guide.route.first : nil
+        let title = suggestion.map { "\(turn.dartTitle) · \($0.label)" } ?? turn.dartTitle
+        let visitSum = progressVisitSum(game)
+        let totalValue = visitSum?.value ?? "—"
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name)
+                        .font(AppFont.caption(12, weight: .heavy))
+                        .foregroundStyle(MatchColors.ink.opacity(0.45))
+                        .lineLimit(1)
+                    Text(title)
+                        .font(AppFont.display(28, weight: .bold))
+                        .foregroundStyle(MatchColors.ink)
+                        .minimumScaleFactor(0.7)
+                        .lineLimit(1)
+                    Text(turn.detail(leg: game.leg))
+                        .font(AppFont.caption(13, weight: .semibold))
+                        .foregroundStyle(MatchColors.ink.opacity(0.55))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if !turn.isTotal, let sum = visitSum {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(sum.title)
+                            .font(AppFont.caption(11, weight: .heavy))
+                            .tracking(0.6)
+                            .foregroundStyle(MatchColors.ink.opacity(0.45))
+                        Text(sum.value)
+                            .font(AppFont.display(32, weight: .bold))
+                            .monospacedDigit()
+                            .foregroundStyle(MatchColors.ink)
+                            .contentTransition(.numericText())
+                    }
+                }
+            }
+            if turn.isTotal {
+                Text(totalValue)
+                    .font(AppFont.display(48, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundStyle(totalValue == "—" ? MatchColors.ink.opacity(0.28) : MatchColors.ink)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                HStack(spacing: 8) {
+                    ForEach(0..<3, id: \.self) { index in
+                        let filled = darts.count > index
+                        let suggested = (!filled && !turn.visitDone && guide.route.indices.contains(index - darts.count))
+                            ? guide.route[index - darts.count] : nil
+                        let note = (!filled && suggested == nil && index == darts.count && !turn.visitDone) ? "teď" : nil
+                        ThrowSlotTile(
+                            index: index,
+                            dart: filled ? darts[index] : nil,
+                            suggestion: suggested,
+                            note: note,
+                            setupLeave: suggested == nil ? nil : guide.setupLeave
+                        )
+                    }
+                }
+                .frame(height: 88)
+            }
+            if !turn.visitDone, !turn.isTotal, let line = progressCheckoutLine(guide) {
+                Text(line)
+                    .font(AppFont.caption(13, weight: .semibold))
+                    .foregroundStyle(guide.setupLeave != nil ? MatchColors.setupTip : (guide.route.isEmpty ? MatchColors.ink.opacity(0.7) : MatchColors.aiTip))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("\(name), \(title), \(turn.detail(leg: game.leg))")
+    }
+
+    private func progressVisitSum(_ game: Match) -> (title: String, value: String)? {
+        if isHoldingVisit, let visit = game.visits.last, visit.player == holdPlayer, visit.leg == game.leg {
+            if visit.bust { return ("Kolo", "Přehoz") }
+            return ("V kole", "\(visit.credited)")
+        }
+        if showsTotalScoreStrip(game) {
+            let display = liveTotalDisplay()
+            guard display != "—" else { return nil }
+            return ("Součet", display)
+        }
+        let darts = stripDarts(for: game)
+        guard !darts.isEmpty else { return nil }
+        return ("V kole", "\(darts.reduce(0) { $0 + $1.score })")
+    }
+
+    private func progressCheckoutLine(_ guide: ScoringChrome.CheckoutGuide) -> String? {
+        if let leave = guide.setupLeave, !guide.route.isEmpty {
+            return "Sehrávka \(guide.route.map(\.label).joined(separator: " · ")) na \(leave)"
+        }
+        if !guide.route.isEmpty {
+            return "Zavření \(guide.route.map(\.label).joined(separator: " · "))"
+        }
+        if guide.note == "double in" { return "Nejdřív double in" }
+        return guide.note
+    }
+
+    private func progressLengthCard(_ game: Match) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if game.config.playsSets {
+                progressLengthRows(game, title: "Sety", values: game.states.map(\.sets), total: game.config.shownSets)
+            }
+            progressLengthRows(game, title: "Legy", values: game.states.map(\.legs), total: game.config.shownLegs)
+            Text(game.config.lengthDetail)
+                .font(AppFont.caption(12))
+                .foregroundStyle(.white.opacity(0.45))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func progressLengthRows(_ game: Match, title: String, values: [Int], total: Int) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                progressSectionTitle(title)
+                Spacer(minLength: 8)
+                Text("z \(total)")
+                    .font(AppFont.caption(12, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(.white.opacity(0.45))
+            }
+            ForEach(game.players.indices, id: \.self) { index in
+                HStack(spacing: 8) {
+                    Text(game.players[index].name)
+                        .font(AppFont.body(15, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text("\(values.indices.contains(index) ? values[index] : 0)")
+                        .font(AppFont.body(18, weight: .heavy))
+                        .monospacedDigit()
+                        .foregroundStyle(progressTint(game, player: index))
+                        .contentTransition(.numericText(value: Double(values.indices.contains(index) ? values[index] : 0)))
+                }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(progressLengthAccessibility(game, title: title, values: values, total: total))
+    }
+
+    private func progressLengthAccessibility(_ game: Match, title: String, values: [Int], total: Int) -> String {
+        let scores = game.players.indices.map { index in
+            let value = values.indices.contains(index) ? values[index] : 0
+            return "\(game.players[index].name) \(value)"
+        }.joined(separator: ", ")
+        return "\(title) z \(total): \(scores)"
     }
 
     /// Spodní lišta: Liquid Glass — Zpět, režim hlasu a způsob zápisu.
@@ -1039,7 +1615,7 @@ struct MatchView: View {
         let canUndo = isHoldingVisit || !game.currentDarts.isEmpty || !game.visits.isEmpty
         let showTotalConfirm = humanInput && surface == .total && canUseTotal(game)
         let showVoiceModes = surface == .voice && canUseTotal(game) && !isHoldingVisit
-        if !paused && legCeremony == nil && (game.legWinner == nil || isHoldingVisit) {
+        if !paused && (game.legWinner == nil || isHoldingVisit) {
             // Menu držíme mimo GlassEffectContainer — jinak iOS 26 při změně ikony/layoutu glitchuje výběr.
             HStack(spacing: 10) {
                 GlassEffectContainer(spacing: 10) {
@@ -1144,11 +1720,12 @@ struct MatchView: View {
             && !game.finished
             && game.currentPlayer.botLevel == nil
             && !game.isGhostTurn
+            && !showProgress
     }
 
     private var voiceSyncKey: String {
         guard let game = store.activeMatch else { return "none" }
-        return "\(surface.rawValue)-\(game.active)-\(isHoldingVisit)-\(paused)-\(game.finished)-\(game.legWinner ?? -1)-\(game.needsBullOff)-\(botIsThrowing)"
+        return "\(surface.rawValue)-\(game.active)-\(isHoldingVisit)-\(paused)-\(showProgress)-\(game.finished)-\(game.legWinner ?? -1)-\(game.needsBullOff)-\(botIsThrowing)"
     }
 
     private func effectiveVoiceMode(for game: Match) -> VoiceScoreMode {
@@ -1539,7 +2116,6 @@ struct MatchView: View {
         holdPlayer = nil
         legCeremony = nil
         ceremonyLeaving = false
-        boardReady = true
         holdDarts = []
         sumText = ""
         multiplier = 1
@@ -1610,6 +2186,7 @@ struct MatchView: View {
             holdPlayer = nil
         }
         if game.needsBullOff {
+            showProgress = false
             decidingLeg = true
         } else {
             revision = UUID()
@@ -1624,11 +2201,16 @@ struct MatchView: View {
             leg: game.leg,
             matchFinished: game.finished,
             legs: game.states.map(\.legs),
+            sets: game.states.map(\.sets),
             names: game.players.map(\.name),
             checkoutScore: visit?.credited ?? 0,
             checkoutDarts: visit?.darts.map(\.label) ?? [],
             isCheckout: visit?.checkout == true,
             legsToWin: game.config.legsToWin,
+            setsToWin: game.config.setsToWin,
+            legSlots: game.config.shownLegs,
+            setSlots: game.config.shownSets,
+            playsSets: game.config.playsSets,
             setClosed: !game.finished && game.config.playsSets && game.states.contains { $0.legs >= game.config.legsToWin },
             duration: auto,
             byBullOff: game.bullOffLegs?[game.leg] == winner,
@@ -1640,6 +2222,7 @@ struct MatchView: View {
         withTransaction(transaction) {
             ceremonyLeaving = false
             resultShown = false
+            showProgress = false
             legCeremony = ceremony
         }
         UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -1652,32 +2235,33 @@ struct MatchView: View {
     }
     private func dismissLegCeremony() {
         guard let ceremony = legCeremony, !ceremonyLeaving else { return }
-        if reduceMotion {
+        var quiet = Transaction(animation: nil)
+        quiet.disablesAnimations = true
+        withTransaction(quiet) {
             if ceremony.matchFinished { revealMatchResult() } else { revealNextLeg() }
+        }
+        if reduceMotion {
             commitLegCeremonyDismiss()
             return
         }
-        withAnimation(.easeInOut(duration: 0.62)) { ceremonyLeaving = true }
-        let finished = ceremony.matchFinished
+        withAnimation(.easeInOut(duration: CeremonyFade.seconds)) { ceremonyLeaving = true }
+        let ceremonyID = ceremony.id
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 180_000_000)
-            if finished { revealMatchResult() } else { revealNextLeg() }
-            try? await Task.sleep(nanoseconds: 460_000_000)
-            guard ceremonyLeaving else { return }
+            try? await Task.sleep(nanoseconds: UInt64(CeremonyFade.seconds * 1_000_000_000))
+            guard ceremonyLeaving, legCeremony?.id == ceremonyID else { return }
             commitLegCeremonyDismiss()
         }
     }
-    /// Skóre se přetočí na start dalšího legu.
+    /// Skóre se přepne na start dalšího legu bez vlastního pohybu — pohyb obstará prolínání.
     private func revealNextLeg() {
         guard var game = store.activeMatch, game.legWinner != nil, !game.finished else { return }
         let newSet = legCeremony?.setClosed == true
         game.nextLeg()
         let starter = game.players.indices.contains(game.active) ? game.players[game.active].name : "Hráč"
         let leg = game.leg
-        var hidden = Transaction()
-        hidden.disablesAnimations = true
-        withTransaction(hidden) { boardReady = false }
-        withAnimation(reduceMotion ? nil : .spring(response: 0.82, dampingFraction: 0.9)) {
+        var quiet = Transaction(animation: nil)
+        quiet.disablesAnimations = true
+        withTransaction(quiet) {
             store.activeMatch = game
             isHoldingVisit = false
             holdDarts = []
@@ -1685,30 +2269,34 @@ struct MatchView: View {
             multiplier = 1
             sumText = ""
         }
+        let announcement = "\(newSet ? "Nový set" : "Nový leg") \(leg). Začíná \(starter)."
+        let delay = reduceMotion ? 0 : CeremonyFade.seconds
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 50_000_000)
-            withAnimation(reduceMotion ? nil : .spring(response: 0.86, dampingFraction: 0.9)) { boardReady = true }
+            if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
+            UIAccessibility.post(notification: .announcement, argument: announcement)
         }
-        UIAccessibility.post(notification: .announcement, argument: "\(newSet ? "Nový set" : "Nový leg") \(leg). Začíná \(starter).")
     }
-    /// Statistiky jsou pod blednoucí ceremonií, ať konec zápasu neskočí.
+    /// Statistiky jsou celé vidět ještě pod ceremonií, ať po prolínání nic nedojíždí.
     private func revealMatchResult() {
-        isHoldingVisit = false
-        holdDarts = []
-        holdPlayer = nil
+        var quiet = Transaction(animation: nil)
+        quiet.disablesAnimations = true
+        withTransaction(quiet) {
+            resultShown = true
+            isHoldingVisit = false
+            holdDarts = []
+            holdPlayer = nil
+        }
     }
     private func animateResultIn() {
         guard !resultShown else { return }
         resultShown = true
     }
     private func commitLegCeremonyDismiss() {
-        // Závoj je už pryč. Lišta se vrátí spolu s hřištěm, bez skoku.
-        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.4)) {
+        var quiet = Transaction(animation: nil)
+        quiet.disablesAnimations = true
+        withTransaction(quiet) {
             legCeremony = nil
-        }
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 420_000_000)
-            if legCeremony == nil { ceremonyLeaving = false }
+            ceremonyLeaving = false
         }
     }
     private func saveAndLeave() {
@@ -1733,9 +2321,34 @@ struct MatchView: View {
                     if clockStart != nil { flushClock(keepRunning: true) }
                 }
             }
+            .task(id: shouldWatchIdle) { await pauseWhenIdle() }
+            .onChange(of: playActivity) { _, _ in lastActivity = Date() }
             .onChange(of: scenePhase) { _, _ in syncClock() }
-            .onChange(of: paused) { _, _ in syncClock() }
+            .onChange(of: paused) { _, isPaused in
+                syncClock()
+                if !isPaused { lastActivity = Date() }
+            }
             .onChange(of: store.activeMatch?.finished ?? true) { _, _ in syncClock() }
+    }
+    /// Živá hra v popředí. Ceremonie a hotový zápas se samy nepauzují.
+    private var shouldWatchIdle: Bool {
+        scenePhase == .active && !paused && !leavingHome && legCeremony == nil && store.activeMatch.map { !$0.finished } == true
+    }
+    /// Cokoli, čím hra postupuje: šipka, kolo, hráč, leg, rozepsaný součet nebo přepnutí zápisu.
+    private var playActivity: String {
+        guard let game = store.activeMatch else { return "none" }
+        let darts = game.currentDarts.map(\.label).joined(separator: ",")
+        return "\(game.visits.count)|\(darts)|\(game.active)|\(game.leg)|\(game.legWinner ?? -1)|\(sumText)|\(multiplier)|\(surface.rawValue)"
+    }
+    private func pauseWhenIdle() async {
+        guard shouldWatchIdle else { return }
+        while !Task.isCancelled && shouldWatchIdle {
+            if Date().timeIntervalSince(lastActivity) >= idlePauseAfter {
+                paused = true
+                return
+            }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
     }
     private var clockRuns: Bool {
         scenePhase == .active && !paused && store.activeMatch.map { !$0.finished } == true
@@ -1841,7 +2454,7 @@ struct MatchView: View {
         .padding(24)
         .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
-    /// Celá obrazovka přes lištu i stavový řádek. Krátké shrnutí legu.
+    /// Celá obrazovka přes lištu i stavový řádek. Krátké shrnutí legu se skóre.
     private func legCeremonyScreen(_ ceremony: LegCeremony) -> some View {
         LegCeremonyView(
             ceremony: ceremony,
@@ -1881,19 +2494,19 @@ struct MatchView: View {
     private func waitUntilThrowIsClear() async -> Bool {
         let key = botTaskKey
         while isHoldingVisit || legCeremony != nil {
-            if paused || showSettings || showLog || showLeave || statsPlayer != nil { return false }
+            if paused || showSettings || showLog || showProgress || showLeave || statsPlayer != nil { return false }
             do { try await Task.sleep(nanoseconds: 40_000_000) } catch { return false }
             if Task.isCancelled || key != botTaskKey { return false }
         }
         return true
     }
     @MainActor private func throwBotDart() async {
-        guard scenePhase == .active, !paused, !showSettings, !showLog, !showLeave, statsPlayer == nil else { return }
+        guard scenePhase == .active, !paused, !showSettings, !showLog, !showProgress, !showLeave, statsPlayer == nil else { return }
         guard let game = store.activeMatch, !game.finished, game.legWinner == nil, !game.needsBullOff else { return }
         let auto = game.currentPlayer.botLevel != nil || game.isGhostTurn
         guard auto else { return }
         guard await waitUntilThrowIsClear() else { return }
-        guard scenePhase == .active, !paused, !showSettings, !showLog, !showLeave, statsPlayer == nil, !isHoldingVisit, legCeremony == nil else { return }
+        guard scenePhase == .active, !paused, !showSettings, !showLog, !showProgress, !showLeave, statsPlayer == nil, !isHoldingVisit, legCeremony == nil else { return }
         guard let ready = store.activeMatch, !ready.finished, ready.legWinner == nil, !ready.needsBullOff else { return }
         guard ready.currentPlayer.botLevel != nil || ready.isGhostTurn else { return }
         if holdDarts.count != ready.currentDarts.count { holdDarts = ready.currentDarts }
@@ -1989,7 +2602,6 @@ struct MatchView: View {
         var singles: Int
         var bulls: Int
         var misses: Int
-        var topSegments: [(label: String, count: Int, pct: Double)]
         var topFields: [(label: String, count: Int, pct: Double)]
 
         var total: Int { positioned.count }
@@ -2017,7 +2629,6 @@ struct MatchView: View {
             guard !darts.isEmpty else { return nil }
             let positioned = darts.filter { $0.x != nil && $0.y != nil }
             guard !positioned.isEmpty else { return nil }
-            var segmentHits: [Int: Int] = [:]
             var fieldHits: [String: Int] = [:]
             var triples = 0, doubles = 0, singles = 0, bulls = 0, misses = 0
             for dart in positioned {
@@ -2025,23 +2636,14 @@ struct MatchView: View {
                 if dart.segment == 0 { misses += 1; continue }
                 if dart.segment == 25 {
                     bulls += 1
-                    segmentHits[25, default: 0] += 1
                     continue
                 }
-                segmentHits[dart.segment, default: 0] += 1
                 switch dart.multiplier {
                 case 3: triples += 1
                 case 2: doubles += 1
                 default: singles += 1
                 }
             }
-            let top = segmentHits
-                .sorted { lhs, rhs in lhs.value == rhs.value ? lhs.key > rhs.key : lhs.value > rhs.value }
-                .prefix(5)
-                .map { key, count -> (String, Int, Double) in
-                    let label = key == 25 ? "Bull" : "\(key)"
-                    return (label, count, Double(count) / Double(positioned.count) * 100)
-                }
             let fields = fieldHits
                 .sorted { lhs, rhs in lhs.value == rhs.value ? lhs.key < rhs.key : lhs.value > rhs.value }
                 .prefix(8)
@@ -2056,7 +2658,6 @@ struct MatchView: View {
                 singles: singles,
                 bulls: bulls,
                 misses: misses,
-                topSegments: top,
                 topFields: fields
             )
         }
@@ -2066,6 +2667,9 @@ struct MatchView: View {
         let order = game.players.indices.sorted { a, b in
             if game.winner == a { return true }
             if game.winner == b { return false }
+            if game.config.playsSets, game.states[a].sets != game.states[b].sets {
+                return game.states[a].sets > game.states[b].sets
+            }
             return game.states[a].legs > game.states[b].legs
         }
         let xp = store.matchXP(for: game)
@@ -2103,7 +2707,9 @@ struct MatchView: View {
                 .modifier(ResultRise(shown: resultShown, delay: 0.28, reduceMotion: reduceMotion))
         }
         .background(MatchColors.background.ignoresSafeArea())
-        .onAppear { animateResultIn() }
+        .onAppear {
+            if legCeremony == nil { animateResultIn() }
+        }
         .sheet(isPresented: $showMatchXP) {
             MatchXPBreakdownSheet(breakdown: xp)
         }
@@ -2215,10 +2821,22 @@ struct MatchView: View {
                 }
                 VStack(spacing: 4) {
                     playerAvatar(game, index: i, size: 36)
-                    Text("\(game.states[i].legs)")
+                    let primary = game.config.playsSets ? game.states[i].sets : game.states[i].legs
+                    Text("\(primary)")
                         .font(.system(size: 44, weight: .bold, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(game.winner == i ? MatchColors.amber : .white)
+                    Text(game.config.playsSets
+                         ? czechWord(primary, one: "set", few: "sety", many: "setů")
+                         : czechWord(primary, one: "leg", few: "legy", many: "legů"))
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.white.opacity(0.45))
+                    if game.config.playsSets {
+                        Text("\(czechCount(game.states[i].legs, one: "leg", few: "legy", many: "legů")) v setu")
+                            .font(.caption.weight(.semibold))
+                            .monospacedDigit()
+                            .foregroundStyle(.white.opacity(0.72))
+                    }
                     Text(game.players[i].name)
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.6))
@@ -2255,7 +2873,7 @@ struct MatchView: View {
                                 .accessibilityLabel("Vítěz")
                         }
                     }
-                    Text("\(game.states[index].legs) legů · \(dartCount) šipek")
+                    Text(resultRecordLine(game, index: index, darts: dartCount))
                         .font(.subheadline)
                         .foregroundStyle(.white.opacity(0.55))
                 }
@@ -2303,6 +2921,25 @@ struct MatchView: View {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .strokeBorder(isWinner ? MatchColors.amber.opacity(0.4) : Color.white.opacity(0.06), lineWidth: 1)
         )
+    }
+
+    private func resultRecordLine(_ game: Match, index: Int, darts: Int) -> String {
+        let dartsLabel = czechCount(darts, one: "šipka", few: "šipky", many: "šipek")
+        if game.config.playsSets {
+            let sets = czechCount(game.states[index].sets, one: "set", few: "sety", many: "setů")
+            let legs = czechCount(game.states[index].legs, one: "leg", few: "legy", many: "legů")
+            return "\(sets) · \(legs) v setu · \(dartsLabel)"
+        }
+        let legs = czechCount(game.states[index].legs, one: "leg", few: "legy", many: "legů")
+        return "\(legs) · \(dartsLabel)"
+    }
+
+    private func czechWord(_ value: Int, one: String, few: String, many: String) -> String {
+        value == 1 ? one : (2...4).contains(value) ? few : many
+    }
+
+    private func czechCount(_ value: Int, one: String, few: String, many: String) -> String {
+        "\(value) \(czechWord(value, one: one, few: few, many: many))"
     }
 
     private func resultBoardSection(_ board: BoardStats, player: Int) -> some View {
@@ -2489,12 +3126,14 @@ struct MatchView: View {
                 }
 
                 if let board {
+                    SegmentRoseChart(darts: board.positioned, title: "Kam šipky padaly")
+
                     ZoomableDartboard(marks: board.positioned, zoomed: $boardZoomed)
                         .frame(maxWidth: 540)
                         .frame(maxWidth: .infinity)
                         .padding(8)
                         .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-                    Text("\(board.total) šipek zadaných přes terč")
+                    Text("Přesná místa · \(board.total) šipek zadaných přes terč. Roztáhni prsty pro detail.")
                         .font(.footnote)
                         .foregroundStyle(.white.opacity(0.55))
 
@@ -2505,7 +3144,7 @@ struct MatchView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 14) {
-                        detailSectionTitle("KAM ŠIPKY PADALY", icon: "chart.bar.fill")
+                        detailSectionTitle("TYP ZÁSAHU", icon: "chart.bar.fill")
                         HStack(spacing: 7) {
                             ringPct("TRIPLE", board.pct(board.triples), MatchColors.coral)
                             ringPct("DOUBLE", board.pct(board.doubles), MatchColors.amber)
@@ -2545,17 +3184,6 @@ struct MatchView: View {
                         .detailCard()
                     }
 
-                    if !board.topSegments.isEmpty {
-                        VStack(alignment: .leading, spacing: 14) {
-                            detailSectionTitle("NEJČASTĚJŠÍ ČÍSLA", icon: "list.number")
-                            VStack(spacing: 11) {
-                                ForEach(Array(board.topSegments.enumerated()), id: \.offset) { _, row in
-                                    boardBar(row.label, count: row.count, pct: row.pct)
-                                }
-                            }
-                        }
-                        .detailCard()
-                    }
                 } else {
                     ContentUnavailableView(
                         "Bez zásahů na terči",
@@ -2605,29 +3233,6 @@ struct MatchView: View {
             .foregroundStyle(MatchColors.green)
     }
 
-    private func boardBar(_ label: String, count: Int, pct: Double) -> some View {
-        HStack(spacing: 10) {
-            Text(label)
-                .font(AppFont.body(15, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 42, alignment: .leading)
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.white.opacity(0.08))
-                    Capsule()
-                        .fill(MatchColors.green)
-                        .frame(width: max(6, geo.size.width * pct / 100))
-                }
-            }
-            .frame(height: 10)
-            Text("\(count) · \(Int(pct.rounded())) %")
-                .font(AppFont.caption(11, weight: .bold))
-                .monospacedDigit()
-                .foregroundStyle(.white.opacity(0.65))
-                .frame(width: 72, alignment: .trailing)
-        }
-    }
-
     private func ringPct(_ title: String, _ pct: Int, _ color: Color) -> some View {
         VStack(spacing: 4) {
             Text("\(pct)%")
@@ -2668,7 +3273,7 @@ struct MatchView: View {
             Button {
                 store.finish()
                 store.activeMatch = Match(config: game.config, players: game.players, firstPlayer: (game.starter + 1) % game.players.count)
-                multiplier = 1; sumText = ""; paused = false; holdDarts = []; isHoldingVisit = false; holdPlayer = nil; legCeremony = nil; ceremonyLeaving = false; resultShown = false; boardReady = true; revision = UUID()
+                multiplier = 1; sumText = ""; paused = false; holdDarts = []; isHoldingVisit = false; holdPlayer = nil; legCeremony = nil; ceremonyLeaving = false; resultShown = false; revision = UUID()
             } label: {
                 Label("Odveta", systemImage: "arrow.clockwise")
                     .font(.headline)
@@ -2741,22 +3346,17 @@ private extension View {
     }
 }
 
-/// Banner scoreboardu s výřezem na hraně u hráče na tahu.
-private struct ScoreboardBannerCutout: Shape {
-    /// Relativní střed výřezu na šířku banneru (0…1).
+/// Oblá karta s lehkým výřezem ve tvaru šipky na spodní hraně, ve sloupci hráče na tahu.
+private struct ScoreboardBottomCutout: Shape {
+    /// Relativní střed výřezu na šířku karty (0…1).
     var centerX: CGFloat
-    var cutFromTop: Bool
-    var rowCount: Int
     var corner: CGFloat = 22
-    var cutWidth: CGFloat = 56
-    var cutDepth: CGFloat = 18
+    var cutWidth: CGFloat = 18
+    var cutDepth: CGFloat = 10
 
-    var animatableData: AnimatablePair<CGFloat, CGFloat> {
-        get { AnimatablePair(centerX, cutFromTop ? 0 : 1) }
-        set {
-            centerX = newValue.first
-            cutFromTop = newValue.second < 0.5
-        }
+    var animatableData: CGFloat {
+        get { centerX }
+        set { centerX = newValue }
     }
 
     static func centerX(activeIndex: Int, columns: Int) -> CGFloat {
@@ -2766,36 +3366,21 @@ private struct ScoreboardBannerCutout: Shape {
     }
 
     func path(in rect: CGRect) -> Path {
-        let rows = max(1, rowCount)
-        let cellH = rect.height / CGFloat(rows)
         let cx = rect.minX + rect.width * min(max(centerX, 0), 1)
-        let half = min(cutWidth, rect.width * 0.34) / 2
-        let depth = min(cutDepth, cellH * 0.24)
+        let half = min(cutWidth, rect.width * 0.2) / 2
+        let depth = min(cutDepth, 12)
         let left = max(rect.minX + corner + 4, cx - half)
         let right = min(rect.maxX - corner - 4, cx + half)
 
         var path = Path()
         path.move(to: CGPoint(x: rect.minX + corner, y: rect.minY))
-        if cutFromTop {
-            path.addLine(to: CGPoint(x: left, y: rect.minY))
-            path.addCurve(
-                to: CGPoint(x: right, y: rect.minY),
-                control1: CGPoint(x: left, y: rect.minY + depth),
-                control2: CGPoint(x: right, y: rect.minY + depth)
-            )
-        }
         path.addLine(to: CGPoint(x: rect.maxX - corner, y: rect.minY))
         path.addQuadCurve(to: CGPoint(x: rect.maxX, y: rect.minY + corner), control: CGPoint(x: rect.maxX, y: rect.minY))
         path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - corner))
         path.addQuadCurve(to: CGPoint(x: rect.maxX - corner, y: rect.maxY), control: CGPoint(x: rect.maxX, y: rect.maxY))
-        if !cutFromTop {
-            path.addLine(to: CGPoint(x: right, y: rect.maxY))
-            path.addCurve(
-                to: CGPoint(x: left, y: rect.maxY),
-                control1: CGPoint(x: right, y: rect.maxY - depth),
-                control2: CGPoint(x: left, y: rect.maxY - depth)
-            )
-        }
+        path.addLine(to: CGPoint(x: right, y: rect.maxY))
+        path.addLine(to: CGPoint(x: cx, y: rect.maxY - depth))
+        path.addLine(to: CGPoint(x: left, y: rect.maxY))
         path.addLine(to: CGPoint(x: rect.minX + corner, y: rect.maxY))
         path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.maxY - corner), control: CGPoint(x: rect.minX, y: rect.maxY))
         path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + corner))
@@ -2813,10 +3398,15 @@ private struct ResultRise: ViewModifier {
     func body(content: Content) -> some View {
         content
             .opacity(shown || reduceMotion ? 1 : 0)
-            .offset(y: shown || reduceMotion ? 0 : 22)
-            .animation(reduceMotion ? nil : .spring(response: 0.62, dampingFraction: 0.84).delay(delay), value: shown)
+            .offset(y: shown || reduceMotion ? 0 : 36)
+            .animation(reduceMotion ? nil : .spring(response: 0.72, dampingFraction: 0.84).delay(delay), value: shown)
     }
 }
+
+private enum CeremonyFade {
+    static let seconds: TimeInterval = 0.42
+}
+
 
 private struct LegCeremonyView: View {
     let ceremony: LegCeremony
@@ -2843,11 +3433,33 @@ private struct LegCeremonyView: View {
         return ("Leg \(ceremony.leg)", "flag.checkered")
     }
     private var showsCheckout: Bool { ceremony.isCheckout && ceremony.checkoutScore > 0 }
+    private var outcomeLine: String {
+        if ceremony.matchFinished { return "vyhrává zápas" }
+        if ceremony.setClosed { return "vyhrává set" }
+        return "vyhrává leg \(ceremony.leg)"
+    }
+    /// Set se právě zavřel — i když tím zároveň skončil zápas.
+    private var setJustWon: Bool {
+        guard ceremony.playsSets, ceremony.legs.indices.contains(ceremony.winner) else { return false }
+        return ceremony.legs[ceremony.winner] >= ceremony.legsToWin
+    }
+    /// Tečky odpovídají tomu, co je nastavené. Best of 5 má pět teček, ne tři.
+    private var legSlots: Int {
+        max(ceremony.legSlots, ceremony.legsToWin, ceremony.legs.max() ?? 0)
+    }
+    private var setSlots: Int {
+        max(ceremony.setSlots, ceremony.setsToWin, ceremony.sets.max() ?? 0)
+    }
+    private var scoreSpoken: String {
+        guard ceremony.playsSets else { return "" }
+        let sets = ceremony.sets.map(String.init).joined(separator: " ku ")
+        let legs = ceremony.legs.map(String.init).joined(separator: " ku ")
+        return " Sety \(sets). Legy v setu \(legs)."
+    }
 
     var body: some View {
         ZStack {
             background
-                .opacity(shown ? 1 : 0)
             VStack(spacing: 0) {
                 Spacer(minLength: 20)
                 Label(badge.title, systemImage: badge.icon)
@@ -2860,16 +3472,17 @@ private struct LegCeremonyView: View {
                 winnerMark
                     .padding(.top, 28)
 
-                Text(winnerName)
-                    .font(.largeTitle.bold())
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.7)
-                    .padding(.top, 18)
-                Text(ceremony.matchFinished ? "vyhrává zápas" : "vyhrává leg \(ceremony.leg)")
-                    .font(ceremony.matchFinished ? .title2.weight(.semibold) : .title3)
-                    .foregroundStyle(.white.opacity(0.65))
-                    .padding(.top, 2)
+                VStack(spacing: 2) {
+                    Text(winnerName)
+                        .font(.largeTitle.bold())
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.7)
+                    Text(outcomeLine)
+                        .font(ceremony.matchFinished ? .title2.weight(.semibold) : .title3)
+                        .foregroundStyle(.white.opacity(0.65))
+                }
+                .padding(.top, 18)
 
                 if showsCheckout {
                     checkoutCard
@@ -2887,38 +3500,43 @@ private struct LegCeremonyView: View {
             .padding(.top, 12)
             .padding(.bottom, 12)
             .frame(maxWidth: 520)
-            .opacity(shown ? 1 : 0)
-            .offset(y: shown ? 0 : 22)
-            .scaleEffect(shown ? 1 : 0.97, anchor: .center)
         }
-        .animation(reduceMotion ? nil : .spring(response: 0.78, dampingFraction: 0.9), value: appeared)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .opacity(leaving ? 0 : 1)
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.62), value: leaving)
+        .animation(reduceMotion ? nil : .easeInOut(duration: CeremonyFade.seconds), value: leaving)
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
         .preferredColorScheme(.dark)
         .contentShape(Rectangle())
         .onTapGesture(perform: onContinue)
         .onAppear {
-            guard !appeared else { return }
+            guard progress == 0 else { return }
             if reduceMotion {
                 appeared = true
                 progress = 1
                 return
             }
-            appeared = true
             withAnimation(.linear(duration: ceremony.duration)) { progress = 1 }
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: UInt64(CeremonyFade.seconds * 1_000_000_000))
+                appeared = true
+            }
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
             ceremony.matchFinished
-            ? "\(winnerName) vyhrává zápas."
+            ? "\(winnerName) vyhrává zápas.\(scoreSpoken)"
+            : ceremony.setClosed
+            ? "\(winnerName) vyhrává set.\(scoreSpoken)"
             : showsCheckout
-            ? "\(winnerName) zavřel na \(ceremony.checkoutScore) a vyhrává leg \(ceremony.leg)."
-            : "\(winnerName) vyhrává leg \(ceremony.leg)."
+            ? "\(winnerName) zavřel na \(ceremony.checkoutScore) a vyhrává leg \(ceremony.leg).\(scoreSpoken)"
+            : "\(winnerName) vyhrává leg \(ceremony.leg).\(scoreSpoken)"
         )
-        .accessibilityHint(ceremony.matchFinished ? "Otevře statistiky zápasu" : "Pokračuj na další leg")
+        .accessibilityHint(
+            ceremony.matchFinished
+            ? "Otevře statistiky zápasu"
+            : ceremony.setClosed ? "Pokračuj na další set" : "Pokračuj na další leg"
+        )
         .accessibilityAddTraits(.isButton)
     }
 
@@ -2998,40 +3616,82 @@ private struct LegCeremonyView: View {
 
     private var scoreboard: some View {
         VStack(spacing: 0) {
+            if ceremony.playsSets {
+                HStack(spacing: 8) {
+                    Spacer(minLength: 0)
+                    Text("Sety")
+                        .frame(width: columnWidth(setSlots))
+                    Text("Legy")
+                        .frame(width: columnWidth(legSlots))
+                }
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.white.opacity(0.45))
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 2)
+            }
             ForEach(ceremony.names.indices, id: \.self) { i in
                 if i > 0 { Divider().overlay(.white.opacity(0.08)).padding(.leading, 16) }
-                let legs = ceremony.legs.indices.contains(i) ? ceremony.legs[i] : 0
-                let isWinner = i == ceremony.winner
-                HStack(spacing: 12) {
-                    Text(ceremony.names[i])
-                        .font(isWinner ? .body.weight(.semibold) : .body)
-                        .foregroundStyle(isWinner ? .white : .white.opacity(0.7))
-                        .lineLimit(1)
-                    Spacer(minLength: 8)
-                    if ceremony.legsToWin <= 7 {
-                        HStack(spacing: 5) {
-                            ForEach(0..<ceremony.legsToWin, id: \.self) { n in
-                                let newest = isWinner && legs > 0 && n == legs - 1
-                                Circle()
-                                    .fill(n < legs ? (isWinner ? accent : Color.white.opacity(0.7)) : Color.white.opacity(0.15))
-                                    .frame(width: newest && shown ? 11 : 9, height: newest && shown ? 11 : 9)
-                                    .scaleEffect(newest && !shown ? 0.4 : 1)
-                                    .animation(reduceMotion ? nil : .spring(response: 0.6, dampingFraction: 0.82).delay(newest ? 0.28 : 0), value: appeared)
-                            }
-                        }
-                        .accessibilityHidden(true)
-                    }
-                    Text("\(legs)")
-                        .font(.system(.title2, design: .rounded).weight(.bold))
-                        .monospacedDigit()
-                        .foregroundStyle(isWinner ? accent : .white)
-                        .frame(minWidth: 28, alignment: .trailing)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
+                scoreRow(i)
             }
         }
         .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private func scoreRow(_ index: Int) -> some View {
+        let legs = ceremony.legs.indices.contains(index) ? ceremony.legs[index] : 0
+        let sets = ceremony.sets.indices.contains(index) ? ceremony.sets[index] : 0
+        let isWinner = index == ceremony.winner
+        let tint = isWinner ? accent : Color.white
+        let pip = isWinner ? accent : Color.white.opacity(0.7)
+        return HStack(spacing: 8) {
+            Text(ceremony.names[index])
+                .font(isWinner ? .body.weight(.semibold) : .body)
+                .foregroundStyle(isWinner ? .white : .white.opacity(0.7))
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            if ceremony.playsSets {
+                scoreCell(value: sets, total: setSlots, tint: tint, filled: pip, pulse: isWinner && setJustWon, delay: 0.46)
+                scoreCell(value: legs, total: legSlots, tint: tint, filled: pip, pulse: isWinner, delay: 0.24)
+            } else {
+                scoreCell(value: legs, total: legSlots, tint: tint, filled: pip, pulse: isWinner, delay: 0.28)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, ceremony.playsSets ? 10 : 12)
+    }
+
+    private func columnWidth(_ total: Int) -> CGFloat {
+        guard total <= 7 else { return 44 }
+        let pips = CGFloat(total) * 8 + CGFloat(max(0, total - 1)) * 4
+        return max(52, pips + 26)
+    }
+
+    private func scoreCell(value: Int, total: Int, tint: Color, filled: Color, pulse: Bool, delay: Double) -> some View {
+        HStack(spacing: 6) {
+            if total <= 7 {
+                HStack(spacing: 4) {
+                    ForEach(0..<total, id: \.self) { n in
+                        let on = n < value
+                        let newest = pulse && value > 0 && n == value - 1
+                        Circle()
+                            .fill(on ? filled : Color.white.opacity(0.15))
+                            .frame(width: newest && shown ? 10 : 8, height: newest && shown ? 10 : 8)
+                            .scaleEffect(newest && !shown ? 0.3 : 1)
+                            .animation(reduceMotion ? nil : .spring(response: 0.55, dampingFraction: 0.68).delay(newest ? delay : 0), value: appeared)
+                    }
+                }
+                .accessibilityHidden(true)
+            }
+            Text("\(value)")
+                .font(.system(ceremony.playsSets ? .title3 : .title2, design: .rounded).weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(tint)
+                .frame(minWidth: ceremony.playsSets ? 16 : 28, alignment: .trailing)
+        }
+        .frame(width: ceremony.playsSets ? columnWidth(total) : nil, alignment: .center)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(value) z \(total)")
     }
 
     private var continueButton: some View {
