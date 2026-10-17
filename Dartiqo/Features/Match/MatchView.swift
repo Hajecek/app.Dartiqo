@@ -298,11 +298,19 @@ struct MatchView: View {
     }
     private func live(_ game: Match) -> some View {
         let shown = game.liveProjection
+        let showThrowStrip = (!game.needsBullOff || isHoldingVisit)
+            && (game.legWinner == nil || isHoldingVisit || legCeremony != nil)
         return ScrollView {
             VStack(spacing: 14) {
                 VStack(spacing: 6) {
                     matchProgressStrip(game)
                     scoreboard(game, shown: shown)
+                    if showThrowStrip {
+                        if game.config.mode == .cricket || game.config.mode == .aroundClock {
+                            gameStrip(game, shown: shown)
+                        }
+                        currentThrowStrip(game, shown: shown)
+                    }
                     liveStatsStrip(game, shown: shown)
                     if game.tracksGhostAverage, let ghostAvg = game.ghostAverage,
                        let human = game.players.indices.first(where: { game.players[$0].botLevel == nil && !game.isGhost($0) }) {
@@ -315,8 +323,6 @@ struct MatchView: View {
                     // Ceremony overlay handles continuation; keep a quiet placeholder underneath.
                     Color.clear.frame(height: 1)
                 } else {
-                    gameStrip(game, shown: shown)
-                    currentThrowStrip(game, shown: shown)
                     if showingBotBoard {
                         let darts = stripDarts(for: game)
                         let playerIndex = holdPlayer ?? game.active
@@ -1194,7 +1200,7 @@ struct MatchView: View {
         } else {
             let darts = stripDarts(for: game)
             let guide = checkoutGuide(game, shown: shown, thrown: darts.count)
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 ForEach(0..<3, id: \.self) { i in
                     let filled = darts.count > i
                     let suggested = (!filled && guide.route.indices.contains(i - darts.count)) ? guide.route[i - darts.count] : nil
@@ -1204,13 +1210,17 @@ struct MatchView: View {
                         dart: filled ? darts[i] : nil,
                         suggestion: suggested,
                         note: note,
-                        setupLeave: suggested == nil ? nil : guide.setupLeave
+                        setupLeave: suggested == nil ? nil : guide.setupLeave,
+                        onGlass: true
                     )
                 }
             }
-            .frame(height: 88)
-            .padding(10)
-            .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .frame(height: 72)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .frame(minHeight: 36)
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Aktuální hod")
         }
@@ -1252,30 +1262,32 @@ struct MatchView: View {
     }
 
     private func totalScoreStrip(value: String, filled: Bool) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
                 Text("SOUČET KOLA")
-                    .font(AppFont.caption(11, weight: .heavy))
+                    .font(AppFont.caption(10, weight: .heavy))
                     .tracking(1.0)
-                    .foregroundStyle(MatchColors.ink.opacity(0.45))
+                    .foregroundStyle(.white.opacity(0.45))
                 Text(value)
-                    .font(AppFont.display(40, weight: .bold))
+                    .font(AppFont.display(34, weight: .bold))
                     .monospacedDigit()
-                    .foregroundStyle(filled ? MatchColors.ink : MatchColors.ink.opacity(0.28))
+                    .foregroundStyle(filled ? Color.white : Color.white.opacity(0.28))
                     .contentTransition(.numericText())
             }
             Spacer(minLength: 0)
             Image(systemName: "sum")
-                .font(.system(size: 28, weight: .bold))
+                .font(.system(size: 22, weight: .bold))
                 .foregroundStyle(Theme.brand.opacity(filled ? 1 : 0.45))
-                .frame(width: 56, height: 56)
-                .background(MatchColors.ink.opacity(0.06), in: Circle())
+                .frame(width: 44, height: 44)
+                .background(Color.white.opacity(0.10), in: Circle())
         }
-        .padding(.horizontal, 18)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
         .frame(maxWidth: .infinity)
-        .frame(height: 88)
-        .padding(10)
-        .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .frame(height: 72)
+        .frame(minHeight: 36)
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityLabel(filled ? "Součet kola \(value)" : "Součet kola")
     }
 
