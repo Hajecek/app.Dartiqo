@@ -45,7 +45,7 @@ public enum AverageScope: String, Codable, CaseIterable, Identifiable {
         case .match: return "Jeden průměr za všechny legy dohromady."
         case .leg: return "Počítá se jen rozehraná hra. Nový leg začíná od nuly."
         case .both: return "Na kartě jsou obě čísla vedle sebe."
-        case .perLeg: return "Pod tabulkou má každá hra vlastní průměr."
+        case .perLeg: return "Na kartě hráče je průměr každé hry, v jednom řádku."
         case .hidden: return "Průměr z plochy zápasu zmizí."
         }
     }

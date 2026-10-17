@@ -124,9 +124,9 @@ struct FriendPickerSheet: View {
                 }
             }
             .sheet(isPresented: $showContacts) {
-                ContactPicker { names in
-                    for name in names {
-                        if let friend = store.addFriend(name) {
+                ContactPicker { imported in
+                    for contact in imported {
+                        if let friend = store.createFriend(name: contact.name, photo: contact.photo) {
                             toggle(friend.asPicked, forceOn: true)
                         }
                     }
@@ -529,33 +529,99 @@ private extension Friend {
     var asPicked: PickedFriend { PickedFriend(id: id, name: name) }
 }
 
-/// Systémový výběr kontaktů. Aplikace nepotřebuje přístup ke všem kontaktům.
+private struct ImportedContact {
+    var name: String
+    var photo: UIImage?
+}
+
+/// Systémový výběr kontaktů. Jméno přijde z výběru; fotka se dočte jen u vybraných lidí.
 struct ContactPicker: UIViewControllerRepresentable {
-    var onPick: ([String]) -> Void
+    fileprivate var onPick: ([ImportedContact]) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick) }
 
     func makeUIViewController(context: Context) -> CNContactPickerViewController {
         let picker = CNContactPickerViewController()
         picker.delegate = context.coordinator
-        picker.displayedPropertyKeys = [CNContactGivenNameKey, CNContactFamilyNameKey, CNContactNicknameKey]
+        picker.displayedPropertyKeys = [
+            CNContactGivenNameKey,
+            CNContactFamilyNameKey,
+            CNContactNicknameKey,
+            CNContactImageDataKey,
+            CNContactThumbnailImageDataKey,
+            CNContactImageDataAvailableKey
+        ]
         return picker
     }
 
     func updateUIViewController(_ controller: CNContactPickerViewController, context: Context) {}
 
     final class Coordinator: NSObject, CNContactPickerDelegate {
-        let onPick: ([String]) -> Void
-        init(onPick: @escaping ([String]) -> Void) { self.onPick = onPick }
+        fileprivate let onPick: ([ImportedContact]) -> Void
+        fileprivate init(onPick: @escaping ([ImportedContact]) -> Void) { self.onPick = onPick }
 
         func contactPicker(_ picker: CNContactPickerViewController, didSelect contacts: [CNContact]) {
-            let names = contacts.compactMap { contact -> String? in
-                let nick = contact.nickname.trimmingCharacters(in: .whitespaces)
-                if !nick.isEmpty { return nick }
-                let full = [contact.givenName, contact.familyName].filter { !$0.isEmpty }.joined(separator: " ")
-                return full.isEmpty ? nil : full
+            let drafts = contacts.compactMap { Self.draft(from: $0) }
+            Task { @MainActor in
+                let imported = await Self.resolvePhotos(drafts)
+                self.onPick(imported)
             }
-            onPick(names)
+        }
+
+        private struct Draft {
+            var name: String
+            var identifier: String
+            var inlinePhoto: Data?
+            var imageAvailable: Bool
+        }
+
+        private static func draft(from contact: CNContact) -> Draft? {
+            let nick = contact.nickname.trimmingCharacters(in: .whitespaces)
+            let name = nick.isEmpty
+                ? [contact.givenName, contact.familyName].filter { !$0.isEmpty }.joined(separator: " ")
+                : nick
+            guard !name.isEmpty else { return nil }
+            let inline = inlinePhoto(from: contact)
+            let available = inline != nil || !contact.isKeyAvailable(CNContactImageDataAvailableKey) || contact.imageDataAvailable
+            return Draft(name: name, identifier: contact.identifier, inlinePhoto: inline, imageAvailable: available)
+        }
+
+        private static func inlinePhoto(from contact: CNContact) -> Data? {
+            if contact.isKeyAvailable(CNContactImageDataKey), let data = contact.imageData { return data }
+            if contact.isKeyAvailable(CNContactThumbnailImageDataKey), let data = contact.thumbnailImageData { return data }
+            return nil
+        }
+
+        private static func resolvePhotos(_ drafts: [Draft]) async -> [ImportedContact] {
+            let store = CNContactStore()
+            let needsPhotos = drafts.contains { $0.inlinePhoto == nil && $0.imageAvailable }
+            let mayFetch: Bool
+            if needsPhotos {
+                mayFetch = await canReadPhotos(store)
+            } else {
+                mayFetch = false
+            }
+            let keys = [CNContactImageDataKey, CNContactThumbnailImageDataKey] as [CNKeyDescriptor]
+            return drafts.map { draft in
+                var bytes = draft.inlinePhoto
+                if bytes == nil, mayFetch, draft.imageAvailable,
+                   let full = try? store.unifiedContact(withIdentifier: draft.identifier, keysToFetch: keys) {
+                    bytes = full.imageData ?? full.thumbnailImageData
+                }
+                return ImportedContact(name: draft.name, photo: bytes.flatMap(UIImage.init(data:)))
+            }
+        }
+
+        /// Výběr jména oprávnění nepotřebuje. Fotku systému vrátí až po souhlasu ke kontaktům.
+        private static func canReadPhotos(_ store: CNContactStore) async -> Bool {
+            switch CNContactStore.authorizationStatus(for: .contacts) {
+            case .authorized, .limited:
+                return true
+            case .notDetermined:
+                return (try? await store.requestAccess(for: .contacts)) ?? false
+            default:
+                return false
+            }
         }
     }
 }

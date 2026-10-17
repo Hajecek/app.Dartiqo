@@ -160,11 +160,11 @@ enum AppSection: Hashable {
         let mail = Self.normalizeEmail(email)
         if let linked = linkedProfileID,
            let existing = friends.first(where: { $0.id == linked || $0.linkedProfileID == linked }) {
-            return existing
+            return attachPhotoIfMissing(existing.id, photo: photo)
         }
         if let existing = friends.first(where: {
             $0.name.compare(clean, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
-        }) { return existing }
+        }) { return attachPhotoIfMissing(existing.id, photo: photo) }
         var friend = Friend(
             id: linkedProfileID ?? UUID(),
             owner: owner,
@@ -178,6 +178,17 @@ enum AppSection: Hashable {
         data.friends?.append(friend)
         save()
         return friend
+    }
+    /// Doplní portrét jen tam, kde ještě žádný není. Ručně zvolená fotka zůstane.
+    private func attachPhotoIfMissing(_ id: UUID, photo: UIImage?) -> Friend? {
+        guard var all = data.friends,
+              let index = all.firstIndex(where: { $0.id == id }) else { return nil }
+        if all[index].photoJPEG == nil, let photo, let jpeg = Self.jpegThumb(photo) {
+            all[index].photoJPEG = jpeg
+            data.friends = all
+            save()
+        }
+        return data.friends?.first { $0.id == id }
     }
     /// Najde jiné profily na zařízení podle jména, username nebo e-mailu.
     func findDartiqoPeople(query: String) -> [DartiqoPersonHit] {

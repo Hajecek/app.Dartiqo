@@ -49,6 +49,7 @@ private struct BoardDetailSelection: Identifiable {
     let player: Int
     var id: Int { player }
 }
+
 struct MatchView: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.dismiss) private var dismiss
@@ -117,10 +118,7 @@ struct MatchView: View {
                 if leavingHome {
                     MatchSavedSplash()
                 } else if let game = store.activeMatch {
-                    if paused && !(game.finished && !isHoldingVisit) {
-                        pauseScreen(game)
-                            .transition(.opacity)
-                    } else if game.finished && !isHoldingVisit {
+                    if game.finished && !isHoldingVisit {
                         result(game)
                             .transition(.opacity)
                     } else {
@@ -145,7 +143,7 @@ struct MatchView: View {
         .toolbarBackground(.visible, for: .navigationBar)
         .preferredColorScheme(.dark)
         .tint(.white)
-        .toolbar(leavingHome || paused || (legCeremony != nil && !ceremonyLeaving) ? .hidden : .automatic, for: .navigationBar)
+        .toolbar(leavingHome || (legCeremony != nil && !ceremonyLeaving) ? .hidden : .automatic, for: .navigationBar)
         .statusBarHidden(legCeremony != nil)
     }
     private var matchCovers: some View {
@@ -172,8 +170,14 @@ struct MatchView: View {
                 }
             }
             .sheet(isPresented: $showProgress) { progressSheet }
+            .fullScreenCover(isPresented: pauseCoverPresented) {
+                if let game = store.activeMatch {
+                    pauseScreen(game)
+                        .presentationBackground(MatchColors.background)
+                        .preferredColorScheme(.dark)
+                }
+            }
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: isHoldingVisit)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: paused)
     }
     private var matchPrompts: some View {
         matchCovers
@@ -230,8 +234,26 @@ struct MatchView: View {
         syncClock()
         lastActivity = Date()
     }
+    /// Pauza je celé okno nad zápasem. Lišta zápasu pod ním zůstává, proto při zavření nahoře neblikne.
+    private var showsPauseScreen: Bool {
+        guard paused, let game = store.activeMatch else { return false }
+        return !(game.finished && !isHoldingVisit)
+    }
+    private var pauseCoverPresented: Binding<Bool> {
+        Binding(
+            get: { showsPauseScreen },
+            set: { presented in
+                if !presented { resumeFromPause() }
+            }
+        )
+    }
+    private func showPause() {
+        guard !paused else { return }
+        paused = true
+    }
     private func resumeFromPause() {
         lastActivity = Date()
+        guard paused else { return }
         paused = false
     }
     private func seedSurface(for game: Match) {
@@ -257,7 +279,7 @@ struct MatchView: View {
             Button { showLeave = true } label: { Image(systemName: "xmark") }
                 .accessibilityLabel("Odejít ze hry")
             if store.activeMatch?.finished != true {
-                Button { paused = true } label: { Image(systemName: "pause.fill") }
+                Button { showPause() } label: { Image(systemName: "pause.fill") }
                     .accessibilityLabel("Pozastavit hru")
             }
         }
@@ -811,52 +833,63 @@ struct MatchView: View {
             || (isHoldingVisit && holdPlayer == index)
         let state = shown.states[index]
         let score = panelScore(game, shown: shown, state: state, index: index)
-        return Button {
-            statsPlayer = BoardDetailSelection(player: index)
-        } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    playerAvatar(game, index: index, size: 22)
-                    Text(player.name)
-                        .font(AppFont.body(14, weight: .semibold))
+        let chips = panelChips(game, shown: shown, index: index, fallback: score)
+        let perLeg = game.config.mode == .x01 && (store.data.matchDisplay ?? MatchDisplay()).scope == .perLeg
+        let openStats = { statsPlayer = BoardDetailSelection(player: index) }
+        return VStack(alignment: .leading, spacing: 0) {
+            Button(action: openStats) {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        playerAvatar(game, index: index, size: 22)
+                        Text(player.name)
+                            .font(AppFont.body(14, weight: .semibold))
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if player.botLevel != nil {
+                            Image(systemName: "cpu").font(AppFont.caption(11, weight: .semibold))
+                        } else if game.isGhost(index) {
+                            Image(systemName: "person.fill.viewfinder").font(AppFont.caption(11, weight: .semibold))
+                        }
+                    }
+                    if game.config.hasHandicap {
+                        Text(game.config.ruleLine(for: index))
+                            .font(AppFont.caption(11, weight: .bold))
+                            .opacity(0.65)
+                            .lineLimit(1)
+                            .accessibilityLabel("Handicap \(game.config.ruleLine(for: index))")
+                    }
+                    Text(score.headline)
+                        .font(AppFont.display(72, weight: .bold))
+                        .monospacedDigit()
+                        .minimumScaleFactor(0.5)
                         .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if player.botLevel != nil {
-                        Image(systemName: "cpu").font(AppFont.caption(11, weight: .semibold))
-                    } else if game.isGhost(index) {
-                        Image(systemName: "person.fill.viewfinder").font(AppFont.caption(11, weight: .semibold))
+                        .foregroundStyle(active ? Color.white : MatchColors.ink)
+                        .contentTransition(.numericText(value: score.headlineNumber))
+                        .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: score.headlineNumber)
+                        .frame(maxWidth: .infinity, minHeight: 80, maxHeight: 80, alignment: .leading)
+                    if !chips.isEmpty, !perLeg {
+                        panelChipRow(chips)
                     }
                 }
-                if game.config.hasHandicap {
-                    Text(game.config.ruleLine(for: index))
-                        .font(AppFont.caption(11, weight: .bold))
-                        .opacity(0.65)
-                        .lineLimit(1)
-                        .accessibilityLabel("Handicap \(game.config.ruleLine(for: index))")
-                }
-                Text(score.headline)
-                    .font(AppFont.display(72, weight: .bold))
-                    .monospacedDigit()
-                    .minimumScaleFactor(0.5)
-                    .lineLimit(1)
-                    .foregroundStyle(active ? Color.white : MatchColors.ink)
-                    .contentTransition(.numericText(value: score.headlineNumber))
-                    .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: score.headlineNumber)
-                    .frame(maxWidth: .infinity, minHeight: 80, maxHeight: 80, alignment: .leading)
-                let chips = panelChips(game, shown: shown, index: index, fallback: score)
-                if !chips.isEmpty {
-                    panelChipRow(chips)
-                }
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, perLeg && !chips.isEmpty ? 4 : 16)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .contentShape(Rectangle())
             }
-            .foregroundStyle(MatchColors.ink)
-            .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 16)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(active ? MatchColors.coral : MatchColors.amber)
+            .buttonStyle(.plain)
+            if perLeg, !chips.isEmpty {
+                perLegChipRow(chips, open: openStats)
+                    .padding(.bottom, 12)
+            }
         }
-        .buttonStyle(.plain)
+        .foregroundStyle(MatchColors.ink)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(active ? MatchColors.coral : MatchColors.amber)
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: active)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(active ? [.isSelected, .isButton] : .isButton)
+        .accessibilityAction(.default, openStats)
         .accessibilityHint("Zobrazí statistiky ze zápasu")
         .accessibilityValue(active ? "Na tahu" : "")
     }
@@ -905,6 +938,8 @@ struct MatchView: View {
         var value: String
         var number: Double
         var accessibility: String
+        var prominent = false
+        var compact = false
     }
 
     /// Čísla pod velkým skóre. U X01 záleží na volbě v nastavení zápasu.
@@ -922,13 +957,27 @@ struct MatchView: View {
         case .both:
             chips.append(averageChip(shown, player: index, leg: nil, title: "Ø", accessibility: "Průměr zápasu"))
             chips.append(averageChip(shown, player: index, leg: game.leg, title: "Leg", accessibility: "Průměr legu \(game.leg)"))
-        case .perLeg, .hidden:
+        case .perLeg:
+            let legs = Array(Set(shown.visits.map(\.leg)).union([game.leg])).sorted()
+            for leg in legs {
+                let current = leg == game.leg
+                chips.append(averageChip(
+                    shown,
+                    player: index,
+                    leg: leg,
+                    title: "\(leg)",
+                    accessibility: current ? "Průměr legu \(leg), aktuální" : "Průměr legu \(leg)",
+                    prominent: current,
+                    compact: true
+                ))
+            }
+        case .hidden:
             break
         }
         return chips
     }
 
-    private func averageChip(_ match: Match, player: Int, leg: Int?, title: String, accessibility: String) -> PanelChip {
+    private func averageChip(_ match: Match, player: Int, leg: Int?, title: String, accessibility: String, prominent: Bool = false, compact: Bool = false) -> PanelChip {
         let darts = match.thrownDarts(for: player, leg: leg)
         let average = match.average(for: player, leg: leg)
         let text = darts == 0 ? "—" : String(format: "%.1f", average)
@@ -937,7 +986,9 @@ struct MatchView: View {
             title: title,
             value: text,
             number: average,
-            accessibility: darts == 0 ? "\(accessibility) zatím není" : "\(accessibility) \(text)"
+            accessibility: darts == 0 ? "\(accessibility) zatím není" : "\(accessibility) \(text)",
+            prominent: prominent,
+            compact: compact
         )
     }
 
@@ -948,19 +999,42 @@ struct MatchView: View {
         }
     }
 
+    /// Rozehraný leg je první a zvýrazněný. Ostatní jsou vedle něj a řádek se posouvá do strany.
+    private func perLegChipRow(_ chips: [PanelChip], open: @escaping () -> Void) -> some View {
+        let current = chips.last(where: \.prominent) ?? chips.last
+        var ordered: [PanelChip] = []
+        if let current { ordered.append(current) }
+        ordered.append(contentsOf: chips.filter { $0.id != current?.id })
+        return ScrollView(.horizontal) {
+            HStack(spacing: 4) {
+                ForEach(ordered) { item in
+                    Button(action: open) { panelChip(item) }
+                        .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+        }
+        .scrollIndicators(.hidden)
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func panelChip(_ chip: PanelChip) -> some View {
         HStack(spacing: 4) {
-            Text(chip.title).font(AppFont.caption(12, weight: .heavy)).opacity(0.6)
+            Text(chip.title)
+                .font(AppFont.caption(chip.compact ? 11 : 12, weight: .heavy))
+                .opacity(chip.prominent ? 0.9 : 0.6)
             Text(chip.value)
-                .font(AppFont.body(15, weight: .bold))
+                .font(AppFont.body(chip.compact ? 14 : 15, weight: .bold))
                 .monospacedDigit()
                 .contentTransition(.numericText(value: chip.number))
                 .minimumScaleFactor(0.7)
                 .lineLimit(1)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 4)
-        .background(MatchColors.ink.opacity(0.12), in: Capsule())
+        .padding(.horizontal, chip.compact ? 7 : 10)
+        .padding(.vertical, chip.compact ? 3 : 4)
+        .background(MatchColors.ink.opacity(chip.prominent ? 0.22 : 0.12), in: Capsule())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(chip.accessibility)
     }
@@ -968,73 +1042,17 @@ struct MatchView: View {
     private func liveStatsNeedRoom(_ game: Match) -> Bool {
         guard game.config.mode == .x01 else { return false }
         let display = store.data.matchDisplay ?? MatchDisplay()
-        return display.scope == .perLeg || display.showsExtraNumbers
+        return display.showsExtraNumbers
     }
 
     @ViewBuilder
     private func liveStatsStrip(_ game: Match, shown: Match) -> some View {
         if liveStatsNeedRoom(game) {
             let display = store.data.matchDisplay ?? MatchDisplay()
-            VStack(alignment: .leading, spacing: 10) {
-                if display.scope == .perLeg {
-                    legAverageBoard(game, shown: shown)
-                }
-                if display.showsExtraNumbers {
-                    extraNumberRows(game, shown: shown, display: display)
-                }
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        }
-    }
-
-    private func legAverageBoard(_ game: Match, shown: Match) -> some View {
-        let legs = Array(Set(shown.visits.map(\.leg)).union([game.leg])).sorted()
-        return VStack(alignment: .leading, spacing: 8) {
-            Text("PRŮMĚR KAŽDÉ HRY")
-                .font(AppFont.caption(11, weight: .heavy))
-                .tracking(1.1)
-                .foregroundStyle(.white.opacity(0.45))
-            ScrollView(.horizontal) {
-                Grid(alignment: .leading, horizontalSpacing: 6, verticalSpacing: 6) {
-                    GridRow {
-                        Color.clear.frame(width: 72, height: 1)
-                        ForEach(legs, id: \.self) { leg in
-                            Text("\(leg)")
-                                .font(AppFont.caption(11, weight: .bold))
-                                .foregroundStyle(leg == game.leg ? MatchColors.green : .white.opacity(0.45))
-                                .frame(minWidth: 48)
-                                .accessibilityLabel("Leg \(leg)")
-                        }
-                    }
-                    ForEach(game.players.indices, id: \.self) { index in
-                        GridRow {
-                            Text(game.players[index].name)
-                                .font(AppFont.caption(12, weight: .semibold))
-                                .foregroundStyle(.white.opacity(0.85))
-                                .lineLimit(1)
-                                .frame(width: 72, alignment: .leading)
-                            ForEach(legs, id: \.self) { leg in
-                                let darts = shown.thrownDarts(for: index, leg: leg)
-                                let text = darts == 0 ? "—" : String(format: "%.1f", shown.average(for: index, leg: leg))
-                                Text(text)
-                                    .font(AppFont.body(15, weight: .bold))
-                                    .monospacedDigit()
-                                    .foregroundStyle(leg == game.leg ? MatchColors.green : .white)
-                                    .frame(minWidth: 48)
-                                    .padding(.vertical, 4)
-                                    .background(
-                                        leg == game.leg ? MatchColors.green.opacity(0.16) : Color.white.opacity(0.05),
-                                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    )
-                                    .accessibilityLabel(darts == 0 ? "\(game.players[index].name), leg \(leg), bez šipek" : "\(game.players[index].name), leg \(leg), průměr \(text)")
-                            }
-                        }
-                    }
-                }
-            }
-            .scrollIndicators(.hidden)
+            extraNumberRows(game, shown: shown, display: display)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
     }
 
@@ -2703,7 +2721,7 @@ struct MatchView: View {
         guard shouldWatchIdle else { return }
         while !Task.isCancelled && shouldWatchIdle {
             if Date().timeIntervalSince(lastActivity) >= idlePauseAfter {
-                paused = true
+                showPause()
                 return
             }
             try? await Task.sleep(nanoseconds: 1_000_000_000)

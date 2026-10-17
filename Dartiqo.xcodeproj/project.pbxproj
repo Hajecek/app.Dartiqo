@@ -378,6 +378,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Dartiqo;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.sports";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Dartiqo potřebuje kameru ke kalibraci terče a automatickému zápisu skóre.";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Dartiqo zkopíruje fotku vybraného kontaktu jako portrét kamaráda.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Odemkni svůj hráčský profil pomocí Face ID.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Dartiqo potřebuje mikrofon pro hlasový zápis skóre v češtině.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Dartiqo převádí tvoji řeč na šipky nebo součet kola.";
@@ -416,6 +417,7 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Dartiqo;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.sports";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Dartiqo potřebuje kameru ke kalibraci terče a automatickému zápisu skóre.";
+				INFOPLIST_KEY_NSContactsUsageDescription = "Dartiqo zkopíruje fotku vybraného kontaktu jako portrét kamaráda.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Odemkni svůj hráčský profil pomocí Face ID.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Dartiqo potřebuje mikrofon pro hlasový zápis skóre v češtině.";
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Dartiqo převádí tvoji řeč na šipky nebo součet kola.";
