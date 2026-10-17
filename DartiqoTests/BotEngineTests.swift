@@ -336,6 +336,47 @@ final class BotEngineTests: XCTestCase {
         XCTAssertNotEqual(left.tripleSigma, right.tripleSigma)
     }
 
+    func testCustomBotKeepsRequestedAverageAndCheckout() {
+        let level = BotDifficulty.level(10)
+        let matched = BotProfile.custom(average: level.targetAverage, checkout: level.targetDoubleHit)
+        XCTAssertEqual(matched.tripleSigma, level.tripleSigma, accuracy: 0.0001)
+        XCTAssertEqual(matched.doubleSigma, level.doubleSigma, accuracy: 0.0001)
+        XCTAssertEqual(BotDifficulty.nearestLevel(forAverage: 17.5), 1)
+        XCTAssertEqual(BotDifficulty.nearestLevel(forAverage: 112.5), 20)
+
+        let soft = BotProfile.custom(average: 40, checkout: 0.10)
+        let hard = BotProfile.custom(average: 90, checkout: 0.40)
+        XCTAssertEqual(soft.targetAverage, 40, accuracy: 0.01)
+        XCTAssertEqual(soft.targetDoubleHit, 0.10, accuracy: 0.001)
+        XCTAssertLessThan(hard.tripleSigma, soft.tripleSigma)
+        XCTAssertLessThan(hard.doubleSigma, soft.doubleSigma)
+
+        let plain = BotProfile.custom(average: 70, checkout: 0.25, style: .balanced)
+        let finisher = BotProfile.custom(average: 70, checkout: 0.25, style: .checkoutSpecialist)
+        let calm = BotProfile.custom(average: 70, checkout: 0.25, style: .consistent)
+        let wild = BotProfile.custom(average: 70, checkout: 0.25, style: .unpredictable)
+        XCTAssertEqual(finisher.tripleSigma, plain.tripleSigma, accuracy: 0.0001)
+        XCTAssertEqual(finisher.doubleSigma, plain.doubleSigma, accuracy: 0.0001)
+        XCTAssertGreaterThan(finisher.checkoutIntelligence, plain.checkoutIntelligence)
+        XCTAssertNotEqual(finisher.preferredDoubles, plain.preferredDoubles)
+        XCTAssertGreaterThan(calm.consistency, wild.consistency)
+
+        let player = Player(name: "Karel", botLevel: 8, botStyle: .tactical, botAverage: 55, botCheckout: 0.2)
+        let fromPlayer = BotProfile.from(player: player)
+        XCTAssertEqual(fromPlayer.targetAverage, 55, accuracy: 0.01)
+        XCTAssertEqual(fromPlayer.targetDoubleHit, 0.2, accuracy: 0.001)
+        XCTAssertEqual(fromPlayer.style, .tactical)
+        XCTAssertEqual(fromPlayer.name, "Karel")
+
+        let mortal = BotProfile.custom(average: 80, checkout: 0.52)
+        let closer = BotProfile.custom(average: 80, checkout: 1, consistency: 0.95, pressure: 0.1, intelligence: 0.2)
+        XCTAssertLessThan(closer.doubleSigma, mortal.doubleSigma)
+        XCTAssertLessThan(closer.doubleSigma, 0.006)
+        XCTAssertEqual(closer.consistency, 0.95, accuracy: 0.001)
+        XCTAssertEqual(closer.pressureResistance, 0.1, accuracy: 0.001)
+        XCTAssertEqual(closer.checkoutIntelligence, 0.2, accuracy: 0.001)
+    }
+
     func testAdaptiveMapsAveragesAndDoesNotScriptAWin() {
         XCTAssertEqual(AdaptiveBotEngine.level(forThreeDartAverage: 17.5), 1)
         XCTAssertEqual(AdaptiveBotEngine.level(forThreeDartAverage: 62.5), 10)

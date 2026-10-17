@@ -40,11 +40,62 @@ public struct BotChoice: Equatable {
     public var level: Int
     public var style: BotPlayingStyle
     public var adaptive: Bool
-    public init(level: Int, style: BotPlayingStyle = .balanced, adaptive: Bool = false) {
+    /// Cílový tříšipkový průměr vlastního bota. Spolu s `customCheckout` zapne vlastní profil.
+    public var customAverage: Double?
+    /// Cílová úspěšnost mířeného double, 0…1.
+    public var customCheckout: Double?
+    public var customName: String?
+    /// 0…1. `nil` nechá stabilitu ze stylu a průměru.
+    public var customConsistency: Double?
+    public var customPressure: Double?
+    public var customIntelligence: Double?
+    public var isCustom: Bool { customAverage != nil && customCheckout != nil }
+
+    public init(
+        level: Int,
+        style: BotPlayingStyle = .balanced,
+        adaptive: Bool = false,
+        customAverage: Double? = nil,
+        customCheckout: Double? = nil,
+        customName: String? = nil,
+        customConsistency: Double? = nil,
+        customPressure: Double? = nil,
+        customIntelligence: Double? = nil
+    ) {
         self.level = min(BotDifficulty.count, max(1, level))
         self.style = style
         self.adaptive = adaptive
+        if let customAverage, let customCheckout {
+            self.customAverage = min(BotDifficulty.maximumAverage, max(BotDifficulty.minimumAverage, customAverage))
+            self.customCheckout = min(BotDifficulty.maximumCheckout, max(BotDifficulty.minimumCheckout, customCheckout))
+            self.customName = SeatDraft.customBotName(customName)
+            self.customConsistency = customConsistency.map { min(1, max(0, $0)) }
+            self.customPressure = customPressure.map { min(1, max(0, $0)) }
+            self.customIntelligence = customIntelligence.map { min(1, max(0, $0)) }
+            self.adaptive = false
+            self.level = BotDifficulty.nearestLevel(forAverage: self.customAverage ?? customAverage)
+        } else {
+            self.customAverage = nil
+            self.customCheckout = nil
+            self.customName = nil
+            self.customConsistency = nil
+            self.customPressure = nil
+            self.customIntelligence = nil
+        }
     }
+}
+
+/// Soupeř tak, jak nastoupí. Vlastní průměr a double mají přednost před Adaptive AI.
+public struct ResolvedBot: Equatable {
+    public var level: Int
+    public var adaptive: Bool
+    public var style: BotPlayingStyle
+    public var average: Double?
+    public var checkout: Double?
+    public var consistency: Double?
+    public var pressure: Double?
+    public var intelligence: Double?
+    public var isCustom: Bool { average != nil && checkout != nil }
 }
 
 /// Individuální bot. Přesnost je rozptyl hodu, ne předem dané skóre návštěvy.
@@ -95,49 +146,158 @@ public struct BotProfile: Identifiable, Equatable {
     /// `identity` 0 je čistá úroveň. Jinak dva boti stejné úrovně dostanou mírně jiné rozptyly a doubly.
     public static func make(level: Int, style: BotPlayingStyle = .balanced, identity: UInt64 = 0) -> BotProfile {
         let spec = BotDifficulty.level(level)
-        var triple = spec.tripleSigma
-        var double = spec.doubleSigma
-        var single = spec.singleSigma
-        var bull = spec.bullSigma
-        var consistency = spec.consistency
-        var intelligence = spec.intelligence
-        var pressure = spec.pressureResistance
-        var scoring = Dart(20, 3)
-        var doubles = standardDoubles
+        let tuned = shape(
+            Knobs(
+                triple: spec.tripleSigma,
+                double: spec.doubleSigma,
+                single: spec.singleSigma,
+                bull: spec.bullSigma,
+                consistency: spec.consistency,
+                intelligence: spec.intelligence,
+                pressure: spec.pressureResistance,
+                scoring: Dart(20, 3),
+                doubles: standardDoubles
+            ),
+            style: style,
+            identity: identity,
+            lockAccuracy: false
+        )
+        return assemble(
+            id: "\(spec.level)-\(style.rawValue)-\(identity)",
+            name: spec.persona,
+            level: spec.level,
+            style: style,
+            average: spec.targetAverage,
+            checkout: spec.targetDoubleHit,
+            knobs: tuned
+        )
+    }
+
+    /// Vlastní soupeř. Průměr řídí skórovací rozptyl, double řídí zavírání. Styl k tomu přidá způsob hry a čísla neposouvá.
+    public static func custom(
+        average: Double,
+        checkout: Double,
+        style: BotPlayingStyle = .balanced,
+        name: String = "Vlastní",
+        consistency: Double? = nil,
+        pressure: Double? = nil,
+        intelligence: Double? = nil
+    ) -> BotProfile {
+        let average = min(BotDifficulty.maximumAverage, max(BotDifficulty.minimumAverage, average))
+        let checkout = min(BotDifficulty.maximumCheckout, max(BotDifficulty.minimumCheckout, checkout))
+        let scoring = BotDifficulty.blend(at: BotDifficulty.index(forAverage: average))
+        let finishing = BotDifficulty.finishingSpread(forCheckout: checkout)
+        var tuned = shape(
+            Knobs(
+                triple: scoring.tripleSigma,
+                double: finishing.doubleSigma,
+                single: scoring.tripleSigma,
+                bull: finishing.bullSigma,
+                consistency: scoring.consistency,
+                intelligence: scoring.intelligence,
+                pressure: scoring.pressureResistance,
+                scoring: Dart(20, 3),
+                doubles: standardDoubles
+            ),
+            style: style,
+            identity: 0,
+            lockAccuracy: true
+        )
+        if let consistency { tuned.consistency = min(1, max(0, consistency)) }
+        if let pressure { tuned.pressure = min(1, max(0, pressure)) }
+        if let intelligence { tuned.intelligence = min(1, max(0, intelligence)) }
+        return assemble(
+            id: "custom-\(style.rawValue)",
+            name: name,
+            level: BotDifficulty.nearestLevel(forAverage: average),
+            style: style,
+            average: average,
+            checkout: checkout,
+            knobs: tuned
+        )
+    }
+
+    public static func from(player: Player) -> BotProfile {
+        let style = player.botStyle ?? .balanced
+        if let average = player.botAverage, let checkout = player.botCheckout {
+            return custom(
+                average: average,
+                checkout: checkout,
+                style: style,
+                name: player.name,
+                consistency: player.botConsistency,
+                pressure: player.botPressure,
+                intelligence: player.botIntelligence
+            )
+        }
+        guard let level = player.botLevel else { return reference(level: 1) }
+        let identity = player.id.uuidString.utf8.reduce(UInt64(1469598103934665603)) { ($0 ^ UInt64($1)) &* 1099511628211 }
+        return make(level: level, style: style, identity: identity)
+    }
+
+    private struct Knobs {
+        var triple: Double
+        var double: Double
+        var single: Double
+        var bull: Double
+        var consistency: Double
+        var intelligence: Double
+        var pressure: Double
+        var scoring: Dart
+        var doubles: [Int]
+    }
+
+    /// `lockAccuracy` nechá průměr a double na nastavených číslech. Styl pořád mění výkyvy, hlavu a oblíbená pole.
+    private static func shape(_ base: Knobs, style: BotPlayingStyle, identity: UInt64, lockAccuracy: Bool) -> Knobs {
+        var triple = base.triple
+        var double = base.double
+        var single = base.single
+        var bull = base.bull
+        var consistency = base.consistency
+        var intelligence = base.intelligence
+        let pressure = base.pressure
+        var scoring = base.scoring
+        var doubles = base.doubles
 
         switch style {
         case .balanced:
             break
         case .scoringSpecialist:
-            triple *= 0.90
-            single *= 0.92
-            double *= 1.20
-            bull *= 1.12
+            if !lockAccuracy {
+                triple *= 0.90
+                single *= 0.92
+                double *= 1.20
+                bull *= 1.12
+            }
             intelligence *= 0.92
         case .checkoutSpecialist:
-            triple *= 1.16
-            single *= 1.08
-            double *= 0.82
-            bull *= 0.86
+            if !lockAccuracy {
+                triple *= 1.16
+                single *= 1.08
+                double *= 0.82
+                bull *= 0.86
+            }
             intelligence = min(0.98, intelligence + 0.08)
             doubles = [16, 20, 8, 10, 4, 2, 12, 18, 6, 14, 5, 9, 11, 13, 15, 17, 19, 7, 3, 1]
         case .consistent:
             consistency = min(0.97, consistency + 0.18)
         case .aggressive:
-            triple *= 0.94
+            if !lockAccuracy { triple *= 0.94 }
             intelligence *= 0.82
             scoring = Dart(20, 3)
         case .tactical:
             intelligence = min(0.98, intelligence + 0.12)
-            triple *= 1.04
+            if !lockAccuracy { triple *= 1.04 }
             doubles = [20, 16, 18, 10, 8, 4, 2, 12, 6, 14, 5, 9, 11, 13, 15, 17, 19, 7, 3, 1]
         case .unpredictable:
             consistency = max(0.12, consistency - 0.30)
-            triple *= 1.04
-            double *= 1.05
+            if !lockAccuracy {
+                triple *= 1.04
+                double *= 1.05
+            }
         }
 
-        if identity != 0 {
+        if identity != 0 && !lockAccuracy {
             var rng = BotRNG(seed: identity)
             let tilt = 0.94 + Double.random(in: 0..<0.12, using: &rng)
             triple *= tilt
@@ -153,39 +313,55 @@ public struct BotProfile: Identifiable, Equatable {
             }
         }
 
-        let aim = triple * BotThrowModel.aimShare
-        return BotProfile(
-            id: "\(spec.level)-\(style.rawValue)-\(identity)",
-            name: spec.persona,
-            level: spec.level,
-            style: style,
-            targetAverage: spec.targetAverage,
-            targetDoubleHit: spec.targetDoubleHit,
-            scoringAccuracy: spec.targetDoubleHit,
-            tripleAccuracy: spec.targetDoubleHit,
-            doubleAccuracy: spec.targetDoubleHit,
-            bullAccuracy: spec.targetDoubleHit * 0.72,
-            horizontalDispersion: triple * BotThrowModel.horizontalScale,
-            verticalDispersion: triple * BotThrowModel.verticalScale,
+        return Knobs(
+            triple: triple,
+            double: double,
+            single: single,
+            bull: bull,
             consistency: consistency,
-            checkoutIntelligence: intelligence,
-            pressureResistance: pressure,
-            aimError: aim,
-            preferredScoringTarget: scoring,
-            preferredDoubles: doubles,
-            tripleSigma: triple,
-            doubleSigma: double,
-            singleSigma: single,
-            bullSigma: bull,
-            horizontalScale: BotThrowModel.horizontalScale,
-            verticalScale: BotThrowModel.verticalScale
+            intelligence: intelligence,
+            pressure: pressure,
+            scoring: scoring,
+            doubles: doubles
         )
     }
 
-    public static func from(player: Player) -> BotProfile {
-        guard let level = player.botLevel else { return reference(level: 1) }
-        let identity = player.id.uuidString.utf8.reduce(UInt64(1469598103934665603)) { ($0 ^ UInt64($1)) &* 1099511628211 }
-        return make(level: level, style: player.botStyle ?? .balanced, identity: identity)
+    private static func assemble(
+        id: String,
+        name: String,
+        level: Int,
+        style: BotPlayingStyle,
+        average: Double,
+        checkout: Double,
+        knobs: Knobs
+    ) -> BotProfile {
+        let aim = knobs.triple * BotThrowModel.aimShare
+        return BotProfile(
+            id: id,
+            name: name,
+            level: level,
+            style: style,
+            targetAverage: average,
+            targetDoubleHit: checkout,
+            scoringAccuracy: checkout,
+            tripleAccuracy: checkout,
+            doubleAccuracy: checkout,
+            bullAccuracy: checkout * 0.72,
+            horizontalDispersion: knobs.triple * BotThrowModel.horizontalScale,
+            verticalDispersion: knobs.triple * BotThrowModel.verticalScale,
+            consistency: knobs.consistency,
+            checkoutIntelligence: knobs.intelligence,
+            pressureResistance: knobs.pressure,
+            aimError: aim,
+            preferredScoringTarget: knobs.scoring,
+            preferredDoubles: knobs.doubles,
+            tripleSigma: knobs.triple,
+            doubleSigma: knobs.double,
+            singleSigma: knobs.single,
+            bullSigma: knobs.bull,
+            horizontalScale: BotThrowModel.horizontalScale,
+            verticalScale: BotThrowModel.verticalScale
+        )
     }
 }
 

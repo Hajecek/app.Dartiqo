@@ -91,6 +91,14 @@ public struct SeatDraft: Codable, Identifiable, Equatable {
     public var botStyle: BotPlayingStyle?
     /// Adaptive AI. Úroveň v `level` je záloha, když je adaptace vypnutá.
     public var adaptiveBot: Bool?
+    /// Vlastní tříšipkový průměr. Spolu s `customCheckout` jde o vlastního bota.
+    public var customAverage: Double?
+    /// Vlastní úspěšnost mířeného double, 0…1. Může být až 1.
+    public var customCheckout: Double?
+    /// Vlastní stabilita, nervy a taktika, 0…1. `nil` nechá odvození z průměru a stylu.
+    public var customConsistency: Double?
+    public var customPressure: Double?
+    public var customIntelligence: Double?
     public init(name: String, isBot: Bool = false, level: Int = 3, friendID: UUID? = nil, isGhost: Bool = false, botStyle: BotPlayingStyle? = nil, adaptiveBot: Bool = false) {
         self.name = name; self.isBot = isBot; self.level = level; self.friendID = friendID
         self.isGhost = isGhost ? true : nil
@@ -98,6 +106,58 @@ public struct SeatDraft: Codable, Identifiable, Equatable {
         self.adaptiveBot = adaptiveBot ? true : nil
     }
     public var ghostSeat: Bool { isGhost == true }
+
+    /// Prázdné jméno a zástupný název „Bot“ se u vlastního soupeře ukážou jako Vlastní.
+    public static func customBotName(_ raw: String?) -> String {
+        let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if trimmed.isEmpty || trimmed.compare("Bot", options: .caseInsensitive) == .orderedSame {
+            return "Vlastní"
+        }
+        return String(trimmed.prefix(24))
+    }
+
+    public func resolve(adaptiveAllowed: Bool, suggestedLevel: Int) -> ResolvedBot {
+        let style = botStyle ?? .balanced
+        if let customAverage, let customCheckout {
+            let average = min(BotDifficulty.maximumAverage, max(BotDifficulty.minimumAverage, customAverage))
+            let checkout = min(BotDifficulty.maximumCheckout, max(BotDifficulty.minimumCheckout, customCheckout))
+            return ResolvedBot(
+                level: BotDifficulty.nearestLevel(forAverage: average),
+                adaptive: false,
+                style: style,
+                average: average,
+                checkout: checkout,
+                consistency: customConsistency.map { min(1, max(0, $0)) },
+                pressure: customPressure.map { min(1, max(0, $0)) },
+                intelligence: customIntelligence.map { min(1, max(0, $0)) }
+            )
+        }
+        let adaptive = adaptiveBot == true && adaptiveAllowed
+        let resolvedLevel = adaptive
+            ? min(BotDifficulty.count, max(1, suggestedLevel))
+            : min(BotDifficulty.count, max(1, level))
+        return ResolvedBot(level: resolvedLevel, adaptive: adaptive, style: style, average: nil, checkout: nil)
+    }
+
+    public func botTitle(earlier: ArraySlice<SeatDraft>, adaptiveAllowed: Bool, suggestedLevel: Int) -> String {
+        let mine = resolve(adaptiveAllowed: adaptiveAllowed, suggestedLevel: suggestedLevel)
+        if mine.isCustom {
+            let base = Self.customBotName(name)
+            let copies = earlier.filter { other in
+                guard other.isBot else { return false }
+                let resolved = other.resolve(adaptiveAllowed: adaptiveAllowed, suggestedLevel: suggestedLevel)
+                return resolved.isCustom && Self.customBotName(other.name) == base
+            }.count
+            return copies == 0 ? base : "\(base) \(copies + 1)"
+        }
+        let persona = BotLevel.get(mine.level).persona
+        let copies = earlier.filter { other in
+            guard other.isBot else { return false }
+            let resolved = other.resolve(adaptiveAllowed: adaptiveAllowed, suggestedLevel: suggestedLevel)
+            return !resolved.isCustom && resolved.level == mine.level
+        }.count
+        return copies == 0 ? persona : "\(persona) \(copies + 1)"
+    }
 }
 public struct SetupDraft: Codable, Equatable {
     public var config = GameConfig()

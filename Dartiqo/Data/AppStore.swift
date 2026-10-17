@@ -346,7 +346,12 @@ enum AppSection: Hashable {
                     name: name,
                     botLevel: seat.isBot ? resolved.level : nil,
                     botStyle: seat.isBot ? resolved.style : nil,
-                    adaptiveBot: seat.isBot && resolved.adaptive ? true : nil
+                    adaptiveBot: seat.isBot && resolved.adaptive ? true : nil,
+                    botAverage: seat.isBot ? resolved.average : nil,
+                    botCheckout: seat.isBot ? resolved.checkout : nil,
+                    botConsistency: seat.isBot ? resolved.consistency : nil,
+                    botPressure: seat.isBot ? resolved.pressure : nil,
+                    botIntelligence: seat.isBot ? resolved.intelligence : nil
                 ))
             }
         }
@@ -386,20 +391,17 @@ enum AppSection: Hashable {
         return true
     }
 
-    private func resolvedBot(_ seat: SeatDraft) -> (level: Int, adaptive: Bool, style: BotPlayingStyle) {
-        let style = seat.botStyle ?? .balanced
-        let adaptive = seat.adaptiveBot == true && data.adaptiveAI != false
-        if adaptive, let id = profile?.id {
-            return (AdaptiveBotEngine.recommendedLevel(matches: matches, playerID: id), true, style)
-        }
-        return (min(BotDifficulty.count, max(1, seat.level)), false, style)
+    private func suggestedBotLevel() -> Int {
+        guard let id = profile?.id else { return AdaptiveBotEngine.fallbackLevel }
+        return AdaptiveBotEngine.recommendedLevel(matches: matches, playerID: id)
+    }
+
+    private func resolvedBot(_ seat: SeatDraft) -> ResolvedBot {
+        seat.resolve(adaptiveAllowed: data.adaptiveAI != false, suggestedLevel: suggestedBotLevel())
     }
 
     private func botPersona(_ seat: SeatDraft, before index: Int, in seats: [SeatDraft]) -> String {
-        let level = resolvedBot(seat).level
-        let persona = BotLevel.get(level).persona
-        let same = seats[..<index].filter { $0.isBot && resolvedBot($0).level == level }.count
-        return same == 0 ? persona : "\(persona) \(same + 1)"
+        seat.botTitle(earlier: seats[..<index], adaptiveAllowed: data.adaptiveAI != false, suggestedLevel: suggestedBotLevel())
     }
     var xp: Int {
         guard let id = profile?.id else { return 0 }

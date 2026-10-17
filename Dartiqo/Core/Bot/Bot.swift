@@ -5,8 +5,8 @@ public struct BotLevel: Identifiable {
     public let name: String
     public let persona: String
     public let nickname: String
-    /// Portrét. Úrovně 11–20 sdílejí deset existujících fotek.
-    public var photo: String { "BotLevel\(((id - 1) % 10) + 1)" }
+    /// Vlastní portrét zepředu, po ramena. Každá úroveň má jinou fotku.
+    public var photo: String { "BotLevel\(id)" }
 
     public static let all: [BotLevel] = BotDifficulty.levels.map {
         BotLevel(id: $0.level, name: $0.name, persona: $0.persona, nickname: $0.nickname)

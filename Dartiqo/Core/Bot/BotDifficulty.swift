@@ -32,6 +32,81 @@ public enum BotDifficulty {
         public var verticalDispersion: Double { tripleSigma * BotThrowModel.verticalScale }
     }
 
+    public static let minimumAverage = 17.5
+    public static let maximumAverage = 112.5
+    public static let minimumCheckout = 0.02
+    /// Vlastní bot může mířit na double skoro pokaždé. Tabulka úrovní končí níž.
+    public static let maximumCheckout = 1.0
+
+    /// Úroveň, jejíž kalibrovaný průměr je nastavené hodnotě nejblíž. Slouží portrétu a srovnání.
+    public static func nearestLevel(forAverage average: Double) -> Int {
+        Int(index(forAverage: average).rounded()) + 1
+    }
+
+    static func index(forAverage average: Double) -> Double {
+        let clamped = min(maximumAverage, max(minimumAverage, average))
+        return (clamped - minimumAverage) / 5
+    }
+
+    static func index(forCheckout rate: Double) -> Double {
+        let values = levels.map(\.targetDoubleHit)
+        let clamped = min(values[count - 1], max(values[0], rate))
+        if clamped >= values[count - 1] { return Double(count - 1) }
+        for i in 0..<(count - 1) {
+            let lo = values[i]
+            let hi = values[i + 1]
+            if clamped <= hi {
+                let span = hi - lo
+                return Double(i) + (span == 0 ? 0 : (clamped - lo) / span)
+            }
+        }
+        return Double(count - 1)
+    }
+
+    struct Blend {
+        var tripleSigma: Double
+        var doubleSigma: Double
+        var bullSigma: Double
+        var consistency: Double
+        var intelligence: Double
+        var pressureResistance: Double
+        var throwSeconds: Double
+    }
+
+    /// Rozptyl double. Do tabulky úrovní se bere kalibrace, nad ni klesá až k téměř jistému zásahu.
+    static func finishingSpread(forCheckout rate: Double) -> (doubleSigma: Double, bullSigma: Double) {
+        let cap = levels[count - 1].targetDoubleHit
+        let clamped = min(maximumCheckout, max(minimumCheckout, rate))
+        if clamped <= cap {
+            let sample = blend(at: index(forCheckout: clamped))
+            return (sample.doubleSigma, sample.bullSigma)
+        }
+        let start = levels[count - 1].doubleSigma
+        let floor = 0.0045
+        let t = (clamped - cap) / (1 - cap)
+        let sigma = exp(log(start) * (1 - t) + log(floor) * t)
+        return (sigma, sigma * 1.08)
+    }
+
+    static func blend(at index: Double) -> Blend {
+        let clamped = min(Double(count - 1), max(0, index))
+        let lo = Int(clamped.rounded(.down))
+        let hi = min(count - 1, lo + 1)
+        let t = clamped - Double(lo)
+        let a = levels[lo]
+        let b = levels[hi]
+        func mix(_ x: Double, _ y: Double) -> Double { x * (1 - t) + y * t }
+        return Blend(
+            tripleSigma: mix(a.tripleSigma, b.tripleSigma),
+            doubleSigma: mix(a.doubleSigma, b.doubleSigma),
+            bullSigma: mix(a.bullSigma, b.bullSigma),
+            consistency: mix(a.consistency, b.consistency),
+            intelligence: mix(a.intelligence, b.intelligence),
+            pressureResistance: mix(a.pressureResistance, b.pressureResistance),
+            throwSeconds: mix(a.throwSeconds, b.throwSeconds)
+        )
+    }
+
     public static func level(_ value: Int) -> Level {
         levels[min(count - 1, max(0, value - 1))]
     }
@@ -45,15 +120,15 @@ public enum BotDifficulty {
         ]
         let personas = [
             "Pepa Mráz", "Jana Malá", "Franta Beran", "Lucie Dvořáková", "Honza Kos",
-            "Peter Wrighton", "Gerwin Pryce", "Gary Andersen", "Luke Litler", "Phil Tayler",
-            "Marek Holý", "Tereza Nováková", "Adam Říha", "Eva Šťastná", "Filip Král",
-            "Nina Horáková", "Tomáš Sedlák", "Klára Veselá", "Ondřej Malý", "Viktor Hájek"
+            "Fallon Sherrok", "Mensur Suljovicz", "Dimitri van den Berg", "Jonny Claytom", "Dave Chisnell",
+            "Nathan Aspinell", "Rob Crosse", "Gerwyn Pryce", "Peter Wryght", "Gary Andersom",
+            "Michael Smyth", "Luke Humphrie", "Luke Littlar", "Michael van Gerwyn", "Phil Tayler"
         ]
         let nicknames = [
             "Kapsa", "Jednička", "Pivko", "Double", "Plamen",
-            "Snakebyte", "Ice-Man", "Flying Skot", "Nukeboy", "Powerhouse",
-            "Klín", "Treble", "Drát", "Osmnáctka", "Ocel",
-            "Sto", "Devítka", "Centrum", "Koruna", "Legenda"
+            "Palác", "Gentle", "Dreamaker", "Feret", "Chizy",
+            "Asp", "Voltage", "Iceman", "Snakebyt", "Flying Scot",
+            "Bullyboy", "Cool Hand", "Nuke", "Mighty Mik", "The Powr"
         ]
         let doubles = [0.02, 0.03, 0.04, 0.06, 0.08, 0.10, 0.12, 0.15, 0.18, 0.21, 0.24, 0.27, 0.30, 0.33, 0.36, 0.39, 0.42, 0.45, 0.48, 0.52]
         // Monotónní rozptyl. Vyšší úroveň má vždy menší sigma, ať síla na T20 roste.

@@ -94,12 +94,25 @@ public struct Player: Codable, Identifiable, Equatable {
     public var botStyle: BotPlayingStyle?
     /// Úroveň se před zápasem zvolila podle hráče a v jeho průběhu se nemění.
     public var adaptiveBot: Bool?
-    public init(id: UUID = UUID(), name: String, botLevel: Int? = nil, botStyle: BotPlayingStyle? = nil, adaptiveBot: Bool? = nil) {
+    /// Vlastní tříšipkový průměr. Spolu s `botCheckout` přebije tabulku úrovní.
+    public var botAverage: Double?
+    /// Vlastní úspěšnost mířeného double, 0…1.
+    public var botCheckout: Double?
+    /// Vlastní stabilita, nervy a taktika, 0…1.
+    public var botConsistency: Double?
+    public var botPressure: Double?
+    public var botIntelligence: Double?
+    public init(id: UUID = UUID(), name: String, botLevel: Int? = nil, botStyle: BotPlayingStyle? = nil, adaptiveBot: Bool? = nil, botAverage: Double? = nil, botCheckout: Double? = nil, botConsistency: Double? = nil, botPressure: Double? = nil, botIntelligence: Double? = nil) {
         self.id = id
         self.name = name
         self.botLevel = botLevel
         self.botStyle = botStyle
         self.adaptiveBot = adaptiveBot
+        self.botAverage = botAverage
+        self.botCheckout = botCheckout
+        self.botConsistency = botConsistency
+        self.botPressure = botPressure
+        self.botIntelligence = botIntelligence
     }
 }
 public struct GameConfig: Codable, Equatable {
