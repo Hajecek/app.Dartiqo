@@ -841,6 +841,7 @@ struct MatchView: View {
                     .lineLimit(1)
                     .foregroundStyle(active ? Color.white : MatchColors.ink)
                     .contentTransition(.numericText(value: score.headlineNumber))
+                    .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: score.headlineNumber)
                     .frame(maxWidth: .infinity, minHeight: 80, maxHeight: 80, alignment: .leading)
                 let chips = panelChips(game, shown: shown, index: index, fallback: score)
                 if !chips.isEmpty {
@@ -1200,18 +1201,26 @@ struct MatchView: View {
         } else {
             let darts = stripDarts(for: game)
             let guide = checkoutGuide(game, shown: shown, thrown: darts.count)
-            HStack(spacing: 6) {
+            HStack(spacing: 0) {
                 ForEach(0..<3, id: \.self) { i in
                     let filled = darts.count > i
                     let suggested = (!filled && guide.route.indices.contains(i - darts.count)) ? guide.route[i - darts.count] : nil
                     let note = (!filled && suggested == nil && i == darts.count) ? guide.note : nil
+                    if i > 0 {
+                        Rectangle()
+                            .fill(.white.opacity(0.18))
+                            .frame(width: 1, height: 36)
+                            .padding(.horizontal, 6)
+                            .accessibilityHidden(true)
+                    }
                     ThrowSlotTile(
                         index: i,
                         dart: filled ? darts[i] : nil,
                         suggestion: suggested,
                         note: note,
                         setupLeave: suggested == nil ? nil : guide.setupLeave,
-                        onGlass: true
+                        onGlass: true,
+                        plain: true
                     )
                 }
             }
@@ -1797,7 +1806,8 @@ struct MatchView: View {
                             dart: filled ? darts[index] : nil,
                             suggestion: suggested,
                             note: note,
-                            setupLeave: suggested == nil ? nil : guide.setupLeave
+                            setupLeave: suggested == nil ? nil : guide.setupLeave,
+                            plain: true
                         )
                     }
                 }

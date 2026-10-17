@@ -58,47 +58,60 @@ struct ThrowSlotTile: View {
     var setupLeave: String? = nil
     /// Stejné glass pozadí jako lišta setů / legů — světlý text a jemnější sloty.
     var onGlass: Bool = false
+    /// Jen čísla bez dlaždice — třeba v bílém modalu průběhu.
+    var plain: Bool = false
 
     private var slotRadius: CGFloat { onGlass ? 12 : 14 }
 
     var body: some View {
         if let dart {
-            ThrowSlotFace(index: index, dart: dart, onGlass: onGlass)
+            ThrowSlotFace(index: index, dart: dart, onGlass: onGlass, plain: plain)
         } else if let suggestion {
             let setup = setupLeave != nil
-            VStack(spacing: onGlass ? 3 : 5) {
+            let accent = setup ? ScoringChrome.amber : ScoringChrome.green
+            let labelColor: Color = plain ? accent : .white
+            let metaColor: Color = plain ? accent.opacity(0.75) : .white.opacity(0.75)
+            let tagColor: Color = plain ? accent.opacity(0.7) : .white.opacity(0.85)
+            VStack(spacing: plain ? 2 : (onGlass ? 3 : 5)) {
                 HStack(spacing: 3) {
                     Image(systemName: setup ? "arrow.turn.up.right" : "sparkles")
-                        .font(.system(size: onGlass ? 8 : 9, weight: .bold))
+                        .font(.system(size: onGlass || plain ? 8 : 9, weight: .bold))
                     Text(setup ? "Sehrávka" : "AI")
-                        .font(AppFont.caption(onGlass ? 9 : 10, weight: .heavy))
+                        .font(AppFont.caption(onGlass || plain ? 9 : 10, weight: .heavy))
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                 }
-                .foregroundStyle(.white.opacity(0.85))
+                .foregroundStyle(tagColor)
                 Text(suggestion.label)
-                    .font(AppFont.display(onGlass ? 24 : 28, weight: .heavy))
-                    .foregroundStyle(.white)
+                    .font(AppFont.display(plain ? 26 : (onGlass ? 24 : 28), weight: .heavy))
+                    .foregroundStyle(labelColor)
                     .minimumScaleFactor(0.7)
                     .lineLimit(1)
                 Text(setup ? "na \(setupLeave ?? "")" : "\(suggestion.score)")
-                    .font(AppFont.caption(onGlass ? 11 : 12, weight: .bold))
+                    .font(AppFont.caption(onGlass || plain ? 11 : 12, weight: .bold))
                     .monospacedDigit()
-                    .foregroundStyle(.white.opacity(0.75))
+                    .foregroundStyle(metaColor)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(setup ? ScoringChrome.setupTip : ScoringChrome.aiTip, in: RoundedRectangle(cornerRadius: slotRadius, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: slotRadius, style: .continuous)
-                    .strokeBorder(setup ? ScoringChrome.amber : ScoringChrome.green.opacity(0.55), lineWidth: onGlass ? 1 : 1.5)
-            )
+            .background {
+                if !plain {
+                    RoundedRectangle(cornerRadius: slotRadius, style: .continuous)
+                        .fill(setup ? ScoringChrome.setupTip : ScoringChrome.aiTip)
+                }
+            }
+            .overlay {
+                if !plain {
+                    RoundedRectangle(cornerRadius: slotRadius, style: .continuous)
+                        .strokeBorder(setup ? ScoringChrome.amber : ScoringChrome.green.opacity(0.55), lineWidth: onGlass ? 1 : 1.5)
+                }
+            }
             .accessibilityLabel(setup
                 ? "\(index + 1). šipka, sehrávka na \(setupLeave ?? ""), hoď \(suggestion.label)"
                 : "\(index + 1). šipka, AI nápověda \(suggestion.label)")
         } else {
-            ThrowSlotFace(index: index, dart: nil, note: note, onGlass: onGlass)
+            ThrowSlotFace(index: index, dart: nil, note: note, onGlass: onGlass, plain: plain)
         }
     }
 }
@@ -355,51 +368,60 @@ struct ThrowSlotFace: View {
     var dart: Dart?
     var note: String? = nil
     var onGlass: Bool = false
+    /// Jen čísla bez dlaždice.
+    var plain: Bool = false
 
     private var slotRadius: CGFloat { onGlass ? 12 : 14 }
     private var ink: Color { onGlass ? .white : ScoringChrome.ink }
+    private var compact: Bool { onGlass || plain }
 
     var body: some View {
         if let dart {
-            VStack(spacing: onGlass ? 2 : 4) {
+            VStack(spacing: plain ? 2 : (onGlass ? 2 : 4)) {
                 Text("\(index + 1)")
-                    .font(AppFont.caption(onGlass ? 9 : 10, weight: .bold))
+                    .font(AppFont.caption(compact ? 9 : 10, weight: .bold))
                     .foregroundStyle(ink.opacity(onGlass ? 0.45 : 0.4))
                 Text("\(dart.score)")
-                    .font(AppFont.display(onGlass ? 22 : 26, weight: .bold))
+                    .font(AppFont.display(plain ? 26 : (onGlass ? 22 : 26), weight: .bold))
                     .monospacedDigit()
                     .foregroundStyle(ink)
                 Text(dart.label)
-                    .font(AppFont.caption(onGlass ? 11 : 12, weight: .bold))
+                    .font(AppFont.caption(compact ? 11 : 12, weight: .bold))
                     .foregroundStyle(ink.opacity(onGlass ? 0.7 : 0.65))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(
-                onGlass ? Color.white.opacity(0.10) : ScoringChrome.ink.opacity(0.06),
-                in: RoundedRectangle(cornerRadius: slotRadius, style: .continuous)
-            )
+            .background {
+                if !plain {
+                    RoundedRectangle(cornerRadius: slotRadius, style: .continuous)
+                        .fill(onGlass ? Color.white.opacity(0.10) : ScoringChrome.ink.opacity(0.06))
+                }
+            }
             .accessibilityLabel("\(index + 1). šipka \(dart.label)")
         } else {
-            VStack(spacing: onGlass ? 2 : 4) {
+            VStack(spacing: plain ? 2 : (onGlass ? 2 : 4)) {
                 Text("\(index + 1)")
-                    .font(AppFont.caption(onGlass ? 9 : 10, weight: .bold))
+                    .font(AppFont.caption(compact ? 9 : 10, weight: .bold))
                     .foregroundStyle(ink.opacity(onGlass ? 0.4 : 0.35))
                 Text("—")
-                    .font(AppFont.display(onGlass ? 22 : 26, weight: .bold))
+                    .font(AppFont.display(plain ? 26 : (onGlass ? 22 : 26), weight: .bold))
                     .foregroundStyle(ink.opacity(onGlass ? 0.28 : 0.22))
                 Text(note ?? "\(index + 1). šipka")
-                    .font(AppFont.caption(onGlass ? 10 : 11, weight: .semibold))
+                    .font(AppFont.caption(compact ? 10 : 11, weight: .semibold))
                     .foregroundStyle(ink.opacity(onGlass ? 0.5 : 0.4))
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(
-                onGlass
-                    ? Color.white.opacity(note != nil ? 0.12 : 0.07)
-                    : ScoringChrome.aiTipSoft.opacity(note != nil ? 0.55 : 0.35),
-                in: RoundedRectangle(cornerRadius: slotRadius, style: .continuous)
-            )
+            .background {
+                if !plain {
+                    RoundedRectangle(cornerRadius: slotRadius, style: .continuous)
+                        .fill(
+                            onGlass
+                                ? Color.white.opacity(note != nil ? 0.12 : 0.07)
+                                : ScoringChrome.aiTipSoft.opacity(note != nil ? 0.55 : 0.35)
+                        )
+                }
+            }
             .accessibilityLabel(note.map { "\(index + 1). šipka, \($0)" } ?? "\(index + 1). šipka volná")
         }
     }
