@@ -1465,30 +1465,57 @@ struct MatchView: View {
             let player = isHoldingVisit ? (holdPlayer ?? game.active) : game.active
             NavigationStack {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        progressSectionTitle("Skóre")
-                        progressScoreGrid(game, shown: shown, active: player)
-                        progressThrowCard(game, shown: shown, player: player)
+                    VStack(alignment: .leading, spacing: 18) {
+                        progressHero(game, active: player)
                         if showsMatchLength(game) {
                             progressLengthCard(game)
                         }
+                        progressSectionTitle("Aktuální skóre")
+                        progressScoreGrid(game, shown: shown, active: player)
+                        progressThrowCard(game, shown: shown, player: player)
                     }
                     .padding(16)
-                    .padding(.bottom, 8)
+                    .padding(.bottom, 12)
                 }
                 .scrollIndicators(.hidden)
-                .background(MatchColors.background.ignoresSafeArea())
-                .navigationTitle("Průběh")
+                .background {
+                    ZStack {
+                        MatchColors.background
+                        RadialGradient(
+                            colors: [MatchColors.coral.opacity(0.22), .clear],
+                            center: .topLeading,
+                            startRadius: 0,
+                            endRadius: 360
+                        )
+                        RadialGradient(
+                            colors: [MatchColors.amber.opacity(0.12), .clear],
+                            center: .bottomTrailing,
+                            startRadius: 0,
+                            endRadius: 300
+                        )
+                    }
+                    .ignoresSafeArea()
+                }
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Hotovo") { showProgress = false }
+                        Button { showProgress = false } label: {
+                            Image(systemName: "xmark")
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.white)
+                                .frame(width: 30, height: 30)
+                                .background(.white.opacity(0.14), in: Circle())
+                        }
+                        .accessibilityLabel("Zavřít")
                     }
                 }
+                .toolbarBackground(.hidden, for: .navigationBar)
+                .toolbarColorScheme(.dark, for: .navigationBar)
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
             .presentationBackground(MatchColors.background)
+            .presentationCornerRadius(28)
             .preferredColorScheme(.dark)
         }
     }
@@ -1500,10 +1527,131 @@ struct MatchView: View {
             .foregroundStyle(.white.opacity(0.45))
     }
 
+    private func progressHero(_ game: Match, active: Int) -> some View {
+        let duo = game.players.count == 2
+        let primary = game.config.playsSets
+            ? game.states.map(\.sets)
+            : game.states.map(\.legs)
+        let primaryTotal = game.config.playsSets ? game.config.shownSets : game.config.shownLegs
+        let primaryLabel = game.config.playsSets ? "Sety" : "Legy"
+        return VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Průběh")
+                    .font(AppFont.caption(12, weight: .heavy))
+                    .foregroundStyle(MatchColors.ink.opacity(0.5))
+                Spacer(minLength: 8)
+                Text(game.config.lengthLine)
+                    .font(AppFont.caption(12, weight: .bold))
+                    .foregroundStyle(MatchColors.ink.opacity(0.55))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+
+            if duo {
+                progressHeadToHead(game, values: primary, label: primaryLabel, total: primaryTotal, active: active)
+            } else {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(primaryLabel)
+                        .font(AppFont.caption(12, weight: .heavy))
+                        .foregroundStyle(MatchColors.ink.opacity(0.5))
+                    Text(primary.map(String.init).joined(separator: " : "))
+                        .font(AppFont.display(42, weight: .bold))
+                        .monospacedDigit()
+                        .foregroundStyle(MatchColors.ink)
+                        .minimumScaleFactor(0.6)
+                        .lineLimit(1)
+                    Text("z \(primaryTotal) · Leg \(game.leg)")
+                        .font(AppFont.caption(13, weight: .semibold))
+                        .foregroundStyle(MatchColors.ink.opacity(0.55))
+                }
+            }
+
+            Text(game.config.lengthDetail)
+                .font(AppFont.caption(13, weight: .medium))
+                .foregroundStyle(MatchColors.ink.opacity(0.62))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            LinearGradient(
+                colors: [MatchColors.amber, MatchColors.coral.opacity(0.92)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: 26, style: .continuous)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(progressHeroAccessibility(game, values: primary, label: primaryLabel, total: primaryTotal))
+    }
+
+    private func progressHeadToHead(
+        _ game: Match,
+        values: [Int],
+        label: String,
+        total: Int,
+        active: Int
+    ) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            progressHeroSide(game, index: 0, value: values.indices.contains(0) ? values[0] : 0, active: active)
+            VStack(spacing: 4) {
+                Text(label.uppercased())
+                    .font(AppFont.caption(10, weight: .heavy))
+                    .tracking(0.8)
+                    .foregroundStyle(MatchColors.ink.opacity(0.45))
+                Text(":")
+                    .font(AppFont.display(28, weight: .bold))
+                    .foregroundStyle(MatchColors.ink.opacity(0.28))
+                Text("z \(total)")
+                    .font(AppFont.caption(11, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundStyle(MatchColors.ink.opacity(0.45))
+            }
+            .frame(width: 52)
+            progressHeroSide(game, index: 1, value: values.indices.contains(1) ? values[1] : 0, active: active)
+        }
+    }
+
+    private func progressHeroSide(_ game: Match, index: Int, value: Int, active: Int) -> some View {
+        let name = game.players.indices.contains(index) ? game.players[index].name : "Hráč"
+        let onTurn = index == active
+        return VStack(spacing: 6) {
+            playerAvatar(game, index: index, size: 36)
+                .overlay {
+                    if onTurn {
+                        Circle()
+                            .strokeBorder(MatchColors.ink.opacity(0.35), lineWidth: 2)
+                            .frame(width: 40, height: 40)
+                    }
+                }
+            Text("\(value)")
+                .font(AppFont.display(44, weight: .bold))
+                .monospacedDigit()
+                .foregroundStyle(MatchColors.ink)
+                .contentTransition(.numericText(value: Double(value)))
+                .minimumScaleFactor(0.6)
+                .lineLimit(1)
+            Text(name)
+                .font(AppFont.caption(12, weight: onTurn ? .heavy : .semibold))
+                .foregroundStyle(MatchColors.ink.opacity(onTurn ? 0.85 : 0.55))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func progressHeroAccessibility(_ game: Match, values: [Int], label: String, total: Int) -> String {
+        let scores = game.players.indices.map { index in
+            let value = values.indices.contains(index) ? values[index] : 0
+            return "\(game.players[index].name) \(value)"
+        }.joined(separator: ", ")
+        return "Průběh. \(label) z \(total): \(scores). \(game.config.lengthDetail)"
+    }
+
     private func progressScoreGrid(_ game: Match, shown: Match, active: Int) -> some View {
         let columns = min(2, max(1, game.players.count))
         let rows = stride(from: 0, to: game.players.count, by: columns).map { Array($0..<min($0 + columns, game.players.count)) }
-        return Grid(horizontalSpacing: 8, verticalSpacing: 8) {
+        return Grid(horizontalSpacing: 10, verticalSpacing: 10) {
             ForEach(rows, id: \.first) { row in
                 GridRow {
                     ForEach(row, id: \.self) { index in
@@ -1523,9 +1671,10 @@ struct MatchView: View {
         let score = panelScore(game, shown: shown, state: state, index: index)
         let onTurn = index == active
         let badge = isHoldingVisit && onTurn ? "hotovo" : (onTurn ? "na tahu" : nil)
-        return VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                playerAvatar(game, index: index, size: 22)
+        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                playerAvatar(game, index: index, size: 26)
                 Text(name)
                     .font(AppFont.body(14, weight: .semibold))
                     .lineLimit(1)
@@ -1533,29 +1682,47 @@ struct MatchView: View {
                 if let badge {
                     Text(badge)
                         .font(AppFont.caption(10, weight: .heavy))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.white.opacity(0.18), in: Capsule())
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(onTurn ? Color.white.opacity(0.22) : Color.white.opacity(0.14), in: Capsule())
                 }
             }
             Text(score.headline)
-                .font(AppFont.display(40, weight: .bold))
+                .font(AppFont.display(42, weight: .bold))
                 .monospacedDigit()
                 .minimumScaleFactor(0.5)
                 .lineLimit(1)
                 .contentTransition(.numericText(value: score.headlineNumber))
-            Text(progressScoreUnit(game))
-                .font(AppFont.caption(11, weight: .semibold))
-                .opacity(0.7)
-            Text("\(score.statTitle) \(score.statValue)")
-                .font(AppFont.caption(12, weight: .bold))
-                .monospacedDigit()
-                .opacity(0.85)
+            HStack(spacing: 6) {
+                Text(progressScoreUnit(game))
+                    .font(AppFont.caption(11, weight: .semibold))
+                    .opacity(0.65)
+                Text("·")
+                    .opacity(0.35)
+                Text("\(score.statTitle) \(score.statValue)")
+                    .font(AppFont.caption(12, weight: .bold))
+                    .monospacedDigit()
+                    .opacity(0.85)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
         }
         .foregroundStyle(.white)
         .padding(14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(onTurn ? MatchColors.coral : Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background {
+            if onTurn {
+                LinearGradient(
+                    colors: [MatchColors.coral, MatchColors.coral.opacity(0.82)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            } else {
+                Color.white.opacity(0.07)
+            }
+        }
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(onTurn ? Color.white.opacity(0.18) : Color.white.opacity(0.08), lineWidth: 1))
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(name), \(progressScoreUnit(game)) \(score.headline), \(score.statAccessibility)\(badge.map { ", \($0)" } ?? "")")
     }
@@ -1578,15 +1745,17 @@ struct MatchView: View {
         let title = suggestion.map { "\(turn.dartTitle) · \($0.label)" } ?? turn.dartTitle
         let visitSum = progressVisitSum(game)
         let totalValue = visitSum?.value ?? "—"
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
+        let shape = RoundedRectangle(cornerRadius: 24, style: .continuous)
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                playerAvatar(game, index: player, size: 34)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(name)
                         .font(AppFont.caption(12, weight: .heavy))
                         .foregroundStyle(MatchColors.ink.opacity(0.45))
                         .lineLimit(1)
                     Text(title)
-                        .font(AppFont.display(28, weight: .bold))
+                        .font(AppFont.display(26, weight: .bold))
                         .foregroundStyle(MatchColors.ink)
                         .minimumScaleFactor(0.7)
                         .lineLimit(1)
@@ -1603,7 +1772,7 @@ struct MatchView: View {
                             .tracking(0.6)
                             .foregroundStyle(MatchColors.ink.opacity(0.45))
                         Text(sum.value)
-                            .font(AppFont.display(32, weight: .bold))
+                            .font(AppFont.display(30, weight: .bold))
                             .monospacedDigit()
                             .foregroundStyle(MatchColors.ink)
                             .contentTransition(.numericText())
@@ -1643,7 +1812,8 @@ struct MatchView: View {
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(.white, in: shape)
+        .overlay(shape.strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(name), \(title), \(turn.detail(leg: game.leg))")
     }
@@ -1675,25 +1845,47 @@ struct MatchView: View {
     }
 
     private func progressLengthCard(_ game: Match) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        return VStack(alignment: .leading, spacing: 16) {
             if game.config.playsSets {
-                progressLengthRows(game, title: "Sety", values: game.states.map(\.sets), total: game.config.shownSets)
+                progressLengthBlock(
+                    game,
+                    title: "Sety",
+                    values: game.states.map(\.sets),
+                    total: game.config.shownSets,
+                    icon: "square.stack.3d.up.fill"
+                )
+                Divider().overlay(.white.opacity(0.1))
             }
-            progressLengthRows(game, title: "Legy", values: game.states.map(\.legs), total: game.config.shownLegs)
-            Text(game.config.lengthDetail)
-                .font(AppFont.caption(12))
-                .foregroundStyle(.white.opacity(0.45))
-                .fixedSize(horizontal: false, vertical: true)
+            progressLengthBlock(
+                game,
+                title: game.config.playsSets ? "Legy v setu" : "Legy",
+                values: game.states.map(\.legs),
+                total: game.config.shownLegs,
+                icon: "flag.checkered"
+            )
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(Color.white.opacity(0.06), in: shape)
+        .overlay(shape.strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
     }
 
-    private func progressLengthRows(_ game: Match, title: String, values: [Int], total: Int) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                progressSectionTitle(title)
+    private func progressLengthBlock(
+        _ game: Match,
+        title: String,
+        values: [Int],
+        total: Int,
+        icon: String
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(MatchColors.amber)
+                Text(title)
+                    .font(AppFont.body(15, weight: .bold))
+                    .foregroundStyle(.white)
                 Spacer(minLength: 8)
                 Text("z \(total)")
                     .font(AppFont.caption(12, weight: .semibold))
@@ -1701,22 +1893,48 @@ struct MatchView: View {
                     .foregroundStyle(.white.opacity(0.45))
             }
             ForEach(game.players.indices, id: \.self) { index in
-                HStack(spacing: 8) {
-                    Text(game.players[index].name)
-                        .font(AppFont.body(15, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.9))
-                        .lineLimit(1)
-                    Spacer(minLength: 8)
-                    Text("\(values.indices.contains(index) ? values[index] : 0)")
-                        .font(AppFont.body(18, weight: .heavy))
-                        .monospacedDigit()
-                        .foregroundStyle(progressTint(game, player: index))
-                        .contentTransition(.numericText(value: Double(values.indices.contains(index) ? values[index] : 0)))
-                }
+                progressLengthRow(
+                    game,
+                    index: index,
+                    value: values.indices.contains(index) ? values[index] : 0,
+                    total: total
+                )
             }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(progressLengthAccessibility(game, title: title, values: values, total: total))
+    }
+
+    private func progressLengthRow(_ game: Match, index: Int, value: Int, total: Int) -> some View {
+        let tint = progressTint(game, player: index)
+        let showPips = total <= 7
+        return HStack(spacing: 10) {
+            playerAvatar(game, index: index, size: 28)
+            Text(game.players[index].name)
+                .font(AppFont.body(15, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.92))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if showPips {
+                HStack(spacing: 5) {
+                    ForEach(0..<total, id: \.self) { n in
+                        Circle()
+                            .fill(n < value ? tint : Color.white.opacity(0.14))
+                            .frame(width: 9, height: 9)
+                    }
+                }
+                .accessibilityHidden(true)
+            }
+            Text("\(value)")
+                .font(AppFont.display(22, weight: .bold))
+                .monospacedDigit()
+                .foregroundStyle(tint)
+                .frame(minWidth: 22, alignment: .trailing)
+                .contentTransition(.numericText(value: Double(value)))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private func progressLengthAccessibility(_ game: Match, title: String, values: [Int], total: Int) -> String {
