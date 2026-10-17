@@ -89,6 +89,8 @@ enum AppSection: Hashable {
     private let speaker = AVSpeechSynthesizer()
     @Published private(set) var needsRecovery = false
     private let file: URL
+    /// Spojí rychlé zápisy (šipky) do jednoho zápisu na disk.
+    private var saveTask: Task<Void, Never>?
     init() {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Dartiqo", isDirectory: true)
         file = directory.appendingPathComponent("dartiqo-v1.json")
@@ -512,10 +514,32 @@ enum AppSection: Hashable {
             data = fresh; needsRecovery = false; locked = false; storageError = nil
         } catch { storageError = "Obnovu se nepodařilo dokončit. Původní data zůstala zachována. \(error.localizedDescription)" }
     }
+    /// Naplánuje zápis na disk. Rychlé klikání čísel se sloučí do jednoho zápisu.
     func save() {
         guard !needsRecovery else { return }
-        do { try JSONEncoder().encode(data).write(to: file, options: [.atomic, .completeFileProtection]) }
-        catch { storageError = "Změny se nepodařilo uložit. \(error.localizedDescription)" }
+        saveTask?.cancel()
+        saveTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+            saveTask = nil
+            writeToDisk()
+        }
+    }
+
+    /// Okamžitý zápis — odchod do pozadí / opuštění zápasu, ať se nic neztratí.
+    func flushSave() {
+        saveTask?.cancel()
+        saveTask = nil
+        writeToDisk()
+    }
+
+    private func writeToDisk() {
+        guard !needsRecovery else { return }
+        do {
+            try JSONEncoder().encode(data).write(to: file, options: [.atomic, .completeFileProtection])
+        } catch {
+            storageError = "Změny se nepodařilo uložit. \(error.localizedDescription)"
+        }
     }
     func createProfile(_ name: String) {
         let clean = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24)); guard !clean.isEmpty else { return }
@@ -543,12 +567,13 @@ enum AppSection: Hashable {
             learnGhostStyle(from: archived)
         }
         activeMatch = nil
+        flushSave()
     }
     func deleteMatch(_ id: UUID) {
         guard data.matches.contains(where: { $0.id == id }) else { return }
         data.matches.removeAll { $0.id == id }
         data.matchXPAwards?.removeAll { $0.matchID == id }
-        save()
+        flushSave()
     }
 
     /// Jednorázově doplní odměny ke starším dohraným zápasům. Stejné id znovu nezapíše.
@@ -651,7 +676,7 @@ enum AppSection: Hashable {
         data.matchXPAwards?.removeAll { $0.owner == id || removedMatchIDs.contains($0.matchID) }
         data.trainingPlan?[id.uuidString] = nil
         data.achievementUnlocks?.removeAll { $0.owner == id }
-        save()
+        flushSave()
     }
     var boardCalibration: BoardCalibration? { data.boardCalibration }
     var boardMapper: BoardMapper? {
@@ -843,12 +868,12 @@ enum AppSection: Hashable {
         for key in earned.subtracting(have) {
             data.achievementUnlocks?.append(AchievementUnlock(owner: owner, key: key))
         }
-        save()
+        flushSave()
         return amount
     }
     func abandonTraining(_ session: TrainingSession) {
         guard let owner = profile?.id.uuidString else { return }
-        if data.activeTraining?[owner]?.id == session.id { data.activeTraining?[owner] = nil; save() }
+        if data.activeTraining?[owner]?.id == session.id { data.activeTraining?[owner] = nil; flushSave() }
     }
     func trainingUnlocked(_ key: String) -> Bool {
         guard let owner = profile?.id else { return false }

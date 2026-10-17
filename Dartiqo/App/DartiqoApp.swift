@@ -13,7 +13,7 @@ import SwiftUI
                 .preferredColorScheme(store.data.appearance == "system" ? nil : store.data.appearance == "dark" ? .dark : .light)
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .background {
-                        store.save()
+                        store.flushSave()
                         if store.data.biometricLock && store.profile != nil { store.locked = true }
                     }
                 }

@@ -605,10 +605,9 @@ struct TrainingPlayView: View {
         var buffer = visitBuffer
         buffer.append(dart)
         let after = TrainingEngine.project(current)
-        withAnimation(reduceMotion ? nil : .snappy(duration: 0.28)) {
-            session = current
-            visitBuffer = buffer
-        }
+        // Bez animace u jednotlivých šipek — rychlé klikání by jinak frontovalo snappy přechody.
+        session = current
+        visitBuffer = buffer
         store.stageTraining(current)
         store.feedback(dart.segment == 0 ? nil : dart.score, announce: surface != .total)
         pulse += 1
@@ -762,6 +761,7 @@ struct TrainingPlayView: View {
 
     private func autosave() {
         commitIfNeeded()
+        store.flushSave()
     }
 
     private func goHome() {

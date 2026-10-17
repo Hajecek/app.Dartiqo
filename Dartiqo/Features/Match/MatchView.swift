@@ -247,6 +247,7 @@ struct MatchView: View {
     private func leaveMatch() {
         voice.stop()
         flushClock()
+        store.flushSave()
         UIApplication.shared.isIdleTimerDisabled = false
     }
 
@@ -2206,7 +2207,8 @@ struct MatchView: View {
                 applyVisitHold(game: game, darts: visit.darts, player: thrower, fromBot: false)
             } else {
                 store.tapHaptic(.light)
-                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.16)) { store.activeMatch = game }
+                // Bez animace — při rychlém klikání čísel by se fronta animací cítila jako zaseknutí.
+                store.activeMatch = game
             }
         } catch { self.error = error.localizedDescription }
     }
