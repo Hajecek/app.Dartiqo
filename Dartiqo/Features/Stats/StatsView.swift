@@ -369,29 +369,25 @@ struct HistoryView: View {
         let losses = ranked.filter { outcome($0) == .loss }.count
         let draws = ranked.filter { outcome($0) == .draw }.count
         let recent = Array(ranked.prefix(8))
-        return VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Eyebrow(text: "Bilance")
-                    Text(recordHeadline(wins: wins, ranked: ranked.count))
-                        .font(.title2.bold())
-                    Text(recordDetail(wins: wins, losses: losses, ranked: ranked))
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                winRateGauge(wins: wins, ranked: ranked.count)
-            }
+        let tone = recordTone(wins: wins, ranked: ranked.count)
+        return VStack(alignment: .leading, spacing: 16) {
+            recordHeader(
+                eyebrow: "Bilance",
+                headline: recordHeadline(wins: wins, ranked: ranked.count),
+                detail: recordDetail(wins: wins, losses: losses, ranked: ranked),
+                rate: winRate(wins: wins, ranked: ranked.count),
+                caption: "úspěšnost",
+                tone: tone,
+                ranked: ranked.count
+            )
 
-            HStack(spacing: 0) {
-                recordFact("\(wins)", "výhry", Theme.positive)
-                Divider().frame(height: 38)
-                recordFact("\(losses)", "prohry", .secondary)
-                Divider().frame(height: 38)
-                recordFact("\(draws)", "remízy", .orange)
+            recordShare(wins: wins, draws: draws, losses: losses)
+
+            HStack(spacing: 8) {
+                recordStat("\(wins)", "výhry", Theme.positive)
+                recordStat("\(losses)", "prohry", .red)
+                recordStat("\(draws)", "remízy", .orange)
             }
-            .padding(.vertical, 10)
-            .background(Theme.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
 
             let total = matches.reduce(0) { $0 + $1.playedDuration }
             if PlayTime.components(total).hours > 0 {
@@ -408,6 +404,113 @@ struct HistoryView: View {
             }
         }
         .surface()
+    }
+
+    private func recordHeader(
+        eyebrow: String,
+        headline: String,
+        detail: String,
+        rate: String,
+        caption: String,
+        tone: Color,
+        ranked: Int
+    ) -> some View {
+        HStack(alignment: .center, spacing: 14) {
+            VStack(spacing: 1) {
+                Text(rate)
+                    .font(.system(size: 28, weight: .heavy, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(ranked == 0 ? Color.secondary : tone)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                Text(caption)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .frame(width: 96, height: 78)
+            .background(
+                tone.opacity(ranked == 0 ? 0.08 : 0.14),
+                in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(tone.opacity(ranked == 0 ? 0.12 : 0.35), lineWidth: 1)
+            )
+
+            VStack(alignment: .leading, spacing: 4) {
+                Eyebrow(text: eyebrow)
+                Text(headline)
+                    .font(.title3.bold())
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func recordShare(wins: Int, draws: Int, losses: Int) -> some View {
+        let parts: [(count: Int, color: Color)] = [
+            (wins, Theme.positive),
+            (draws, .orange),
+            (losses, Color.red.opacity(0.82))
+        ]
+        let visible = parts.filter { $0.count > 0 }
+        let total = visible.reduce(0) { $0 + $1.count }
+        return GeometryReader { geo in
+            if total == 0 {
+                Capsule().fill(Color.primary.opacity(0.08))
+            } else {
+                let gap: CGFloat = 3
+                let usable = max(0, geo.size.width - gap * CGFloat(max(visible.count - 1, 0)))
+                let floor = min(8, usable / CGFloat(visible.count))
+                let flex = max(0, usable - floor * CGFloat(visible.count))
+                HStack(spacing: gap) {
+                    ForEach(Array(visible.enumerated()), id: \.offset) { _, part in
+                        Capsule()
+                            .fill(part.color)
+                            .frame(width: floor + flex * CGFloat(part.count) / CGFloat(total))
+                    }
+                }
+            }
+        }
+        .frame(height: 8)
+        .accessibilityHidden(true)
+    }
+
+    private func recordStat(_ value: String, _ label: String, _ tint: Color) -> some View {
+        let quiet = value == "0"
+        let color = quiet ? Color.secondary : tint
+        return VStack(spacing: 5) {
+            Capsule()
+                .fill(color.opacity(quiet ? 0.35 : 1))
+                .frame(width: 22, height: 3)
+            Text(value)
+                .font(.system(size: 24, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+            Text(label)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 10)
+        .padding(.bottom, 12)
+        .background(tint.opacity(quiet ? 0.06 : 0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func recordTone(wins: Int, ranked: Int) -> Color {
+        guard ranked > 0 else { return .secondary }
+        if wins > ranked / 2 { return Theme.positive }
+        if wins * 2 == ranked { return .orange }
+        return .red
     }
 
     private func recentForm(_ recent: [Match]) -> some View {
@@ -457,42 +560,6 @@ struct HistoryView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Celkem u terče \(PlayTime.format(seconds))")
-    }
-
-    private func recordFact(_ value: String, _ label: String, _ tint: Color) -> some View {
-        VStack(spacing: 2) {
-            Text(value)
-                .font(.system(.title2, design: .rounded).weight(.bold))
-                .monospacedDigit()
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-                .foregroundStyle(tint)
-            Text(label).font(.caption).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func winRateGauge(wins: Int, ranked: Int, unit: String = "výher") -> some View {
-        let rate = ranked == 0 ? 0 : Double(wins) / Double(ranked)
-        return ZStack {
-            Circle()
-                .stroke(Theme.stroke, lineWidth: 7)
-            Circle()
-                .trim(from: 0, to: rate)
-                .stroke(Theme.positive, style: StrokeStyle(lineWidth: 7, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-            VStack(spacing: 0) {
-                Text(winRate(wins: wins, ranked: ranked))
-                    .font(.system(.headline, design: .rounded).weight(.bold))
-                    .monospacedDigit()
-                Text(unit)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .frame(width: 74, height: 74)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Úspěšnost \(winRate(wins: wins, ranked: ranked))")
     }
 
     private func recordHeadline(wins: Int, ranked: Int) -> String {
@@ -553,31 +620,27 @@ struct HistoryView: View {
             guard let end = session.finishedAt else { return sum }
             return sum + max(0, end.timeIntervalSince(session.startedAt))
         }
-        return VStack(alignment: .leading, spacing: 18) {
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Eyebrow(text: "Trénink")
-                    Text(trainingHeadline(done: done, total: trainings.count))
-                        .font(.title2.bold())
-                    Text(trainings.isEmpty
-                         ? "Zatím bez dokončených tréninků"
-                         : "\(done) splněno · \(miss) nesplněno")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                winRateGauge(wins: done, ranked: trainings.count, unit: "splněno")
-            }
+        let tone = recordTone(wins: done, ranked: trainings.count)
+        return VStack(alignment: .leading, spacing: 16) {
+            recordHeader(
+                eyebrow: "Trénink",
+                headline: trainingHeadline(done: done, total: trainings.count),
+                detail: trainings.isEmpty
+                    ? "Zatím bez dokončených tréninků"
+                    : "\(done) splněno · \(miss) nesplněno",
+                rate: winRate(wins: done, ranked: trainings.count),
+                caption: "splněno",
+                tone: tone,
+                ranked: trainings.count
+            )
 
-            HStack(spacing: 0) {
-                recordFact("\(done)", "splněno", Theme.positive)
-                Divider().frame(height: 38)
-                recordFact("\(miss)", "nesplněno", .secondary)
-                Divider().frame(height: 38)
-                recordFact("\(darts)", "šipek", .orange)
+            recordShare(wins: done, draws: 0, losses: miss)
+
+            HStack(spacing: 8) {
+                recordStat("\(done)", "splněno", Theme.positive)
+                recordStat("\(miss)", "nesplněno", .red)
+                recordStat("\(darts)", "šipek", .orange)
             }
-            .padding(.vertical, 10)
-            .background(Theme.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
 
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Label("Celkem u terče", systemImage: "clock")
