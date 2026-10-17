@@ -12,7 +12,6 @@ struct HomeView: View {
     @State private var quickSetup: SetupDraft?
     @State private var openQuickSetup = false
     @State private var launchQuickMatch = false
-    @State private var quickMatchIntro = true
 
     private let canvas = Color.black
 
@@ -68,7 +67,6 @@ struct HomeView: View {
                 },
                 onResume: {
                     showQuickPlay = false
-                    quickMatchIntro = false
                     Task { @MainActor in
                         try? await Task.sleep(nanoseconds: 280_000_000)
                         launchQuickMatch = true
@@ -78,7 +76,7 @@ struct HomeView: View {
             .environmentObject(store)
         }
         .fullScreenCover(isPresented: $launchQuickMatch) {
-            MatchLaunchView(intro: quickMatchIntro)
+            NavigationStack { MatchView() }
                 .environmentObject(store)
         }
         .navigationDestination(isPresented: $openLocalSetup) {

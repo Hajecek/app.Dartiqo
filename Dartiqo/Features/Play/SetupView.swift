@@ -45,7 +45,6 @@ struct SetupView: View {
     @State private var draft: SetupDraft
     @State private var step = 0
     @State private var live = false
-    @State private var launchIntro = true
     @State private var replace = false
     @State private var savePreset = false
     @State private var presetName = "Moje 501"
@@ -85,6 +84,7 @@ struct SetupView: View {
     @State private var openingInfo: Opening?
     @State private var pickedStarter: Int?
     @State private var bullWinner: Int?
+    @State private var showStarterPicker = false
     @State private var showBullOff = false
     @State private var bullLaunched = false
     @State private var showCoinToss = false
@@ -221,7 +221,6 @@ struct SetupView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         store.tapHaptic()
-                        launchIntro = false
                         live = true
                     } label: {
                         HStack(spacing: 5) {
@@ -253,11 +252,14 @@ struct SetupView: View {
             if !shown { bullLaunched = false }
         }
         .confirmationDialog("Máš rozehraný zápas", isPresented: $replace, titleVisibility: .visible) {
-            Button("Pokračovat v rozehraném") { launchIntro = false; live = true }
+            Button("Pokračovat v rozehraném") { live = true }
             Button("Zahodit rozehraný a spustit nový", role: .destructive) { start() }
             Button("Zrušit", role: .cancel) {}
         }
-        .fullScreenCover(isPresented: $live) { MatchLaunchView(intro: launchIntro).environmentObject(store) }
+        .fullScreenCover(isPresented: $live) {
+            NavigationStack { MatchView() }
+                .environmentObject(store)
+        }
         .navigationDestination(isPresented: $openSoloTraining) {
             TrainingHomeView(gameIDs: soloTrainingIDs, onHome: onHome)
                 .environmentObject(store)
@@ -276,15 +278,22 @@ struct SetupView: View {
         }
         .onChange(of: store.homeGeneration) { _, _ in
             live = false
+            showStarterPicker = false
             showBullOff = false
             showCoinToss = false
             showH2HAfterToss = false
             pregameSeries = nil
         }
+        .onChange(of: draft.seats.count) { _, count in
+            if let picked = pickedStarter, !draft.seats.indices.contains(picked) || count < 2 {
+                pickedStarter = nil
+            }
+            if count < 2 { showStarterPicker = false }
+        }
         .fullScreenCover(isPresented: $showCoinToss) {
             ZStack {
                 if coinLaunched {
-                    MatchLaunchView(intro: true)
+                    NavigationStack { MatchView() }
                         .transition(.opacity)
                 } else if showH2HAfterToss, let series = pregameSeries {
                     HeadToHeadPregameView(
@@ -332,7 +341,7 @@ struct SetupView: View {
         .fullScreenCover(isPresented: $showBullOff) {
             ZStack {
                 if bullLaunched {
-                    MatchLaunchView(intro: true)
+                    NavigationStack { MatchView() }
                         .transition(.opacity)
                 } else {
                     BullOffView(names: draft.seats.indices.map(seatName), bots: draft.seats.indices.map { index in
@@ -360,6 +369,21 @@ struct SetupView: View {
                 }
             }
             .environmentObject(store)
+        }
+        .fullScreenCover(isPresented: $showStarterPicker) {
+            StarterPickerView(
+                players: starterPicks,
+                initial: pickedStarter
+            ) { winner in
+                withAnimation(motion) {
+                    pickedStarter = winner
+                    opening = .pick
+                }
+                showStarterPicker = false
+            } onCancel: {
+                showStarterPicker = false
+                if pickedStarter == nil { opening = nil }
+            }
         }
     }
 
@@ -1819,13 +1843,14 @@ struct SetupView: View {
             openingCard("Náhodně", detail: "Los určí, kdo hází první.", symbol: "dice", mode: .random)
             openingCard("Vybrat hráče", detail: "Sám zvolíš, kdo začíná.", symbol: "person.fill", mode: .pick)
             openingCard("Rozhoz na střed", detail: "Každý hodí na střed. Červený bere před zeleným. Stejný střed se hází znovu.", symbol: "smallcircle.filled.circle", mode: .bull)
-            if opening == .pick {
-                OptionSwitcher(
-                    options: draft.seats.indices.map { ($0, seatName($0)) },
-                    selection: pickedStarter ?? -1
-                ) { index in
-                    withAnimation(motion) { pickedStarter = index }
-                }
+            if opening == .pick, let starter = pickedStarter, draft.seats.indices.contains(starter) {
+                Label("Začíná \(seatName(starter))", systemImage: "flag.checkered")
+                    .font(.headline)
+                    .padding(16)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.brand.opacity(0.18), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                Button("Změnit hráče") { showStarterPicker = true }
+                    .font(.subheadline.weight(.semibold))
             }
             if opening == .bull, let bullWinner {
                 Label("Začíná \(seatName(bullWinner))", systemImage: "flag.checkered")
@@ -1846,8 +1871,30 @@ struct SetupView: View {
                 pickedStarter = nil
                 coinWinner = nil
             }
-            if mode == .pick, pickedStarter == nil { pickedStarter = 0 }
+            if mode == .pick { showStarterPicker = true }
             if mode == .bull { showBullOff = true }
+        }
+    }
+
+    private var starterPicks: [StarterPick] {
+        draft.seats.indices.map { index in
+            let seat = draft.seats[index]
+            let level = seat.isBot ? resolvedBot(seat).level : seat.level
+            let detail: String = {
+                if isMe(index) { return "Ty" }
+                if seat.ghostSeat { return "Ghost" }
+                if seat.isBot { return "Bot" }
+                return "Hráč"
+            }()
+            return StarterPick(
+                id: index,
+                name: seatName(index),
+                detail: detail,
+                photo: seatPhoto(index),
+                asset: seat.isBot && !isMe(index) ? BotLevel.get(level).photo : nil,
+                bot: seat.isBot && !isMe(index),
+                tint: Theme.playerColor(index)
+            )
         }
     }
 
@@ -1933,7 +1980,7 @@ struct SetupView: View {
     }
     private func start() {
         guard makeMatch() else { return }
-        launchIntro = true; live = true
+        live = true
     }
 
     private func finishAfterToss() {
@@ -2138,7 +2185,7 @@ private struct OpeningInfoSheet: View {
     private var rules: String {
         switch mode {
         case .random: return "Aplikace vylosuje prvního hráče až při startu zápasu. Nikdo si pořadí nevybírá a los je pokaždé nový."
-        case .pick: return "V dalším kroku vybereš jméno. Ten hráč hází první leg. Ostatní jdou za ním v pořadí, v jakém jsou v zápase."
+        case .pick: return "Otevře se obrazovka se všemi hráči. Klepneš na toho, kdo má házet první. Ostatní jdou za ním v pořadí, v jakém jsou v zápase."
         case .bull: return "Každý hráč hodí jednu šipku na střed. Blíž ke středu vyhrává, červený střed bere před zeleným. Když jsou dva stejně blízko, hážou znovu jen oni. Vítěz rozhozu začíná zápas."
         }
     }
@@ -2624,6 +2671,162 @@ private struct BullPins: View, Animatable {
     }
 }
 
+struct StarterPick: Identifiable, Equatable {
+    var id: Int
+    var name: String
+    var detail: String
+    var photo: Data?
+    var asset: String?
+    var bot: Bool
+    var tint: Color
+}
+
+/// Obrazovka startu: klepnutí na hráče ho vybere jako toho, kdo hází první.
+struct StarterPickerView: View {
+    var players: [StarterPick]
+    var initial: Int?
+    var onFinish: (Int) -> Void
+    var onCancel: () -> Void
+
+    @State private var selection: Int?
+
+    private var chosen: StarterPick? { players.first { $0.id == selection } }
+    private var roomy: Bool { players.count <= 2 }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                header
+                    .padding(.top, 8)
+                ScrollView {
+                    VStack(spacing: 12) {
+                        ForEach(players) { player in
+                            Button {
+                                withAnimation(.smooth(duration: 0.25)) { selection = player.id }
+                            } label: {
+                                playerCard(player, selected: player.id == selection)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.top, 28)
+                    .padding(.bottom, 12)
+                }
+                confirm
+                    .padding(.bottom, 10)
+            }
+            .padding(.horizontal, 24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background { backdrop }
+            .navigationTitle("Výběr hráče")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Zavřít", action: onCancel)
+                }
+            }
+        }
+        .sensoryFeedback(.selection, trigger: selection)
+        .onAppear {
+            selection = initial.flatMap { id in players.contains { $0.id == id } ? id : nil }
+        }
+    }
+
+    private var header: some View {
+        VStack(spacing: 6) {
+            Text("Start")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text("Kdo hází první")
+                .font(.largeTitle.bold())
+                .multilineTextAlignment(.center)
+            Text("Klepni na hráče. Tím se vybere a začíná první leg.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var backdrop: some View {
+        ZStack {
+            Theme.background
+            RadialGradient(
+                colors: [(chosen?.tint ?? Theme.brand).opacity(0.22), .clear],
+                center: .center,
+                startRadius: 20,
+                endRadius: 420
+            )
+        }
+        .ignoresSafeArea()
+        .animation(.smooth(duration: 0.35), value: chosen?.id)
+    }
+
+    private var confirm: some View {
+        let ready = chosen != nil
+        return GlassEffectContainer(spacing: 10) {
+            Button {
+                guard let selection else { return }
+                onFinish(selection)
+            } label: {
+                Label(ready ? "Začíná \(chosen?.name ?? "hráč")" : "Klepni na hráče", systemImage: ready ? "flag.checkered" : "hand.tap")
+                    .font(.headline)
+                    .foregroundStyle(ready ? Theme.onAccent : Color.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 54)
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .glassEffect(ready ? .regular.tint(Theme.brand).interactive() : .regular, in: Capsule())
+            .disabled(!ready)
+        }
+        .animation(.smooth(duration: 0.25), value: selection)
+    }
+
+    private func playerCard(_ player: StarterPick, selected: Bool) -> some View {
+        HStack(spacing: 16) {
+            Avatar(
+                name: player.name,
+                bot: player.bot,
+                size: roomy ? 84 : 64,
+                photo: player.photo,
+                asset: player.asset
+            )
+            .playerRing(player.tint)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(player.name)
+                    .font(roomy ? .title2.bold() : .title3.bold())
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Text(player.detail)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(player.tint)
+            }
+            Spacer(minLength: 8)
+            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                .font(.title)
+                .foregroundStyle(selected ? player.tint : Color.secondary)
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, roomy ? 22 : 16)
+        .frame(maxWidth: .infinity, minHeight: roomy ? 120 : 88, alignment: .leading)
+        .background(
+            selected ? player.tint.opacity(0.18) : Color.primary.opacity(0.06),
+            in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(selected ? player.tint : Color.primary.opacity(0.08), lineWidth: selected ? 2 : 1)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(player.name), \(player.detail)")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityHint("Vybere hráče, který hází první")
+    }
+}
+
 /// Rozhoz na střed. Červený střed je výš než zelený. Stejný výsledek se hází znovu v opačném pořadí.
 /// Určí, kdo začíná, nebo rozhodne leg po vypršení limitu šipek.
 struct BullOffView: View {
@@ -2876,6 +3079,17 @@ struct BullOffView: View {
 }
 
 #if DEBUG
+#Preview("Výběr hráče") {
+    StarterPickerView(
+        players: [
+            StarterPick(id: 0, name: "Ty", detail: "Ty", photo: nil, asset: nil, bot: false, tint: Theme.playerColor(0)),
+            StarterPick(id: 1, name: "Bot 5", detail: "Bot", photo: nil, asset: BotLevel.get(5).photo, bot: true, tint: Theme.playerColor(1))
+        ],
+        initial: nil,
+        onFinish: { _ in },
+        onCancel: {}
+    )
+}
 #Preview("Hrát") {
     NavigationStack { PlayView() }.dartiqoPreview(PreviewSupport.store(activeMatch: false))
 }
