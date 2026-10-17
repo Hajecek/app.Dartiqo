@@ -134,6 +134,7 @@ struct TotalScorePad: View {
     var onQuick: (Int) -> Void
     var onBust: () -> Void = {}
     var onTap: () -> Void = {}
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 8) {
@@ -161,11 +162,16 @@ struct TotalScorePad: View {
                         Button {
                             onTap()
                             if key == "⌫" {
-                                if !sumText.isEmpty { sumText.removeLast() }
+                                guard !sumText.isEmpty else { return }
+                                withAnimation(reduceMotion ? nil : .snappy(duration: 0.22)) {
+                                    sumText.removeLast()
+                                }
                             } else if key == "BUST" {
                                 onBust()
                             } else if sumText.count < 3 {
-                                sumText = sumText == "0" ? key : sumText + key
+                                withAnimation(reduceMotion ? nil : .snappy(duration: 0.22)) {
+                                    sumText = sumText == "0" ? key : sumText + key
+                                }
                             }
                         } label: {
                             Text(key)

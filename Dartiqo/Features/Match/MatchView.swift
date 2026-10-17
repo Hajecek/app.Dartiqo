@@ -1262,17 +1262,19 @@ struct MatchView: View {
     }
 
     private func totalScoreStrip(value: String, filled: Bool) -> some View {
-        HStack(spacing: 10) {
+        let number = Double(value) ?? 0
+        return HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("SOUČET KOLA")
                     .font(AppFont.caption(10, weight: .heavy))
                     .tracking(1.0)
                     .foregroundStyle(.white.opacity(0.45))
-                Text(value)
+                Text(filled ? "\(Int(number))" : "—")
                     .font(AppFont.display(34, weight: .bold))
                     .monospacedDigit()
                     .foregroundStyle(filled ? Color.white : Color.white.opacity(0.28))
-                    .contentTransition(.numericText())
+                    .contentTransition(.numericText(value: number))
+                    .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: number)
             }
             Spacer(minLength: 0)
             Image(systemName: "sum")
@@ -1759,7 +1761,8 @@ struct MatchView: View {
                                     .foregroundStyle(sumText.isEmpty ? Color.secondary : Theme.onAccent)
                                     .frame(maxWidth: .infinity, minHeight: 52)
                                     .contentShape(Capsule())
-                                    .contentTransition(.numericText())
+                                    .contentTransition(.numericText(value: Double(sumText) ?? 0))
+                                    .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: sumText)
                             }
                             .buttonStyle(.plain)
                             .glassEffect(
@@ -2091,7 +2094,9 @@ struct MatchView: View {
                 error = "Součet jde jen na začátku kola. Dokonči nebo vrať šipky."
                 return
             }
-            sumText = "\(score)"
+            withAnimation(reduceMotion ? nil : .snappy(duration: 0.22)) {
+                sumText = "\(score)"
+            }
             resolveTotal(game)
             // Zobraz „180“, ne syntetické T20 (60·60·60).
             if isHoldingVisit { holdSurface = .total }
@@ -2672,7 +2677,9 @@ struct MatchView: View {
             showBust: true,
             onQuick: { score in
                 store.tapHaptic(.medium)
-                sumText = "\(score)"
+                withAnimation(reduceMotion ? nil : .snappy(duration: 0.22)) {
+                    sumText = "\(score)"
+                }
                 resolveTotal(game)
             },
             onBust: { bustPrompt = true },
