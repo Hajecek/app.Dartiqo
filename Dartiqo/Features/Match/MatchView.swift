@@ -4013,7 +4013,7 @@ struct MatchView: View {
         }
         .buttonStyle(.plain)
         .padding(14)
-        .background(BoardFace.plate, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .accessibilityLabel("Otevřít detailní statistiku terče")
     }
 
@@ -4159,7 +4159,7 @@ struct MatchView: View {
                         .frame(maxWidth: 540)
                         .frame(maxWidth: .infinity)
                         .padding(8)
-                        .background(BoardFace.plate, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                        .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
                     Text("Přesná místa · \(board.total) šipek zadaných přes terč. Roztáhni prsty pro detail.")
                         .font(.footnote)
                         .foregroundStyle(.white.opacity(0.55))

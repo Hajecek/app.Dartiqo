@@ -46,21 +46,13 @@ struct MatchSettingsSheet: View {
 
                 Section {
                     Toggle("Hlasové skóre", isOn: $store.data.voice)
-                    Picker("Komentátor", selection: Binding(
-                        get: { store.commentator },
-                        set: { store.commentator = $0 }
-                    )) {
-                        ForEach(Commentator.allCases) { item in
-                            Text(item.title).tag(item)
-                        }
+                    ForEach(Commentator.allCases) { item in
+                        CommentatorOptionRow(item: item)
                     }
                     NavigationLink {
                         CommentaryLibraryView()
                     } label: {
-                        LabeledContent("Nahrávky") {
-                            Text("\(store.commentaryCount)")
-                                .monospacedDigit()
-                        }
+                        CommentaryStudioLink()
                     }
                     Toggle("Haptika", isOn: $store.data.haptics)
                 } header: {

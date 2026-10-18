@@ -20,10 +20,18 @@ struct CommentaryLibraryView: View {
     var body: some View {
         List {
             Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(progressTitle)
-                        .font(.headline)
-                    Text("Namluv skóre kola od 1 do 180 a zvláštní momenty. V zápasu si v nastavení vybereš výchozí hlas, nebo svůj. Chybějící situace dočte výchozí hlas.")
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(progressTitle)
+                            .font(.headline)
+                        Spacer(minLength: 8)
+                        Text(progressValue)
+                            .font(.caption.weight(.bold).monospacedDigit())
+                            .foregroundStyle(recordedCount == 0 ? .secondary : Theme.positive)
+                    }
+                    ProgressView(value: progressFraction)
+                        .tint(recordedCount == 0 ? Color.secondary.opacity(0.35) : Theme.positive)
+                    Text("Namluv skóre kola od 1 do 180 a zvláštní momenty. V zápasu si vybereš výchozí hlas, nebo svůj. Chybějící situace dočte výchozí hlas.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -92,7 +100,18 @@ struct CommentaryLibraryView: View {
     }
 
     private var progressTitle: String {
-        "Nahráno \(recordedCount) z \(CommentaryCue.all.count)"
+        recordedCount == 0 ? "Zatím nic nenahráno" : "Nahráno \(recordedCount) z \(CommentaryCue.all.count)"
+    }
+
+    private var progressFraction: Double {
+        let total = CommentaryCue.all.count
+        guard total > 0 else { return 0 }
+        return Double(recordedCount) / Double(total)
+    }
+
+    private var progressValue: String {
+        let percent = Int((progressFraction * 100).rounded())
+        return "\(percent) %"
     }
 
     private func visible(_ cues: [CommentaryCue]) -> [CommentaryCue] {
@@ -120,11 +139,16 @@ struct CommentaryLibraryView: View {
         NavigationLink {
             CommentaryRecordView(cue: cue)
         } label: {
-            HStack(spacing: 12) {
+            let ready = recorded.contains(cue.id)
+            return HStack(spacing: 12) {
                 Image(systemName: cue.symbol)
                     .font(.body.weight(.semibold))
-                    .foregroundStyle(recorded.contains(cue.id) ? Theme.positive : .secondary)
-                    .frame(width: 28)
+                    .foregroundStyle(ready ? Theme.positive : .secondary)
+                    .frame(width: 36, height: 36)
+                    .background(
+                        (ready ? Theme.positive : Color.secondary).opacity(0.14),
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    )
                 VStack(alignment: .leading, spacing: 2) {
                     Text(cue.title)
                         .font(.body.weight(.semibold))
@@ -135,9 +159,15 @@ struct CommentaryLibraryView: View {
                     }
                 }
                 Spacer(minLength: 8)
-                Text(recorded.contains(cue.id) ? "Nahráno" : "Nahrát")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(recorded.contains(cue.id) ? Theme.positive : .secondary)
+                Text(ready ? "Hotovo" : "Nahrát")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(ready ? Theme.positive : .secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        (ready ? Theme.positive : Color.secondary).opacity(0.14),
+                        in: Capsule()
+                    )
             }
             .accessibilityElement(children: .combine)
             .accessibilityLabel("\(cue.title), \(cue.detail), \(recorded.contains(cue.id) ? "nahráno" : "bez nahrávky")")
@@ -166,9 +196,14 @@ private enum ClipFilter: String, CaseIterable, Identifiable {
 struct CommentaryRecordView: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @StateObject private var recorder = CommentaryTakeRecorder()
     var cue: CommentaryCue
     @State private var discardPrompt = false
+    @State private var deletePrompt = false
+    @State private var savedPulse = 0
+
+    private let recordRed = Color(red: 0.93, green: 0.27, blue: 0.24)
 
     private var owner: UUID? { store.profile?.id }
     private var saved: Bool {
@@ -178,87 +213,19 @@ struct CommentaryRecordView: View {
     }
 
     var body: some View {
-        VStack(spacing: 28) {
-            VStack(spacing: 10) {
-                Text(cue.title)
-                    .font(.system(size: cue.title.count > 8 ? 40 : 64, weight: .heavy, design: .rounded))
-                    .minimumScaleFactor(0.6)
-                    .lineLimit(1)
-                Text(cue.detail)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Theme.accent)
-                Text(cue.prompt)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.top, 12)
-
-            micButton
-
-            Text(recorder.status)
-                .font(.headline)
-                .multilineTextAlignment(.center)
-                .frame(minHeight: 28)
-
-            if let error = recorder.errorMessage {
-                Text(error)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-            }
-
-            if !recorder.isRecording, recorder.draftURL != nil || saved {
-                HStack(spacing: 12) {
-                    Button {
-                        guard let owner else { return }
-                        recorder.togglePlayback(savedURL: store.commentary.fileURL(owner: owner, cue: cue), hasSaved: saved)
-                    } label: {
-                        Label(recorder.isPlaying ? "Zastavit" : "Přehrát", systemImage: recorder.isPlaying ? "stop.fill" : "play.fill")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(recorder.isRecording || (recorder.draftURL == nil && !saved))
-
-                    Button {
-                        saveTake()
-                    } label: {
-                        Label("Uložit", systemImage: "checkmark")
-                            .font(.headline)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .foregroundStyle(Theme.onAccent)
-                            .background(Theme.accentFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            .opacity(recorder.draftURL == nil || recorder.isRecording ? 0.4 : 1)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(recorder.draftURL == nil || recorder.isRecording)
-                }
-            }
-
-            if saved {
-                Label(recorder.draftURL == nil ? "Uloženo v profilu" : "Uložená verze zůstane, dokud neuložíš novou", systemImage: "checkmark.circle.fill")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(Theme.positive)
-                    .multilineTextAlignment(.center)
-                Button("Smazat nahrávku", role: .destructive) {
-                    guard let owner else { return }
-                    recorder.stopAll()
-                    store.commentary.delete(owner: owner, cue: cue)
-                    store.noteCommentaryChanged()
-                }
-                .disabled(recorder.isRecording)
-            }
-
-            Spacer(minLength: 0)
+        VStack(spacing: 14) {
+            cueHeader
+            stageCard
+            Spacer(minLength: 4)
+            recordControl
+            Spacer(minLength: 4)
         }
-        .padding(.horizontal, 24)
+        .padding(.horizontal, 20)
+        .padding(.top, 4)
+        .padding(.bottom, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.background)
-        .navigationTitle("Nahrávka")
+        .navigationTitle(cue.detail)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(recorder.draftURL != nil)
         .background(PopGestureLock(locked: recorder.draftURL != nil))
@@ -267,8 +234,40 @@ struct CommentaryRecordView: View {
             if recorder.draftURL != nil {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Zpět") { discardPrompt = true }
+                        .disabled(recorder.isRecording)
                 }
             }
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if canPlay {
+                    Button(action: togglePlayback) {
+                        Image(systemName: recorder.isPlaying ? "stop.fill" : "play.fill")
+                    }
+                    .accessibilityLabel(recorder.isPlaying ? "Zastavit přehrávání" : "Přehrát nahrávku")
+                }
+                if saved && recorder.draftURL == nil && !recorder.isRecording {
+                    Label("Uloženo", systemImage: "checkmark.circle.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.positive)
+                        .symbolEffect(.bounce, value: savedPulse)
+                        .accessibilityLabel("Uloženo v profilu")
+                }
+                if saved && !recorder.isRecording && !recorder.isPlaying {
+                    Button(role: .destructive) { deletePrompt = true } label: {
+                        Image(systemName: "trash")
+                    }
+                    .accessibilityLabel("Smazat nahrávku")
+                }
+                if recorder.draftURL != nil && !recorder.isRecording {
+                    Button("Uložit", action: saveTake)
+                        .fontWeight(.bold)
+                }
+            }
+        }
+        .confirmationDialog("Smazat nahrávku?", isPresented: $deletePrompt, titleVisibility: .visible) {
+            Button("Smazat", role: .destructive) { deleteTake() }
+            Button("Zrušit", role: .cancel) {}
+        } message: {
+            Text("Tahle hláška zmizí z profilu. Výchozí hlas ji pak dočte.")
         }
         .confirmationDialog("Neuložená nahrávka", isPresented: $discardPrompt, titleVisibility: .visible) {
             Button("Uložit") {
@@ -289,27 +288,177 @@ struct CommentaryRecordView: View {
         }
     }
 
+    private var cueHeader: some View {
+        VStack(spacing: 4) {
+            Text(cue.title)
+                .font(.system(size: cue.title.count > 8 ? 34 : 52, weight: .heavy, design: .rounded))
+                .minimumScaleFactor(0.6)
+                .lineLimit(1)
+            Text(cue.prompt)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var stageCard: some View {
+        VStack(spacing: 8) {
+            TakeWaveform(
+                samples: waveformSamples,
+                progress: waveformProgress,
+                tint: recorder.isRecording ? recordRed : Theme.accent
+            )
+            .frame(height: 40)
+
+            Text(clockText)
+                .font(.system(size: 28, weight: .bold, design: .rounded).monospacedDigit())
+                .contentTransition(.numericText())
+                .animation(reduceMotion ? nil : .snappy(duration: 0.2), value: clockText)
+
+            Text(phaseDetail)
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(recorder.errorMessage == nil ? .secondary : recordRed)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(stageStroke, lineWidth: recorder.isRecording || recorder.isPlaying ? 1.5 : 1)
+        }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: recorder.isRecording)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: recorder.isPlaying)
+    }
+
+    private var stageStroke: Color {
+        if recorder.isRecording { return recordRed.opacity(0.7) }
+        if recorder.isPlaying { return Theme.accent.opacity(0.7) }
+        if recorder.draftURL != nil { return Theme.accent.opacity(0.35) }
+        return Theme.stroke
+    }
+
+    private var recordControl: some View {
+        VStack(spacing: 8) {
+            micButton
+            Text(micCaption)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(recorder.isRecording ? recordRed : .secondary)
+        }
+    }
+
+    private var canPlay: Bool {
+        !recorder.isRecording && (recorder.draftURL != nil || saved)
+    }
+
     private var micButton: some View {
-        Button {
+        let recording = recorder.isRecording
+        let ringProgress = recording ? min(1, recorder.elapsed / recorder.maxSeconds) : (recorder.draftURL == nil ? 0 : 1)
+        return Button {
+            store.tapHaptic(recording ? .medium : .soft)
             recorder.toggleRecording()
         } label: {
             ZStack {
                 Circle()
-                    .fill(recorder.isRecording ? Color.red.opacity(0.18) : Theme.accentFill.opacity(0.18))
-                    .frame(width: 168, height: 168)
-                    .scaleEffect(recorder.isRecording ? 1 + recorder.level * 0.18 : 1)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 7)
+                    .frame(width: 136, height: 136)
                 Circle()
-                    .fill(recorder.isRecording ? Color.red : Theme.accentFill)
-                    .frame(width: 112, height: 112)
-                Image(systemName: recorder.isRecording ? "stop.fill" : "mic.fill")
-                    .font(.system(size: 40, weight: .bold))
-                    .foregroundStyle(recorder.isRecording ? Color.white : Theme.onAccent)
+                    .trim(from: 0, to: ringProgress)
+                    .stroke(
+                        recording ? recordRed : Theme.accentFill,
+                        style: StrokeStyle(lineWidth: 7, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+                    .frame(width: 136, height: 136)
+                if recording && !reduceMotion {
+                    Circle()
+                        .stroke(recordRed.opacity(0.28), lineWidth: 2)
+                        .frame(width: 108 + recorder.level * 16, height: 108 + recorder.level * 16)
+                }
+                Circle()
+                    .fill(recording ? recordRed : Theme.accentFill)
+                    .frame(width: 88, height: 88)
+                    .shadow(color: (recording ? recordRed : Theme.accentFill).opacity(0.38), radius: 12, y: 4)
+                Image(systemName: recording ? "stop.fill" : "mic.fill")
+                    .font(.system(size: 30, weight: .bold))
+                    .foregroundStyle(recording ? Color.white : Theme.onAccent)
+                    .symbolEffect(.pulse, options: .repeating, isActive: recording && !reduceMotion)
             }
-            .animation(.easeOut(duration: 0.12), value: recorder.level)
+            .opacity(recorder.isPlaying ? 0.38 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: recorder.level)
+            .animation(reduceMotion ? nil : .linear(duration: 0.08), value: ringProgress)
         }
         .buttonStyle(.plain)
         .disabled(recorder.isPlaying)
-        .accessibilityLabel(recorder.isRecording ? "Zastavit nahrávání" : "Nahrát")
+        .accessibilityLabel(recording ? "Zastavit nahrávání" : "Nahrát")
+        .accessibilityValue(clockText)
+    }
+
+    private var micCaption: String {
+        if recorder.isPlaying { return "Nejdřív zastav poslech" }
+        if recorder.isRecording { return "Zastavit" }
+        if recorder.draftURL != nil { return "Nahrát znovu" }
+        return "Klepni a namluv"
+    }
+
+    private var phaseDetail: String {
+        if let error = recorder.errorMessage { return error }
+        if recorder.isRecording { return "Nahrávám" }
+        if recorder.isPlaying { return "Přehrávám" }
+        if recorder.draftURL != nil, saved { return "Nový záznam. Původní zůstane, dokud ho neuložíš." }
+        if recorder.draftURL != nil { return "Nový záznam. Přehrej ho a ulož." }
+        if saved { return "Uložená hláška" }
+        return "Připraveno · nejvýš 8 sekund"
+    }
+
+    private var clockText: String {
+        let seconds: TimeInterval
+        if recorder.isPlaying {
+            seconds = recorder.playbackTime
+        } else if recorder.isRecording {
+            seconds = recorder.elapsed
+        } else if recorder.draftURL != nil {
+            seconds = recorder.takeSeconds
+        } else {
+            seconds = 0
+        }
+        let shown = seconds.formatted(.number.precision(.fractionLength(1)))
+        if recorder.isRecording {
+            let cap = recorder.maxSeconds.formatted(.number.precision(.fractionLength(0)))
+            return "\(shown) / \(cap) s"
+        }
+        return "\(shown) s"
+    }
+
+    private var waveformSamples: [CGFloat] {
+        if recorder.samples.count == CommentaryTakeRecorder.waveformBars {
+            return recorder.samples
+        }
+        let count = CommentaryTakeRecorder.waveformBars
+        let seed = cue.id.unicodeScalars.reduce(0) { $0 &+ Int($1.value) }
+        return (0..<count).map { index in
+            let envelope = sin(Double(index) / Double(count - 1) * .pi)
+            let wobble = abs(sin(Double(index) * 0.62 + Double(seed % 9)))
+            return CGFloat(0.16 + 0.42 * envelope * (0.45 + 0.55 * wobble))
+        }
+    }
+
+    /// `-2` je klidový náhled, `-1` celý záznam bez přehrávací hlavy, `0…1` je poslech.
+    private var waveformProgress: CGFloat {
+        if recorder.isPlaying { return recorder.playbackProgress }
+        if recorder.isRecording || recorder.draftURL != nil { return -1 }
+        return -2
+    }
+
+    private func togglePlayback() {
+        guard let owner else { return }
+        store.selectionHaptic()
+        recorder.togglePlayback(savedURL: store.commentary.fileURL(owner: owner, cue: cue), hasSaved: saved)
     }
 
     private func saveTake() {
@@ -318,39 +467,45 @@ struct CommentaryRecordView: View {
             try store.commentary.save(owner: owner, cue: cue, from: draft)
             recorder.discardDraft()
             store.noteCommentaryChanged()
-            store.feedback()
+            savedPulse += 1
+            store.feedback(announce: false)
         } catch {
             recorder.errorMessage = "Nahrávku se nepodařilo uložit. \(error.localizedDescription)"
         }
+    }
+
+    private func deleteTake() {
+        guard let owner else { return }
+        recorder.stopAll()
+        store.commentary.delete(owner: owner, cue: cue)
+        store.noteCommentaryChanged()
+        store.tapHaptic(.medium)
     }
 }
 
 @MainActor
 final class CommentaryTakeRecorder: NSObject, ObservableObject, AVAudioPlayerDelegate {
+    static let waveformBars = 32
+
     @Published private(set) var isRecording = false
     @Published private(set) var isPlaying = false
     @Published private(set) var level: CGFloat = 0
     @Published private(set) var draftURL: URL?
     @Published var errorMessage: String?
     @Published private(set) var takeSeconds: TimeInterval = 0
+    @Published private(set) var elapsed: TimeInterval = 0
+    @Published private(set) var samples: [CGFloat] = []
+    @Published private(set) var playbackTime: TimeInterval = 0
+    @Published private(set) var playbackProgress: CGFloat = 0
 
     private var recorder: AVAudioRecorder?
     private var player: AVAudioPlayer?
     private var meter: Timer?
+    private var playbackMeter: Timer?
     private var startedAt: Date?
     private var pendingURL: URL?
     private let finishProxy = RecorderFinishProxy()
-    private let maxSeconds: TimeInterval = 8
-
-    var status: String {
-        if isRecording { return "Nahrávám…" }
-        if isPlaying { return "Poslech" }
-        if draftURL != nil {
-            let seconds = takeSeconds.formatted(.number.precision(.fractionLength(1)))
-            return "Nový záznam \(seconds) s. Poslechni si ho a ulož."
-        }
-        return "Klepni na mikrofon a namluv hlášku."
-    }
+    let maxSeconds: TimeInterval = 8
 
     func toggleRecording() {
         if isRecording {
@@ -378,7 +533,10 @@ final class CommentaryTakeRecorder: NSObject, ObservableObject, AVAudioPlayerDel
             next.play()
             player = next
             isPlaying = true
+            playbackTime = 0
+            playbackProgress = 0
             errorMessage = nil
+            startPlaybackMeter()
         } catch {
             errorMessage = "Poslech se nepodařil. \(error.localizedDescription)"
         }
@@ -412,6 +570,8 @@ final class CommentaryTakeRecorder: NSObject, ObservableObject, AVAudioPlayerDel
         }
         draftURL = nil
         takeSeconds = 0
+        elapsed = 0
+        samples = []
     }
 
     private func startRecording() async {
@@ -453,6 +613,8 @@ final class CommentaryTakeRecorder: NSObject, ObservableObject, AVAudioPlayerDel
             startedAt = Date()
             isRecording = true
             level = 0
+            elapsed = 0
+            samples = Array(repeating: 0.1, count: Self.waveformBars)
             meter?.invalidate()
             let timer = Timer(timeInterval: 0.06, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.sampleLevel() }
@@ -470,6 +632,31 @@ final class CommentaryTakeRecorder: NSObject, ObservableObject, AVAudioPlayerDel
         let power = recorder.averagePower(forChannel: 0)
         let normalized = max(0, min(1, (power + 50) / 50))
         level = CGFloat(normalized)
+        let seconds = Date().timeIntervalSince(startedAt ?? Date())
+        elapsed = seconds
+        var next = samples
+        if next.count != Self.waveformBars {
+            next = Array(repeating: 0.1, count: Self.waveformBars)
+        }
+        let index = min(Self.waveformBars - 1, Int((seconds / maxSeconds) * Double(Self.waveformBars)))
+        next[index] = max(next[index], CGFloat(max(0.14, normalized)))
+        samples = next
+    }
+
+    private func startPlaybackMeter() {
+        playbackMeter?.invalidate()
+        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.samplePlayback() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        playbackMeter = timer
+    }
+
+    private func samplePlayback() {
+        guard let player, isPlaying else { return }
+        let duration = max(player.duration, 0.05)
+        playbackTime = player.currentTime
+        playbackProgress = CGFloat(min(1, player.currentTime / duration))
     }
 
     private func stopRecording() {
@@ -499,6 +686,8 @@ final class CommentaryTakeRecorder: NSObject, ObservableObject, AVAudioPlayerDel
         guard seconds > 0.2, let pendingURL else {
             if let pendingURL { try? FileManager.default.removeItem(at: pendingURL) }
             self.pendingURL = nil
+            samples = []
+            elapsed = 0
             errorMessage = "Nahrávka je moc krátká. Zkus to znovu."
             return
         }
@@ -509,16 +698,19 @@ final class CommentaryTakeRecorder: NSObject, ObservableObject, AVAudioPlayerDel
     }
 
     private func stopPlayback() {
+        playbackMeter?.invalidate()
+        playbackMeter = nil
         player?.stop()
         player = nil
         isPlaying = false
+        playbackTime = 0
+        playbackProgress = 0
     }
 
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         Task { @MainActor in
             guard self.player === player else { return }
-            self.player = nil
-            self.isPlaying = false
+            self.stopPlayback()
         }
     }
 }
@@ -558,8 +750,146 @@ private struct PopGestureLock: UIViewControllerRepresentable {
     }
 }
 
+/// Sloupce hlasitosti. `-2` je klidový náhled, `-1` je celý záznam, `0…1` je poslech.
+private struct TakeWaveform: View {
+    var samples: [CGFloat]
+    var progress: CGFloat
+    var tint: Color
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 3) {
+            ForEach(samples.indices, id: \.self) { index in
+                let amount = min(1, max(0.08, samples[index]))
+                Capsule(style: .continuous)
+                    .fill(barColor(index))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 8 + amount * 48)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .animation(.easeOut(duration: 0.08), value: samples)
+    }
+
+    private func barColor(_ index: Int) -> Color {
+        if progress < -1 { return tint.opacity(0.38) }
+        if progress < 0 { return tint }
+        let head = CGFloat(index) / CGFloat(max(samples.count - 1, 1))
+        return head <= progress + 0.001 ? tint : tint.opacity(0.22)
+    }
+}
+
+/// Jedna volba komentátora jako běžná řádka nastavení. Vybraná má fajfku.
+struct CommentatorOptionRow: View {
+    @EnvironmentObject private var store: AppStore
+    var item: Commentator
+
+    private var selected: Bool { store.commentator == item }
+
+    var body: some View {
+        Button {
+            guard !selected else { return }
+            store.commentator = item
+            store.selectionHaptic()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: symbol)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(selected ? Theme.onAccent : .secondary)
+                    .frame(width: 32, height: 32)
+                    .background(
+                        selected ? Theme.accentFill : Color.primary.opacity(0.08),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.title)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                if selected {
+                    Image(systemName: "checkmark")
+                        .font(.body.weight(.bold))
+                        .foregroundStyle(Theme.accent)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityLabel("\(item.title), \(detail)")
+    }
+
+    private var symbol: String {
+        switch item {
+        case .system: return "speaker.wave.2.fill"
+        case .custom: return "person.wave.2.fill"
+        }
+    }
+
+    private var detail: String {
+        switch item {
+        case .system:
+            return "Systém přečte skóre kola"
+        case .custom:
+            let count = store.commentaryCount
+            if count == 0 { return "Nahraj si vlastní hlášky" }
+            return CommentaryCopy.countPhrase(count)
+        }
+    }
+}
+
+/// Odkaz do studia nahrávek, s postupem kolik situací už je namluvených.
+struct CommentaryStudioLink: View {
+    @EnvironmentObject private var store: AppStore
+
+    private var total: Int { CommentaryCue.all.count }
+    private var count: Int { store.commentaryCount }
+    private var fraction: Double {
+        guard total > 0 else { return 0 }
+        return Double(count) / Double(total)
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "waveform.and.mic")
+                .font(.body.weight(.bold))
+                .foregroundStyle(Theme.onAccent)
+                .frame(width: 40, height: 40)
+                .background(Theme.accentFill, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Vlastní komentátor")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.primary)
+                Text(count == 0 ? "Namluv si hlášky" : "\(CommentaryCopy.countPhrase(count)) z \(total)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ProgressView(value: fraction)
+                    .tint(count == 0 ? Color.secondary.opacity(0.35) : Theme.positive)
+            }
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(count == 0 ? "Vlastní komentátor, zatím bez nahrávek" : "Vlastní komentátor, \(CommentaryCopy.countPhrase(count)) z \(total)")
+    }
+}
+
+enum CommentaryCopy {
+    static func countPhrase(_ count: Int) -> String {
+        let mod = count % 100
+        if count == 1 { return "1 nahrávka" }
+        if (2...4).contains(count % 10), !(12...14).contains(mod) { return "\(count) nahrávky" }
+        return "\(count) nahrávek"
+    }
+}
+
 #if DEBUG
 #Preview("Komentátor") {
     NavigationStack { CommentaryLibraryView() }.dartiqoPreview()
+}
+#Preview("Nahrávka") {
+    NavigationStack { CommentaryRecordView(cue: .celebration180) }.dartiqoPreview()
 }
 #endif

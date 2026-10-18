@@ -242,108 +242,120 @@ struct HeadToHeadPregameView: View {
         return "Head-to-Head proti \(series.opponentName). \(series.standingTitle) \(series.recordLine)."
     }
 
-    /// Plakát prvního střetu. Žádná karta, skóre ani historie — jen dva hráči a značková žlutá.
+    /// Čistý list: žlutá plocha nahoře, černý seznam hráčů dole. Žádné skóre ani souboj portrétů.
     private var debutLayout: some View {
-        GeometryReader { geo in
-            ScrollView {
-                VStack(spacing: 0) {
-                    Spacer(minLength: 8)
-                    Text("PRVNÍ STŘET")
-                        .font(.caption.weight(.heavy))
-                        .tracking(2.2)
-                        .foregroundStyle(.black)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 7)
-                        .background(Theme.brand, in: Capsule())
-
-                    Text("První\nvzájemný zápas")
-                        .font(.system(size: 48, weight: .heavy, design: .rounded))
-                        .multilineTextAlignment(.center)
-                        .minimumScaleFactor(0.55)
-                        .lineLimit(3)
-                        .padding(.top, 18)
-                        .padding(.horizontal, 16)
-
-                    debutFaces
-                        .padding(.top, 26)
-
-                    Text("S \(series.opponentName) se u terče potkáváte poprvé.")
-                        .font(.title3.weight(.semibold))
-                        .multilineTextAlignment(.center)
-                        .padding(.top, 22)
-                        .padding(.horizontal, 28)
-
-                    Text("Až zápas dohrajete, zapíše se sem první výsledek.")
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.62))
-                        .multilineTextAlignment(.center)
-                        .padding(.top, 8)
-                        .padding(.horizontal, 36)
-                        .padding(.bottom, 12)
-
-                    Spacer(minLength: 8)
-                }
-                .frame(maxWidth: .infinity, minHeight: geo.size.height)
-            }
-            .scrollIndicators(.hidden)
+        VStack(spacing: 0) {
+            debutHero
+            debutSheet
         }
+        .offset(y: appeared || reduceMotion ? 0 : 28)
     }
 
-    private var debutFaces: some View {
-        HStack(alignment: .top, spacing: 0) {
-            debutPlayer(name: myName, photo: myPhoto, bot: false, asset: nil)
-            debutDivider
-            debutPlayer(
+    private var debutHero: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("ČISTÝ LIST")
+                .font(.caption.weight(.heavy))
+                .tracking(1.8)
+            Text("První\nzápas")
+                .font(.system(size: 64, weight: .heavy, design: .rounded))
+                .minimumScaleFactor(0.45)
+                .lineLimit(2)
+            Text("S \(series.opponentName) ještě nemáte ani jeden společný výsledek.")
+                .font(.body.weight(.medium))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(.black)
+        .frame(maxWidth: .infinity, alignment: .bottomLeading)
+        .padding(.horizontal, 28)
+        .padding(.top, 36)
+        .padding(.bottom, 28)
+    }
+
+    private var debutSheet: some View {
+        VStack(spacing: 0) {
+            debutRow(
+                kicker: "Ty",
+                name: myName,
+                photo: myPhoto,
+                bot: false,
+                asset: nil,
+                badge: nil
+            )
+            Rectangle()
+                .fill(Theme.brand.opacity(0.45))
+                .frame(height: 1)
+                .padding(.leading, 78)
+            debutRow(
+                kicker: opponentKicker,
                 name: series.opponentName,
                 photo: theirPhoto,
                 bot: opponentIsBot,
-                asset: opponentAsset
+                asset: opponentAsset,
+                badge: opponentBadge
             )
+            Spacer(minLength: 8)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 22)
+        .padding(.top, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background {
+            UnevenRoundedRectangle(
+                topLeadingRadius: 32,
+                bottomLeadingRadius: 0,
+                bottomTrailingRadius: 0,
+                topTrailingRadius: 32,
+                style: .continuous
+            )
+            .fill(Color.black)
+            .ignoresSafeArea(edges: .bottom)
+        }
     }
 
-    private var debutDivider: some View {
-        VStack(spacing: 10) {
-            Capsule()
-                .fill(Theme.brand)
-                .frame(width: 3, height: 72)
-            Text("1")
-                .font(.system(size: 22, weight: .heavy, design: .rounded))
-                .foregroundStyle(.black)
-                .frame(width: 44, height: 44)
-                .background(Theme.brand, in: Circle())
-            Capsule()
-                .fill(Theme.brand)
-                .frame(width: 3, height: 28)
-        }
-        .padding(.top, 34)
-        .accessibilityHidden(true)
+    private var opponentKicker: String {
+        if series.isGhost { return "Ghost" }
+        if series.opponentBotLevel != nil { return "Bot" }
+        return "Soupeř"
     }
 
-    private func debutPlayer(name: String, photo: Data?, bot: Bool, asset: String?) -> some View {
-        VStack(spacing: 12) {
-            Avatar(name: name, bot: bot, size: 112, photo: photo, asset: asset)
-                .overlay(Circle().strokeBorder(Theme.brand, lineWidth: 3))
-                .shadow(color: Theme.brand.opacity(0.28), radius: 18, y: 6)
-            Text(name)
-                .font(.headline.weight(.bold))
-                .lineLimit(2)
-                .minimumScaleFactor(0.7)
-                .multilineTextAlignment(.center)
+    private var opponentBadge: String? {
+        series.opponentBotLevel.map { "Lv. \($0)" }
+    }
+
+    private func debutRow(kicker: String, name: String, photo: Data?, bot: Bool, asset: String?, badge: String?) -> some View {
+        HStack(spacing: 14) {
+            Avatar(name: name, bot: bot, size: 58, photo: photo, asset: asset)
+                .overlay(Circle().strokeBorder(Theme.brand, lineWidth: 2))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(kicker.uppercased())
+                    .font(.caption2.weight(.heavy))
+                    .tracking(1.1)
+                    .foregroundStyle(Theme.brand)
+                Text(name)
+                    .font(.title3.weight(.bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            Spacer(minLength: 8)
+            if let badge {
+                Text(badge)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Theme.brand, in: Capsule())
+            }
         }
-        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
     }
 
     private var debutBackground: some View {
-        ZStack {
-            Color.black
-            DartboardArt()
-                .frame(width: 340, height: 340)
-                .opacity(0.22)
-                .offset(y: -30)
-                .allowsHitTesting(false)
-            RadialGradient(colors: [Theme.brand.opacity(0.34), .clear], center: .bottom, startRadius: 10, endRadius: 520)
+        ZStack(alignment: .topTrailing) {
+            Theme.brand
+            Text("0")
+                .font(.system(size: 220, weight: .black, design: .rounded))
+                .foregroundStyle(.black.opacity(0.08))
+                .offset(x: 40, y: 12)
+                .accessibilityHidden(true)
         }
         .ignoresSafeArea()
     }

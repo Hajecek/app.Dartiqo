@@ -14,14 +14,6 @@ struct SettingsView: View {
     @State private var exportError: String?
     @State private var photoItem: PhotosPickerItem?
 
-    private var commentaryLabel: String {
-        let count = store.commentaryCount
-        let mod = count % 100
-        if count == 1 { return "1 nahrávka" }
-        if (2...4).contains(count % 10), !(12...14).contains(mod) { return "\(count) nahrávky" }
-        return "\(count) nahrávek"
-    }
-
     var body: some View {
         Form {
             Section {
@@ -75,24 +67,13 @@ struct SettingsView: View {
                 Picker("Vzhled", selection: $store.data.appearance) { Text("Tmavý").tag("dark"); Text("Světlý").tag("light"); Text("Podle systému").tag("system") }
                 Toggle("Haptická odezva", isOn: $store.data.haptics).tint(Theme.mint)
                 Toggle("Hlasové hlášení skóre", isOn: $store.data.voice).tint(Theme.mint)
-                Picker("Komentátor", selection: Binding(
-                    get: { store.commentator },
-                    set: { store.commentator = $0 }
-                )) {
-                    ForEach(Commentator.allCases) { item in
-                        Text(item.title).tag(item)
-                    }
+                ForEach(Commentator.allCases) { item in
+                    CommentatorOptionRow(item: item)
                 }
                 NavigationLink {
                     CommentaryLibraryView()
                 } label: {
-                    HStack {
-                        Label("Vlastní komentátor", systemImage: "waveform.and.mic")
-                        Spacer()
-                        Text(commentaryLabel)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    CommentaryStudioLink()
                 }
                 Toggle("Adaptivní bot", isOn: Binding(
                     get: { store.data.adaptiveAI != false },

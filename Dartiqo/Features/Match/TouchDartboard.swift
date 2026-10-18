@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Vzhled terče. Mapa dopadů i herní terč kreslí stejná pole a stejné plátno.
+/// Vzhled herního terče. Mapa dopadů si z něj bere jen plátno a kruh v pozadí.
 enum BoardFace {
     static let plate = Color.black
     static let surround = Color(white: 0.14)
