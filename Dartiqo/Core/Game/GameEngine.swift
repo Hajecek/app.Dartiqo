@@ -176,6 +176,11 @@ public enum Checkout {
         for end in ends where end.score == score { return [end] }
         if darts >= 2, let two = twoDart(score: score, ends: ends) { return two }
         if darts >= 3 {
+            // 135: střed. 50 nechá 85, 25 nechá 110 (T20, bull). S20 by nechalo 115 a dvě šipky nestačí.
+            if score == 135, rule == .double,
+               let rest = twoDart(score: 85, ends: ends) {
+                return [Dart(25, 2)] + rest
+            }
             var fallback: [Dart]?
             for first in preferredSetups {
                 let left = score - first.score

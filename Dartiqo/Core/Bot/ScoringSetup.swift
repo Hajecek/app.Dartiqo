@@ -15,13 +15,18 @@ enum ScoringSetup {
     private static let sixDartTargets: Set<Int> = [350, 347, 344, 341, 340]
 
     /// `nil`, když není co sehrávat — skórování pak řeší rotace 20 → 19 → 18.
-    static func aim(remaining: Int, dartsLeft: Int, rule: OutRule, profile: BotProfile) -> Dart? {
+    static func aim(remaining: Int, dartsLeft: Int, rule: OutRule, profile: BotProfile, thrown: [Dart] = []) -> Dart? {
         guard rule == .double, profile.checkoutIntelligence >= 0.40 else { return nil }
         guard (1...3).contains(dartsLeft), (2...501).contains(remaining), remaining <= 490 else { return nil }
         if (451...490).contains(remaining) {
             return sixDartAim(remaining: remaining, darts: dartsLeft)
         }
-        return checkoutAim(remaining: remaining, darts: dartsLeft, profile: profile)
+        return checkoutAim(remaining: remaining, darts: dartsLeft, profile: profile, thrown: thrown)
+    }
+
+    /// Poslední šipka bez nutnosti chytré úrovně. Bez `allowAwkward170` nejde single mimo velká čísla jen kvůli 170.
+    static func lastDart(remaining: Int, allowAwkward170: Bool) -> Dart? {
+        oneDartLeave(remaining: remaining, allowAwkward170: allowAwkward170)
     }
 
     private static let finishable: Set<Int> = Set((2...170).filter { Checkout.canFinish($0) })
@@ -29,8 +34,12 @@ enum ScoringSetup {
     /// Pořadí nechání, když zbývá jedna šipka. 170 je výš než 167, ať 227 jde na T19.
     private static let oneDartLeaves = [170, 167, 164, 161, 160, 158, 157, 156, 154, 152, 150, 140, 136, 120, 130, 110, 100, 81, 80, 64, 60, 50, 41, 40, 36, 32, 24, 16, 8, 4]
 
-    private static func checkoutAim(remaining: Int, darts: Int, profile: BotProfile) -> Dart? {
-        if darts == 1, let exact = oneDartLeave(remaining: remaining) { return exact }
+    private static func checkoutAim(remaining: Int, darts: Int, profile: BotProfile, thrown: [Dart]) -> Dart? {
+        // 275 je T20. Po S20 zbývá 255 a dvě šipky — střed, ať 25 i 50 nechají další hod k dopočtu.
+        if remaining == 275 { return Dart(20, 3) }
+        if remaining == 255, darts == 2 { return Dart(25, 2) }
+        if let stayed = stayOnHitTreble(remaining: remaining, thrown: thrown, profile: profile) { return stayed }
+        if darts == 1, let exact = oneDartLeave(remaining: remaining, allowAwkward170: false) { return exact }
         if let five = fiveMarkAim(remaining: remaining, darts: darts, profile: profile) { return five }
         guard let choice = bestBed(remaining: remaining, darts: darts, score: { path in
             checkoutValue(path, remaining: remaining)
@@ -96,6 +105,16 @@ enum ScoringSetup {
         return scored + leaveBonus(leave) + (sameBed ? 12 : 0)
     }
 
+    /// Trefený treble 20/19/18 se drží, dokud se do pole vejde další šipka.
+    private static func stayOnHitTreble(remaining: Int, thrown: [Dart], profile: BotProfile) -> Dart? {
+        guard remaining > 180, let last = thrown.last, last.multiplier == 3, beds.contains(last.segment) else { return nil }
+        let occupied = thrown.filter { $0.segment == last.segment && $0.multiplier == 3 }
+        guard BotCheckoutEngine.trebleHasRoom(segment: last.segment, occupied: occupied, profile: profile) else { return nil }
+        let treble = Dart(last.segment, 3)
+        guard remaining - treble.score >= 2 else { return nil }
+        return treble
+    }
+
     /// Pět zásahů do 19 nechá 170/167/164. Na 265, 262 a 259 se proto začíná na T19.
     /// Další šipka pořád míří na T19. Na single přejde jen tehdy, když to podle
     /// úspěšnosti dané úrovně vychází zřetelně líp.
@@ -135,7 +154,7 @@ enum ScoringSetup {
                 count += 1
                 continue
             }
-            let follow = oneDartLeave(remaining: next) ?? aim
+            let follow = oneDartLeave(remaining: next, allowAwkward170: false) ?? aim
             for last in sampleHits(aim: follow, profile: profile) {
                 let leave = next - last.score
                 let scored = hit.score + last.score
@@ -161,13 +180,29 @@ enum ScoringSetup {
     private static let eliteLeaves: Set<Int> = [170, 167, 164, 161, 160, 140, 100, 80, 50, 40, 36, 32, 24, 16]
 
     /// Jedna šipka: vezmi hod, po kterém zůstane nejlepší zavření. 227 − T19 = 170.
-    /// Malá pole jen tehdy, když trefí elitní nechání — ať 159 nejde na S1 kvůli 158.
-    private static func oneDartLeave(remaining: Int) -> Dart? {
+    /// Nad 170 nejdřív elitní nechání 170–160, jinak T20 → T19 → T18 (210 → T20, ne D20).
+    private static func oneDartLeave(remaining: Int, allowAwkward170: Bool) -> Dart? {
+        if remaining > 170, let elite = eliteHighLeave(remaining: remaining, allowAwkward170: allowAwkward170) {
+            return elite
+        }
+        if remaining > 170 {
+            for segment in [20, 19, 18] {
+                let treble = Dart(segment, 3)
+                let leave = remaining - treble.score
+                if leave >= 2, finishable.contains(leave) { return treble }
+            }
+        }
         let options = (1...20).reversed().flatMap { [Dart($0, 3), Dart($0, 2), Dart($0)] } + [Dart(25, 2), Dart(25)]
+        let trebleLeavesFinish = (18...20).contains { segment in
+            let leave = remaining - segment * 3
+            return leave >= 2 && finishable.contains(leave)
+        }
         var best: (rank: Int, dart: Dart)?
         for dart in options {
             let leave = remaining - dart.score
             guard leave >= 2, finishable.contains(leave) else { continue }
+            if dart.multiplier == 2, trebleLeavesFinish { continue }
+            if !allowAwkward170, !isBigBed(dart) { continue }
             guard isBigBed(dart) || eliteLeaves.contains(leave) else { continue }
             let rank = oneDartRank(leave) * 1_000 + dart.segment * 10 + dart.multiplier
             if best == nil || rank > best!.rank {
@@ -175,6 +210,25 @@ enum ScoringSetup {
             }
         }
         return best?.dart
+    }
+
+    /// 227 → T19, 189 → S19, 187 → S17, 221 → T17. Single mimo velká čísla jen s `allowAwkward170`.
+    private static func eliteHighLeave(remaining: Int, allowAwkward170: Bool) -> Dart? {
+        for leave in [170, 167, 164, 161, 160] {
+            let need = remaining - leave
+            guard need > 0 else { continue }
+            if need % 3 == 0 {
+                let segment = need / 3
+                if (1...20).contains(segment) { return Dart(segment, 3) }
+            }
+            if (1...20).contains(need) {
+                let single = Dart(need)
+                if isBigBed(single) || allowAwkward170 { return single }
+            }
+            if need == 50 { return Dart(25, 2) }
+            if need == 25 { return Dart(25) }
+        }
+        return nil
     }
 
     private static func isBigBed(_ dart: Dart) -> Bool {

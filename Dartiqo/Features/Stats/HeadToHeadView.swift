@@ -364,6 +364,7 @@ struct HeadToHeadPregameView: View {
 struct HeadToHeadStandingView: View {
     enum Style { case light, ceremony }
 
+    @EnvironmentObject private var store: AppStore
     var series: HeadToHead
     var me: UUID
     var myName: String
@@ -417,7 +418,7 @@ struct HeadToHeadStandingView: View {
     private var header: some View {
         VStack(spacing: 14) {
             HStack(spacing: 0) {
-                playerSide(name: myName, photo: myPhoto, bot: false, asset: nil, badge: nil, align: .leading, highlighted: !isDebut && !isBehind)
+                playerSide(name: myName, photo: myPhoto, bot: false, asset: nil, badge: nil, align: .leading, highlighted: !isDebut && !isBehind, completion: store.completionCaption(for: me), reservesCompletion: showsCompletion)
                 if isDebut {
                     debutMark
                 } else {
@@ -440,7 +441,9 @@ struct HeadToHeadStandingView: View {
                     asset: series.opponentBotLevel.map { BotLevel.get($0).photo },
                     badge: series.opponentBotLevel.map { "Lv. \($0)" },
                     align: .trailing,
-                    highlighted: !isDebut && isBehind
+                    highlighted: !isDebut && isBehind,
+                    completion: opponentCompletion,
+                    reservesCompletion: showsCompletion
                 )
             }
 
@@ -533,6 +536,15 @@ struct HeadToHeadStandingView: View {
         return "\(Int((series.myWinRate * 100).rounded())) %"
     }
 
+    private var opponentCompletion: String? {
+        guard case .person(let id) = series.key.kind else { return nil }
+        return store.completionCaption(for: id)
+    }
+
+    private var showsCompletion: Bool {
+        store.completionCaption(for: me) != nil || opponentCompletion != nil
+    }
+
     private func playerSide(
         name: String,
         photo: Data?,
@@ -540,7 +552,9 @@ struct HeadToHeadStandingView: View {
         asset: String?,
         badge: String?,
         align: HorizontalAlignment,
-        highlighted: Bool
+        highlighted: Bool,
+        completion: String? = nil,
+        reservesCompletion: Bool = false
     ) -> some View {
         VStack(alignment: align, spacing: 8) {
             if let badge {
@@ -563,6 +577,16 @@ struct HeadToHeadStandingView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
                 .frame(maxWidth: .infinity, alignment: align == .leading ? .leading : .trailing)
+            if completion != nil || reservesCompletion {
+                Text(completion ?? " ")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(style == .ceremony ? Color.white.opacity(0.72) : Color.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .frame(maxWidth: .infinity, alignment: align == .leading ? .leading : .trailing)
+                    .opacity(completion == nil ? 0 : 1)
+                    .accessibilityHidden(completion == nil)
+            }
         }
         .frame(maxWidth: .infinity, alignment: align == .leading ? .leading : .trailing)
         .opacity(!highlighted && (isAhead || isBehind) ? 0.72 : 1)

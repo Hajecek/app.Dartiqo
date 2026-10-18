@@ -142,6 +142,7 @@ struct ProfileView: View {
                 Text("\(progress.intoLevel) / \(progress.needed) XP do levelu \(store.level + 1)")
                     .font(.caption.weight(.medium))
                     .opacity(0.65)
+                completionRow
             }
 
             HStack(alignment: .bottom) {
@@ -180,6 +181,24 @@ struct ProfileView: View {
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         }
+    }
+
+    private var completionRow: some View {
+        let ledger = store.matchCompletion
+        return Text(completionDetail(ledger))
+            .font(.caption2.weight(.medium))
+            .opacity(0.55)
+            .accessibilityLabel(completionAccessibility(ledger))
+    }
+
+    private func completionDetail(_ ledger: MatchCompletionLedger) -> String {
+        guard let rate = ledger.percent else { return "Dokončeno —" }
+        return "Dokončeno \(Int(rate.rounded())) % · \(ledger.completed) z \(ledger.decided)"
+    }
+
+    private func completionAccessibility(_ ledger: MatchCompletionLedger) -> String {
+        guard let rate = ledger.percent else { return "Dokončené zápasy: zatím žádný" }
+        return "Dokončené zápasy: \(Int(rate.rounded())) procent, \(ledger.completed) z \(ledger.decided)."
     }
 
     private func headline(_ value: String, _ label: String) -> some View {

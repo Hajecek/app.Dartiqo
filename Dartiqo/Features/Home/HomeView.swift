@@ -149,6 +149,11 @@ struct HomeView: View {
                     Text("průměr")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(.white.opacity(0.62))
+                    Text(completionText)
+                        .font(.caption2.weight(.medium))
+                        .monospacedDigit()
+                        .foregroundStyle(.white.opacity(0.62))
+                        .padding(.top, 2)
                 }
             }
             .padding(.top, 8)
@@ -156,7 +161,7 @@ struct HomeView: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(store.profile?.name ?? "Hráč"), level \(store.level), \(progress.intoLevel) z \(progress.needed) XP, průměr \(averageText)")
+        .accessibilityLabel("\(store.profile?.name ?? "Hráč"), level \(store.level), \(progress.intoLevel) z \(progress.needed) XP, průměr \(averageText), \(completionText)")
     }
 
     private func levelBadge(progress: Double, xpInLevel: Int, needed: Int) -> some View {
@@ -190,6 +195,11 @@ struct HomeView: View {
 
     private var averageText: String {
         store.ownVisits.isEmpty ? "—" : String(format: "%.1f", store.average)
+    }
+
+    private var completionText: String {
+        guard let percent = store.matchCompletion.percent else { return "dokončeno —" }
+        return "dokončeno \(Int(percent.rounded())) %"
     }
 
     private var actionGrid: some View {

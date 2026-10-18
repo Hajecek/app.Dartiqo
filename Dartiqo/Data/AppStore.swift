@@ -14,6 +14,8 @@ struct Profile: Codable, Identifiable {
     /// Lokální handle pro hledání mezi profily na zařízení.
     var username: String?
     var email: String?
+    /// Dokončené a zrušené zápasy. Historie se dá smazat, tahle bilance ne.
+    var matchCompletion: MatchCompletionLedger?
 }
 struct Friend: Codable, Identifiable, Equatable {
     var id = UUID()
@@ -102,7 +104,10 @@ enum AppSection: Hashable {
                 data = decoded
             }
         } catch { needsRecovery = true; storageError = "Data se nepodařilo načíst. Původní soubor nebyl přepsán. Použij obrazovku obnovy pro uložení kopie dat. \(error.localizedDescription)" }
-        if !needsRecovery { backfillMatchXP() }
+        if !needsRecovery {
+            backfillMatchXP()
+            backfillMatchCompletion()
+        }
         locked = data.biometricLock && profile != nil
     }
 #if DEBUG
@@ -115,6 +120,7 @@ enum AppSection: Hashable {
         locked = false
         needsRecovery = false
         backfillMatchXP()
+        backfillMatchCompletion()
     }
 #endif
     var presets: [GamePreset] { (data.presets ?? []).filter { $0.owner == profile?.id } }
@@ -272,7 +278,32 @@ enum AppSection: Hashable {
     var matches: [Match] { guard let id = profile?.id else { return [] }; return data.matches.filter { $0.players.contains { $0.id == id } }.sorted { ($0.completedAt ?? $0.createdAt) > ($1.completedAt ?? $1.createdAt) } }
     var activeMatch: Match? {
         get { guard let id = profile?.id.uuidString else { return nil }; return data.activeMatches[id] }
-        set { guard let id = profile?.id.uuidString else { return }; data.activeMatches[id] = newValue; save() }
+        set {
+            guard let id = profile?.id.uuidString else { return }
+            if let old = data.activeMatches[id], old.id != newValue?.id {
+                resolveMatchCompletion(old)
+            }
+            data.activeMatches[id] = newValue
+            save()
+        }
+    }
+
+    /// Bilance aktuálního profilu. Bez zápasů je prázdná, ne sto procent.
+    var matchCompletion: MatchCompletionLedger {
+        guard let id = profile?.id else { return MatchCompletionLedger() }
+        return matchCompletion(for: id) ?? MatchCompletionLedger()
+    }
+
+    /// Bilance místního profilu. Bot, ghost ani cizí jméno bez profilu `nil`.
+    func matchCompletion(for playerID: UUID) -> MatchCompletionLedger? {
+        guard let profile = data.profiles.first(where: { $0.id == playerID }) else { return nil }
+        return profile.matchCompletion ?? MatchCompletionLedger()
+    }
+
+    /// Krátký řádek do klasického zápasu. Bez rozhodnuté hry se nezobrazí.
+    func completionCaption(for playerID: UUID) -> String? {
+        guard let percent = matchCompletion(for: playerID)?.percent else { return nil }
+        return "Dokončí \(Int(percent.rounded())) %"
     }
 
     /// Sestava jde spustit jako lokální zápas (aspoň jeden soupeř, platní hráči / ghost).
@@ -586,7 +617,49 @@ enum AppSection: Hashable {
         guard data.matches.contains(where: { $0.id == id }) else { return }
         data.matches.removeAll { $0.id == id }
         data.matchXPAwards?.removeAll { $0.matchID == id }
+        // Bilance dokončení zůstává. Smazání z historie ji nesmí vylepšit.
         flushSave()
+    }
+
+    /// Jednorázově započte už uložené dohrané zápasy. Zrušené z minula v historii nejsou.
+    private func backfillMatchCompletion() {
+        let profiles = Set(data.profiles.map(\.id))
+        var changed = false
+        for match in data.matches where match.finished {
+            for playerID in humanProfiles(in: match, known: profiles) where noteMatchCompletion(playerID, match: match.id, outcome: .completed) {
+                changed = true
+            }
+        }
+        if changed { save() }
+    }
+
+    /// Dohrání připíše všem místním profilům v zápase. Zrušení jen tomu, kdo ho zahodil.
+    private func resolveMatchCompletion(_ match: Match) {
+        if match.finished {
+            let profiles = Set(data.profiles.map(\.id))
+            for playerID in humanProfiles(in: match, known: profiles) {
+                noteMatchCompletion(playerID, match: match.id, outcome: .completed)
+            }
+        } else if let owner = profile?.id, match.players.contains(where: { $0.id == owner && $0.botLevel == nil }) {
+            noteMatchCompletion(owner, match: match.id, outcome: .abandoned)
+        }
+    }
+
+    private func humanProfiles(in match: Match, known: Set<UUID>) -> [UUID] {
+        var seen: [UUID] = []
+        for player in match.players where player.botLevel == nil && known.contains(player.id) && !seen.contains(player.id) {
+            seen.append(player.id)
+        }
+        return seen
+    }
+
+    @discardableResult
+    private func noteMatchCompletion(_ playerID: UUID, match matchID: UUID, outcome: MatchCompletionOutcome) -> Bool {
+        guard let index = data.profiles.firstIndex(where: { $0.id == playerID }) else { return false }
+        var ledger = data.profiles[index].matchCompletion ?? MatchCompletionLedger()
+        guard ledger.note(matchID, outcome: outcome) else { return false }
+        data.profiles[index].matchCompletion = ledger
+        return true
     }
 
     /// Jednorázově doplní odměny ke starším dohraným zápasům. Stejné id znovu nezapíše.

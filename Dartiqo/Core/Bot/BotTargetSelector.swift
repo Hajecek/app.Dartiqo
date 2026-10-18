@@ -20,6 +20,7 @@ public enum BotTargetSelector {
                 opened: state.opened,
                 profile: profile,
                 thrown: visitDarts,
+                opponentAboveCheckout: rivalAboveCheckout(in: game),
                 using: &rng
             )
         case .countUp:
@@ -55,6 +56,15 @@ public enum BotTargetSelector {
         default:
             return modeAim(in: game, dartsLeft: dartsLeft)
         }
+    }
+
+    /// Soupeř je nad zavíráním, když ještě nemá checkout v příštích třech šipkách.
+    private static func rivalAboveCheckout(in game: Match) -> Bool {
+        let rivals = game.states.enumerated().filter { $0.offset != game.active }
+        guard let rival = rivals.min(by: { $0.element.remaining < $1.element.remaining }) else { return true }
+        let rule = game.config.outRule(for: rival.offset)
+        let score = rival.element.remaining
+        return score > 170 || !Checkout.canFinish(score, rule: rule, darts: 3)
     }
 
     private static func countUpAim<R: RandomNumberGenerator>(

@@ -1315,6 +1315,11 @@ struct MatchView: View {
                     Text(resultRecordLine(game, index: player, darts: darts))
                         .font(.subheadline)
                         .foregroundStyle(.white.opacity(0.62))
+                    if let caption = completionCaption(game, player: player) {
+                        Text(caption)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.78))
+                    }
                     if onTurn {
                         Text("Na tahu")
                             .font(.caption.weight(.bold))
@@ -3442,7 +3447,8 @@ struct MatchView: View {
     }
 
     private func resultScoreline(_ game: Match) -> some View {
-        HStack(alignment: .center, spacing: 0) {
+        let showsCompletion = game.players.indices.contains { completionCaption(game, player: $0) != nil }
+        return HStack(alignment: .center, spacing: 0) {
             ForEach(game.players.indices, id: \.self) { i in
                 if i > 0 {
                     Text(":")
@@ -3451,6 +3457,7 @@ struct MatchView: View {
                         .padding(.horizontal, 6)
                 }
                 VStack(spacing: 4) {
+                    let caption = completionCaption(game, player: i)
                     playerAvatar(game, index: i, size: 36)
                     let primary = game.config.playsSets ? game.states[i].sets : game.states[i].legs
                     Text("\(primary)")
@@ -3472,6 +3479,15 @@ struct MatchView: View {
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.6))
                         .lineLimit(1)
+                    if showsCompletion {
+                        Text(caption ?? " ")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(MatchColors.green)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                            .opacity(caption == nil ? 0 : 1)
+                            .accessibilityHidden(caption == nil)
+                    }
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -3508,6 +3524,11 @@ struct MatchView: View {
                         Text(resultRecordLine(game, index: index, darts: dartCount))
                             .font(.subheadline)
                             .foregroundStyle(.white.opacity(0.55))
+                        if let caption = completionCaption(game, player: index) {
+                            Text(caption)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(MatchColors.green)
+                        }
                     }
                     Spacer(minLength: 8)
                     if game.config.mode == .x01 {
@@ -3566,6 +3587,13 @@ struct MatchView: View {
                 stack
             }
         }
+    }
+
+    private func completionCaption(_ game: Match, player: Int) -> String? {
+        guard game.players.indices.contains(player) else { return nil }
+        let person = game.players[player]
+        guard person.botLevel == nil, !game.isGhost(player) else { return nil }
+        return store.completionCaption(for: person.id)
     }
 
     private func resultRecordLine(_ game: Match, index: Int, darts: Int) -> String {

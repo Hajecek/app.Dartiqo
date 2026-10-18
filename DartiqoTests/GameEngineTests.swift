@@ -290,6 +290,7 @@ final class GameEngineTests: XCTestCase {
         XCTAssertEqual(Checkout.route(for:68),[Dart(20,3),Dart(4,2)])
         XCTAssertEqual(Checkout.route(for:80),[Dart(20,3),Dart(10,2)])
         XCTAssertEqual(Checkout.route(for:132),[Dart(20,3),Dart(16,3),Dart(12,2)])
+        XCTAssertEqual(Checkout.route(for:135)?.first, Dart(25, 2))
         // Pojištěné první šipky: single stejného pole musí nechat 2-šipkové zavření.
         let covered = [119, 122, 123, 125, 126, 128, 129]
         for score in covered {

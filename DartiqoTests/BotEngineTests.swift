@@ -86,14 +86,14 @@ final class BotEngineTests: XCTestCase {
             dartsLeft: 2,
             thrown: game.currentDarts
         )
-        XCTAssertEqual(planned, Dart(19, 3))
-        var switched = 0
+        XCTAssertEqual(planned, Dart(20, 3))
+        var stayed = 0
         for seed in 1...40 {
             var rng = BotRNG(seed: UInt64(seed))
             let shot = BotGameController.simulateDart(in: game, using: &rng)
-            if shot.aim == Dart(19, 3) { switched += 1 }
+            if shot.aim == Dart(20, 3) { stayed += 1 }
         }
-        XCTAssertGreaterThan(switched, 25, "Po T20 má bot většinou mířit T19, přešlo jen \(switched)/40")
+        XCTAssertGreaterThan(stayed, 25, "Po T20 má bot zůstat na T20, zůstal jen \(stayed)/40")
     }
 
     func testScoringSetupFollowsHandbook() {
@@ -144,6 +144,82 @@ final class BotEngineTests: XCTestCase {
         )
         let weak = BotProfile.reference(level: 2)
         XCTAssertNil(ScoringSetup.aim(remaining: 273, dartsLeft: 3, rule: .double, profile: weak))
+        XCTAssertEqual(aim(275), Dart(20, 3))
+        XCTAssertEqual(aim(255, darts: 2), Dart(25, 2))
+    }
+
+    func testShapedCheckouts() {
+        let strong = BotProfile.reference(level: 16)
+        func planned(_ score: Int, darts: Int = 3, thrown: [Dart] = []) -> Dart {
+            BotCheckoutEngine.planned(
+                remaining: score,
+                dartsLeft: darts,
+                rule: .double,
+                opened: true,
+                profile: strong,
+                thrown: thrown
+            )
+        }
+        XCTAssertEqual(Checkout.route(for: 119)?.first, Dart(19, 3))
+        XCTAssertEqual(planned(119), Dart(19, 3))
+        XCTAssertEqual(Checkout.route(for: 135)?.first, Dart(25, 2))
+        XCTAssertEqual(planned(135), Dart(25, 2))
+        XCTAssertEqual(Checkout.route(for: 110, darts: 2), [Dart(20, 3), Dart(25, 2)])
+        XCTAssertEqual(Checkout.route(for: 96, darts: 2)?.first, Dart(20, 3))
+        XCTAssertEqual(Checkout.route(for: 101, darts: 2), [Dart(17, 3), Dart(25, 2)])
+        XCTAssertEqual(planned(121), Dart(25, 2))
+        var bulls = 0
+        var twenties = 0
+        for seed in 1...80 {
+            var rng = BotRNG(seed: UInt64(seed))
+            let shot = BotCheckoutEngine.aim(
+                remaining: 121,
+                dartsLeft: 3,
+                rule: .double,
+                opened: true,
+                profile: strong,
+                using: &rng
+            )
+            if shot == Dart(25, 2) { bulls += 1 }
+            if shot == Dart(20, 3) { twenties += 1 }
+        }
+        XCTAssertGreaterThan(bulls, 20, "Střed vyšel jen \(bulls)/80")
+        XCTAssertGreaterThan(twenties, 20, "Dvacítka vyšla jen \(twenties)/80")
+        XCTAssertEqual(planned(116, darts: 1), Dart(20, 3))
+        XCTAssertEqual(planned(116, darts: 1, thrown: packedTreble(segment: 20)), Dart(19, 3))
+        XCTAssertEqual(planned(179, darts: 1), Dart(20, 3))
+        XCTAssertEqual(planned(210, darts: 1), Dart(20, 3))
+        var awkward = 0
+        var plain = 0
+        for seed in 1...80 {
+            var above = BotRNG(seed: UInt64(seed))
+            var onFinish = BotRNG(seed: UInt64(seed))
+            let chase = BotCheckoutEngine.aim(
+                remaining: 179,
+                dartsLeft: 1,
+                rule: .double,
+                opened: true,
+                profile: strong,
+                opponentAboveCheckout: true,
+                using: &above
+            )
+            let score = BotCheckoutEngine.aim(
+                remaining: 179,
+                dartsLeft: 1,
+                rule: .double,
+                opened: true,
+                profile: strong,
+                opponentAboveCheckout: false,
+                using: &onFinish
+            )
+            if chase == Dart(9) { awkward += 1 }
+            if score == Dart(9) { plain += 1 }
+            XCTAssertEqual(score.multiplier, 3)
+            XCTAssertTrue((18...20).contains(score.segment))
+        }
+        XCTAssertEqual(plain, 0)
+        XCTAssertGreaterThan(awkward, 4, "Single na 170 vyšel jen \(awkward)/80")
+        XCTAssertLessThan(awkward, 50, "Single na 170 vyšel \(awkward)/80, má být jen občas")
     }
 
     func testScoringAimMovesDownTreblesAfterCover() {
@@ -151,36 +227,47 @@ final class BotEngineTests: XCTestCase {
         let ladder = BotCheckoutEngine.scoringLadder(for: strong)
         XCTAssertEqual(ladder.prefix(3).map { $0 }, [20, 19, 18])
         XCTAssertEqual(BotCheckoutEngine.scoringBedIndex(thrown: [], ladder: ladder, profile: strong), 0)
-        // Zakryté T20 → další šipka na T19.
+        // Jedna T20 ve středu treble pořád nechá místo — bot zůstává.
+        XCTAssertTrue(BotCheckoutEngine.trebleHasRoom(segment: 20, occupied: [Dart(20, 3)], profile: strong))
         XCTAssertEqual(
             BotCheckoutEngine.scoringBedIndex(thrown: [Dart(20, 3)], ladder: ladder, profile: strong),
-            1
+            0
         )
-        // Zakryté T20 i T19 → třetí šipka na T18.
+        // Podhoz do 19 bez treble přeskakuje na 18. Trefená T19 se na 19 nechá.
         XCTAssertEqual(
-            BotCheckoutEngine.scoringBedIndex(thrown: [Dart(20, 3), Dart(19, 3)], ladder: ladder, profile: strong),
+            BotCheckoutEngine.scoringBedIndex(thrown: [Dart(19)], ladder: ladder, profile: strong),
             2
         )
-        // Vedle T20 (1 nebo 5) — lepší bot „přečte“ miss a jde na 19.
         XCTAssertEqual(
-            BotCheckoutEngine.scoringBedIndex(thrown: [Dart(1)], ladder: ladder, profile: strong),
-            1
+            BotCheckoutEngine.scoringBedIndex(thrown: [Dart(20, 3), Dart(19)], ladder: ladder, profile: strong),
+            2
         )
         XCTAssertEqual(
-            BotCheckoutEngine.scoringBedIndex(thrown: [Dart(5)], ladder: ladder, profile: strong),
+            BotCheckoutEngine.scoringBedIndex(thrown: [Dart(20, 3), Dart(19, 3)], ladder: ladder, profile: strong),
             1
+        )
+        // Zakrytá dvacítka a minutý treble (S20 po T20) schází na 19.
+        XCTAssertEqual(
+            BotCheckoutEngine.scoringBedIndex(thrown: [Dart(20, 3), Dart(20)], ladder: ladder, profile: strong),
+            1
+        )
+        // Vedlejší segment (1 nebo 5) sám o sobě z T20 nesestěhuje.
+        XCTAssertEqual(
+            BotCheckoutEngine.scoringBedIndex(thrown: [Dart(1)], ladder: ladder, profile: strong),
+            0
         )
         XCTAssertEqual(
             BotCheckoutEngine.scoringAim(remaining: 501, rule: .double, profile: strong, thrown: [Dart(1)]),
-            Dart(19, 3)
+            Dart(20, 3)
         )
         let afterCover = BotCheckoutEngine.scoringAim(
-            remaining: 501,
+            remaining: 441,
             rule: .double,
             profile: strong,
             thrown: [Dart(20, 3)]
         )
-        XCTAssertEqual(afterCover, Dart(19, 3))
+        XCTAssertEqual(afterCover, Dart(20, 3))
+        XCTAssertFalse(BotCheckoutEngine.trebleHasRoom(segment: 20, occupied: packedTreble(segment: 20), profile: strong))
         let weak = BotProfile.reference(level: 2)
         let weakLadder = BotCheckoutEngine.scoringLadder(for: weak)
         // Slabý bot po zásahu / sousedovi často zůstane na stejné terci (deterministicky pod prahem).
@@ -407,6 +494,16 @@ final class BotEngineTests: XCTestCase {
             let rule = game.config.outRule(for: visit.player)
             XCTAssertTrue(rule.allows(visit.darts.last ?? .miss))
             XCTAssertLessThanOrEqual(visit.darts.count, 3)
+        }
+    }
+
+    private func packedTreble(segment: Int) -> [Dart] {
+        guard let index = BoardGeometry.sectors.firstIndex(of: segment) else { return [Dart(segment, 3)] }
+        let center = -Double.pi / 2 + Double(index) * .pi / 10
+        let radius = (BoardGeometry.tripleInner + BoardGeometry.tripleOuter) / 2
+        return stride(from: -0.14, through: 0.14, by: 0.028).map { offset in
+            let angle = center + offset
+            return Dart(segment, 3, x: cos(angle) * radius, y: sin(angle) * radius)
         }
     }
 
