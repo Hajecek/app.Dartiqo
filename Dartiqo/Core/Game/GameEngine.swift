@@ -31,14 +31,15 @@ extension Match {
                     states[index].remaining -= dart.score; credited += dart.score; won = states[index].remaining == 0
                 }
             case .cricket:
-                guard dart.segment >= 15 && (dart.segment <= 20 || dart.segment == 25) else { continue }
+                let numbers = config.settings.activeCricketNumbers
+                guard numbers.contains(dart.segment) else { continue }
                 let old = states[index].marks[dart.segment, default: 0]
                 let excess = max(0, old + dart.multiplier - 3)
                 states[index].marks[dart.segment] = min(3, old + dart.multiplier)
                 if !config.settings.cricketNoScore && states.indices.contains(where: { $0 != index && states[$0].marks[dart.segment, default: 0] < 3 }) {
                     states[index].points += excess * dart.segment; credited += excess * dart.segment
                 }
-                won = [15,16,17,18,19,20,25].allSatisfy { states[index].marks[$0, default: 0] == 3 } && (config.settings.cricketNoScore || states.indices.allSatisfy { $0 == index || states[index].points >= states[$0].points })
+                won = numbers.allSatisfy { states[index].marks[$0, default: 0] == 3 } && (config.settings.cricketNoScore || states.indices.allSatisfy { $0 == index || states[index].points >= states[$0].points })
             case .aroundClock:
                 let target = states[index].clockTarget == 21 ? 25 : states[index].clockTarget
                 if dart.segment == target && (target == 25 ? (config.settings.clockStyle == .any || dart.multiplier == 2) : config.settings.clockStyle.accepts(dart)) { states[index].clockTarget += 1; credited += 1 }

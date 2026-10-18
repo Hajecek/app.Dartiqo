@@ -232,7 +232,7 @@ public struct GameConfig: Codable, Equatable {
     public var summary: String {
         switch mode {
         case .x01: return "\(startingScore) • \(outRule.title)\(doubleIn ? " • Double in" : "")\(hasHandicap ? " • Handicap" : "")\(settings.dartLimit.map { " • \($0) šipek" } ?? "") • \(lengthLine)"
-        case .cricket: return "Cricket \(settings.cricketNoScore ? "bez bodů" : "s body") • \(lengthLine)"
+        case .cricket: return "Cricket \(settings.cricketNoScore ? "bez bodů" : "s body") · \(MatchOptions.cricketNumbersLine(settings.activeCricketNumbers)) • \(lengthLine)"
         case .aroundClock: return "1–20 + bull • \(settings.clockStyle.title)"
         case .countUp: return "\(settings.countUpRounds) kol • nejvyšší skóre vyhrává"
         }

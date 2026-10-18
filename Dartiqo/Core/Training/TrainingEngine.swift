@@ -140,7 +140,9 @@ extension TrainingKind {
             let used = picked.isEmpty ? numbers : picked.sorted()
             return .shanghai(numbers: used, instant: instant, limit: config.dartCount ?? easierLimit(limit, level))
         case .cricket(let numbers, let limit):
-            return .cricket(numbers: numbers, limit: config.dartCount ?? easierLimit(limit, level))
+            let picked = config.segments ?? []
+            let used = picked.isEmpty ? numbers : MatchOptions.orderedCricketNumbers(picked)
+            return .cricket(numbers: used, limit: config.dartCount ?? easierLimit(limit, level))
         case .checkoutFixed(let leaves, let visits, let need, let doubleIn):
             return .checkoutFixed(leaves: leaves, visits: config.rounds ?? visits, need: config.rounds ?? easierNeed(need, level), doubleIn: doubleIn)
         case .checkoutUntil(let start, let visits, let doubleIn):

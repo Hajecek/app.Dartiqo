@@ -445,15 +445,19 @@ struct VisitDetailView: View {
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .surface()
-                } else {
-                    TouchDartboard(marks: visit.darts, interactive: false) { _ in }
+                } else if visit.darts.contains(where: { $0.x != nil && $0.y != nil }) {
+                    TouchDartboard(marks: visit.darts.filter { $0.x != nil && $0.y != nil }, interactive: false) { _ in }
                         .allowsHitTesting(false)
                         .frame(maxWidth: 340)
                         .padding(10)
                         .frame(maxWidth: .infinity)
-                        .background(Color.black, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                        .background(BoardFace.plate, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
                         .environment(\.colorScheme, .dark)
                         .accessibilityLabel("Terč s šipkami \(visit.darts.map(\.label).joined(separator: ", "))")
+                } else {
+                    SegmentRoseChart(darts: visit.darts, title: "Kam šipky padaly")
+                }
+                if visit.enteredAsTotal != true {
                     VStack(spacing: 0) {
                         ForEach(Array(visit.darts.enumerated()), id: \.offset) { offset, dart in
                             HStack {

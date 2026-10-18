@@ -1,5 +1,105 @@
 import SwiftUI
 
+/// Vzhled terče. Mapa dopadů i herní terč kreslí stejná pole a stejné plátno.
+enum BoardFace {
+    static let plate = Color.black
+    static let surround = Color(white: 0.14)
+    static let blackBed = Color(white: 0.065)
+    static let creamBed = Color(red: 0.92, green: 0.84, blue: 0.65)
+    static let redBed = Color(red: 0.78, green: 0.12, blue: 0.15)
+    static let greenBed = Color(red: 0.04, green: 0.59, blue: 0.35)
+    static let wire = Color.gray.opacity(0.7)
+    static let heat = Color(red: 1, green: 0.92, blue: 0.15)
+    /// Skórovací poloměr vůči kratší straně. Číselník zůstává uvnitř kruhu.
+    static let radiusFactor: CGFloat = 0.43
+
+    static func layout(in size: CGSize) -> (center: CGPoint, radius: CGFloat) {
+        let side = min(size.width, size.height)
+        return (CGPoint(x: size.width / 2, y: size.height / 2), side * radiusFactor)
+    }
+
+    static func ring(inner: Double, outer: Double, start: Double, end: Double, center: CGPoint, radius: CGFloat) -> Path {
+        var path = Path()
+        path.addArc(center: center, radius: radius * outer, startAngle: .degrees(start), endAngle: .degrees(end), clockwise: false)
+        path.addArc(center: center, radius: radius * inner, startAngle: .degrees(end), endAngle: .degrees(start), clockwise: true)
+        path.closeSubpath()
+        return path
+    }
+
+    static func angles(for index: Int) -> (start: Double, end: Double) {
+        let start = Double(index) * 18 - 99
+        return (start, start + 18)
+    }
+
+    static func disk(factor: Double, center: CGPoint, radius: CGFloat) -> Path {
+        let span = radius * factor
+        return Path(ellipseIn: CGRect(x: center.x - span, y: center.y - span, width: span * 2, height: span * 2))
+    }
+
+    static func bedPath(segment: Int, multiplier: Int, center: CGPoint, radius: CGFloat) -> Path? {
+        if segment == 0 { return nil }
+        if segment == 25 {
+            let outer = multiplier == 2 ? BoardGeometry.innerBull : BoardGeometry.outerBull
+            let inner = multiplier == 2 ? 0 : BoardGeometry.innerBull
+            return disk(factor: outer, center: center, radius: radius)
+                .subtracting(disk(factor: inner, center: center, radius: radius))
+        }
+        guard let index = BoardGeometry.sectors.firstIndex(of: segment) else { return nil }
+        let bounds = angles(for: index)
+        if multiplier == 2 {
+            return ring(inner: BoardGeometry.doubleInner, outer: 1, start: bounds.start, end: bounds.end, center: center, radius: radius)
+        }
+        if multiplier == 3 {
+            return ring(inner: BoardGeometry.tripleInner, outer: BoardGeometry.tripleOuter, start: bounds.start, end: bounds.end, center: center, radius: radius)
+        }
+        return ring(inner: BoardGeometry.outerBull, outer: BoardGeometry.doubleInner, start: bounds.start, end: bounds.end, center: center, radius: radius)
+            .subtracting(ring(inner: BoardGeometry.tripleInner, outer: BoardGeometry.tripleOuter, start: bounds.start, end: bounds.end, center: center, radius: radius))
+    }
+
+    static func drawScoringBeds(context: GraphicsContext, center: CGPoint, radius: CGFloat) {
+        context.fill(disk(factor: 1.16, center: center, radius: radius), with: .color(surround))
+        for index in 0..<20 {
+            let bounds = angles(for: index)
+            let band = index.isMultiple(of: 2) ? redBed : greenBed
+            let base = index.isMultiple(of: 2) ? blackBed : creamBed
+            context.fill(ring(inner: BoardGeometry.outerBull, outer: 1, start: bounds.start, end: bounds.end, center: center, radius: radius), with: .color(base))
+            context.fill(ring(inner: BoardGeometry.doubleInner, outer: 1, start: bounds.start, end: bounds.end, center: center, radius: radius), with: .color(band))
+            context.fill(ring(inner: BoardGeometry.tripleInner, outer: BoardGeometry.tripleOuter, start: bounds.start, end: bounds.end, center: center, radius: radius), with: .color(band))
+        }
+    }
+
+    static func drawBulls(context: GraphicsContext, center: CGPoint, radius: CGFloat) {
+        context.fill(disk(factor: BoardGeometry.outerBull, center: center, radius: radius), with: .color(greenBed))
+        context.fill(disk(factor: BoardGeometry.innerBull, center: center, radius: radius), with: .color(redBed))
+    }
+
+    static func drawWires(context: GraphicsContext, center: CGPoint, radius: CGFloat) {
+        for index in 0..<20 {
+            let bounds = angles(for: index)
+            context.stroke(
+                ring(inner: BoardGeometry.outerBull, outer: 1, start: bounds.start, end: bounds.end, center: center, radius: radius),
+                with: .color(wire),
+                lineWidth: 0.5
+            )
+        }
+    }
+
+    static func drawNumbers(context: GraphicsContext, center: CGPoint, radius: CGFloat, aimedSegment: Int? = nil, aimColor: Color = heat) {
+        for index in 0..<20 {
+            let angle = (-90 + Double(index) * 18) * Double.pi / 180
+            let point = CGPoint(x: center.x + radius * 1.09 * cos(angle), y: center.y + radius * 1.09 * sin(angle))
+            let segment = BoardGeometry.sectors[index]
+            let aimed = segment == aimedSegment
+            context.draw(
+                Text("\(segment)")
+                    .font(.system(size: max(11, radius * 0.075), weight: aimed ? .heavy : .bold, design: .rounded))
+                    .foregroundColor(aimed ? aimColor : .white),
+                at: point
+            )
+        }
+    }
+}
+
 struct TouchDartboard: View {
     var marks: [Dart] = []
     var interactive = true
@@ -18,12 +118,12 @@ struct TouchDartboard: View {
     @State private var pressTask: Task<Void, Never>?
 
     private let zoomScale: CGFloat = 2.35
-    private let highlight = Color(red: 1, green: 0.92, blue: 0.15)
+    private let highlight = BoardFace.heat
 
     var body: some View {
         GeometryReader { geo in
             let size = geo.size
-            let radius = min(size.width, size.height) * 0.43 * max(zoom, 1)
+            let radius = min(size.width, size.height) * BoardFace.radiusFactor * max(zoom, 1)
             let center = CGPoint(x: size.width / 2, y: size.height / 2)
             ZStack {
                 boardCanvas(size: size, center: center, radius: radius, hover: hover)
@@ -124,45 +224,24 @@ struct TouchDartboard: View {
 
     private func boardCanvas(size: CGSize, center: CGPoint, radius: CGFloat, hover: Dart?) -> some View {
         Canvas { context, _ in
-            func ring(_ inner: Double, _ outer: Double, _ start: Double, _ end: Double) -> Path {
-                var p = Path()
-                p.addArc(center: center, radius: radius * outer, startAngle: .degrees(start), endAngle: .degrees(end), clockwise: false)
-                p.addArc(center: center, radius: radius * inner, startAngle: .degrees(end), endAngle: .degrees(start), clockwise: true)
-                p.closeSubpath()
-                return p
-            }
-            context.fill(Path(ellipseIn: CGRect(x: center.x - radius * 1.16, y: center.y - radius * 1.16, width: radius * 2.32, height: radius * 2.32)), with: .color(Color(white: 0.14)))
-            for i in 0..<20 {
-                let start = Double(i) * 18 - 99
-                let end = start + 18
-                let band = i.isMultiple(of: 2) ? Color(red: 0.78, green: 0.12, blue: 0.15) : Color(red: 0.04, green: 0.59, blue: 0.35)
-                let base = i.isMultiple(of: 2) ? Color(white: 0.065) : Color(red: 0.92, green: 0.84, blue: 0.65)
-                context.fill(ring(BoardGeometry.outerBull, 1, start, end), with: .color(base))
-                context.fill(ring(BoardGeometry.doubleInner, 1, start, end), with: .color(band))
-                context.fill(ring(BoardGeometry.tripleInner, BoardGeometry.tripleOuter, start, end), with: .color(band))
-                context.stroke(ring(BoardGeometry.outerBull, 1, start, end), with: .color(.gray.opacity(0.7)), lineWidth: 0.5)
-                let angle = (-90 + Double(i) * 18) * Double.pi / 180
-                let point = CGPoint(x: center.x + radius * 1.09 * cos(angle), y: center.y + radius * 1.09 * sin(angle))
-                let aimed = suggestion?.segment == BoardGeometry.sectors[i]
-                context.draw(Text("\(BoardGeometry.sectors[i])").font(.system(size: max(11, radius * 0.075), weight: aimed ? .heavy : .bold, design: .rounded)).foregroundColor(aimed ? highlight : .white), at: point)
-            }
-            for (r, color) in [(BoardGeometry.outerBull, Color(red: 0.04, green: 0.59, blue: 0.35)), (BoardGeometry.innerBull, Color(red: 0.78, green: 0.12, blue: 0.15))] {
-                context.fill(Path(ellipseIn: CGRect(x: center.x - radius * r, y: center.y - radius * r, width: radius * r * 2, height: radius * r * 2)), with: .color(color))
-            }
-            if let suggestion, let path = highlightPath(for: suggestion, center: center, radius: radius, ring: ring) {
+            BoardFace.drawScoringBeds(context: context, center: center, radius: radius)
+            BoardFace.drawWires(context: context, center: center, radius: radius)
+            BoardFace.drawNumbers(context: context, center: center, radius: radius, aimedSegment: suggestion?.segment, aimColor: highlight)
+            BoardFace.drawBulls(context: context, center: center, radius: radius)
+            if let suggestion, let path = highlightPath(for: suggestion, center: center, radius: radius) {
                 context.stroke(path, with: .color(.black.opacity(0.55)), lineWidth: 5)
                 context.fill(path, with: .color(highlight.opacity(0.78)))
                 context.stroke(path, with: .color(highlight), lineWidth: 2.5)
             }
             if markBeds {
                 for (index, dart) in marks.enumerated() where dart != suggestion {
-                    guard let path = highlightPath(for: dart, center: center, radius: radius, ring: ring) else { continue }
+                    guard let path = highlightPath(for: dart, center: center, radius: radius) else { continue }
                     let latest = index == marks.count - 1
                     context.fill(path, with: .color(highlight.opacity(latest ? 0.72 : 0.34)))
                     context.stroke(path, with: .color(highlight.opacity(latest ? 1 : 0.7)), lineWidth: latest ? 2.5 : 1.5)
                 }
             }
-            if let hover, hover != suggestion, let path = highlightPath(for: hover, center: center, radius: radius, ring: ring) {
+            if let hover, hover != suggestion, let path = highlightPath(for: hover, center: center, radius: radius) {
                 context.fill(path, with: .color(highlight.opacity(0.28)))
                 context.stroke(path, with: .color(highlight), lineWidth: 2.5)
             }
@@ -188,33 +267,8 @@ struct TouchDartboard: View {
         }
     }
 
-    private func highlightPath(
-        for dart: Dart,
-        center: CGPoint,
-        radius: CGFloat,
-        ring: (_ inner: Double, _ outer: Double, _ start: Double, _ end: Double) -> Path
-    ) -> Path? {
-        if dart.segment == 0 { return nil }
-        if dart.segment == 25 {
-            let r = dart.multiplier == 2 ? BoardGeometry.innerBull : BoardGeometry.outerBull
-            let inner = dart.multiplier == 2 ? 0 : BoardGeometry.innerBull
-            return Path(ellipseIn: CGRect(x: center.x - radius * r, y: center.y - radius * r, width: radius * r * 2, height: radius * r * 2))
-                .subtracting(Path(ellipseIn: CGRect(x: center.x - radius * inner, y: center.y - radius * inner, width: radius * inner * 2, height: radius * inner * 2)))
-        }
-        guard let index = BoardGeometry.sectors.firstIndex(of: dart.segment) else { return nil }
-        let start = Double(index) * 18 - 99
-        let end = start + 18
-        let bounds: (Double, Double) = dart.multiplier == 2
-            ? (BoardGeometry.doubleInner, 1)
-            : dart.multiplier == 3
-            ? (BoardGeometry.tripleInner, BoardGeometry.tripleOuter)
-            : (BoardGeometry.outerBull, BoardGeometry.doubleInner)
-        if dart.multiplier == 1 {
-            var path = ring(BoardGeometry.outerBull, BoardGeometry.doubleInner, start, end)
-            path = path.subtracting(ring(BoardGeometry.tripleInner, BoardGeometry.tripleOuter, start, end))
-            return path
-        }
-        return ring(bounds.0, bounds.1, start, end)
+    private func highlightPath(for dart: Dart, center: CGPoint, radius: CGFloat) -> Path? {
+        BoardFace.bedPath(segment: dart.segment, multiplier: dart.multiplier, center: center, radius: radius)
     }
 }
 

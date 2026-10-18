@@ -57,6 +57,11 @@ struct TrainingSetupView: View {
         }
         .screen()
         .navigationTitle(definition.title)
+        .onAppear {
+            if segments.isEmpty, let defaults = cricketDefaults {
+                segments = Set(defaults)
+            }
+        }
         .toolbar {
             Button {
                 store.toggleTrainingFavorite(definition.id)
@@ -115,19 +120,16 @@ struct TrainingSetupView: View {
             if flags.ghost, ghost != nil {
                 Toggle("Porovnat s uloženým průběhem", isOn: $useGhost)
             }
-            if flags.segments {
+            if cricketDefaults != nil {
+                Text("Zapni čísla, která se hrají. Ve hře uvidíš jen ta.")
+                    .font(AppFont.caption())
+                    .foregroundStyle(.secondary)
+                numberGrid(Array(1...20) + [25])
+            } else if flags.segments {
                 Text("Segmenty. Prázdný výběr nechá výchozí sadu hry.")
                     .font(AppFont.caption())
                     .foregroundStyle(.secondary)
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 5), spacing: 8) {
-                    ForEach(1...20, id: \.self) { number in
-                        Button("\(number)") { toggle(number) }
-                            .font(AppFont.body(15, weight: .bold))
-                            .frame(maxWidth: .infinity, minHeight: 36)
-                            .foregroundStyle(segments.contains(number) ? Theme.onAccent : .primary)
-                            .background(segments.contains(number) ? Theme.accentFill : Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
-                    }
-                }
+                numberGrid(Array(1...20))
             }
         }
         .surface()
@@ -145,12 +147,44 @@ struct TrainingSetupView: View {
         if flags.checkouts { value.showCheckouts = showCheckouts }
         if flags.multiplayer { value.players = players; value.secondName = secondName }
         if flags.ghost, useGhost { value.ghostDarts = ghost }
-        if flags.segments, !segments.isEmpty { value.segments = segments.sorted() }
+        if let defaults = cricketDefaults {
+            let source = segments.isEmpty ? defaults : Array(segments)
+            value.segments = MatchOptions.orderedCricketNumbers(source)
+        } else if flags.segments, !segments.isEmpty {
+            value.segments = segments.sorted()
+        }
         return value
     }
 
+    private var cricketDefaults: [Int]? {
+        if case .cricket(let numbers, _) = definition.kind { return numbers }
+        return nil
+    }
+
+    private func numberGrid(_ values: [Int]) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 5), spacing: 8) {
+            ForEach(values, id: \.self) { number in
+                let on = segments.contains(number)
+                let last = cricketDefaults != nil && on && segments.count == 1
+                Button(number == 25 ? "B" : "\(number)") { toggle(number) }
+                    .font(AppFont.body(15, weight: .bold))
+                    .frame(maxWidth: .infinity, minHeight: 36)
+                    .foregroundStyle(on ? Theme.onAccent : .primary)
+                    .background(on ? Theme.accentFill : Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+                    .disabled(last)
+                    .accessibilityLabel(number == 25 ? "Bull" : "\(number)")
+                    .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+    }
+
     private func toggle(_ number: Int) {
-        if segments.contains(number) { segments.remove(number) } else { segments.insert(number) }
+        if segments.contains(number) {
+            if cricketDefaults != nil, segments.count == 1 { return }
+            segments.remove(number)
+        } else {
+            segments.insert(number)
+        }
     }
 }
 

@@ -1219,7 +1219,7 @@ struct HeatmapView: View {
                 SegmentRoseChart(darts: darts, title: "Podíl zásahů")
                 ZoomableDartboard(marks: darts, zoomed: $zoomed)
                     .padding(8)
-                    .background(Color.black, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+                    .background(BoardFace.plate, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
                     .environment(\.colorScheme, .dark)
                 Text("Přesná místa. Roztáhni prsty nebo dvakrát klepni pro detail segmentu.")
                     .font(.footnote)

@@ -46,11 +46,29 @@ struct MatchSettingsSheet: View {
 
                 Section {
                     Toggle("Hlasové skóre", isOn: $store.data.voice)
+                    Picker("Komentátor", selection: Binding(
+                        get: { store.commentator },
+                        set: { store.commentator = $0 }
+                    )) {
+                        ForEach(Commentator.allCases) { item in
+                            Text(item.title).tag(item)
+                        }
+                    }
+                    NavigationLink {
+                        CommentaryLibraryView()
+                    } label: {
+                        LabeledContent("Nahrávky") {
+                            Text("\(store.commentaryCount)")
+                                .monospacedDigit()
+                        }
+                    }
                     Toggle("Haptika", isOn: $store.data.haptics)
                 } header: {
                     Text("Odezva")
                 } footer: {
-                    Text("Hlas čte dosažené skóre. Zápis mikrofonem se volí dole ve hře a je nezávislý.")
+                    Text(store.commentator == .custom
+                         ? "Můj hlas pustí uložené nahrávky. Chybějící situace dočte výchozí hlas. Zápis mikrofonem se volí dole ve hře."
+                         : "Výchozí hlas čte dosažené skóre. Vlastní nahrávky zapneš volbou Můj hlas. Zápis mikrofonem se volí dole ve hře.")
                 }
 
                 Section {

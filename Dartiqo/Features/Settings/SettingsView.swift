@@ -13,6 +13,15 @@ struct SettingsView: View {
     @State private var document: JSONDocument?
     @State private var exportError: String?
     @State private var photoItem: PhotosPickerItem?
+
+    private var commentaryLabel: String {
+        let count = store.commentaryCount
+        let mod = count % 100
+        if count == 1 { return "1 nahrávka" }
+        if (2...4).contains(count % 10), !(12...14).contains(mod) { return "\(count) nahrávky" }
+        return "\(count) nahrávek"
+    }
+
     var body: some View {
         Form {
             Section {
@@ -66,6 +75,25 @@ struct SettingsView: View {
                 Picker("Vzhled", selection: $store.data.appearance) { Text("Tmavý").tag("dark"); Text("Světlý").tag("light"); Text("Podle systému").tag("system") }
                 Toggle("Haptická odezva", isOn: $store.data.haptics).tint(Theme.mint)
                 Toggle("Hlasové hlášení skóre", isOn: $store.data.voice).tint(Theme.mint)
+                Picker("Komentátor", selection: Binding(
+                    get: { store.commentator },
+                    set: { store.commentator = $0 }
+                )) {
+                    ForEach(Commentator.allCases) { item in
+                        Text(item.title).tag(item)
+                    }
+                }
+                NavigationLink {
+                    CommentaryLibraryView()
+                } label: {
+                    HStack {
+                        Label("Vlastní komentátor", systemImage: "waveform.and.mic")
+                        Spacer()
+                        Text(commentaryLabel)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 Toggle("Adaptivní bot", isOn: Binding(
                     get: { store.data.adaptiveAI != false },
                     set: { store.data.adaptiveAI = $0; store.save() }
@@ -73,7 +101,7 @@ struct SettingsView: View {
             } header: {
                 Text("Přizpůsobení")
             } footer: {
-                Text("Hlášení čte dosažené skóre nahlas. Hlasový zápis (mikrofon v zápase) je zvlášť — řekneš šipku nebo součet kola. Adaptivní bot mezi zápasy srovná obtížnost s tvými posledními legy. Vypnutí ho nechá na ručně zvolené úrovni.")
+                Text("Hlášení čte dosažené skóre nahlas. Vlastní komentátor pustí tvoje nahrávky, chybějící situace dočte výchozí hlas. Hlasový zápis (mikrofon v zápase) je zvlášť — řekneš šipku nebo součet kola. Adaptivní bot mezi zápasy srovná obtížnost s tvými posledními legy. Vypnutí ho nechá na ručně zvolené úrovni.")
             }
             Section {
                 NavigationLink {
@@ -158,7 +186,7 @@ struct RulesView: View {
                 Text("Součet: „sto osmdesát“, „sto čtyřicet“, „dvacet šest“, „180“. „Přehoz“ nebo „bust“ nabídne zápis přehozu.")
             }
             Section("X01") { Text("Odečítej ze 101, 301, 501, 701 nebo 1001 přesně na nulu. Double out vyžaduje poslední šipku double nebo bull 50. Master out umožňuje i triple. Straight out libovolný zásah. Přehoz vrací skóre na začátek návštěvy. U double/master out je i zůstatek 1 přehoz. Double in započítává body až od prvního doublu.") }
-            Section("Cricket") { Text("Hraje se na 15 až 20 a bull. Single je jeden zásah, double dva, triple tři. Tři zásahy zavřou číslo. Nadbytečné zásahy přidají body, pokud alespoň jeden soupeř číslo ještě nezavřel. Pro výhru musíš zavřít všechna čísla a nemít méně bodů než kterýkoli soupeř. Ve variantě bez bodů vyhrává první, kdo vše zavře.") }
+            Section("Cricket") { Text("Čísla se volí při založení hry. Výchozí jsou 15 až 20 a bull. Ve hře se ukážou jen ta. Single je jeden zásah, double dva, triple tři. Tři zásahy zavřou číslo. Nadbytečné zásahy přidají body, pokud alespoň jeden soupeř číslo ještě nezavřel. Pro výhru musíš zavřít všechna zvolená čísla a nemít méně bodů než kterýkoli soupeř. Ve variantě bez bodů vyhrává první, kdo vše zavře.") }
             Section("Kolem hodin") { Text("Tref postupně 1, 2, …, 20. Volba pouze double / triple přijímá na číslech jen zvolený násobek, na konci vyžaduje bull 50. U libovolných zásahů stačí i outer bull 25. Násobek nepřeskakuje čísla. Správný zásah okamžitě posune další cíl, i uprostřed návštěvy.") }
             Section("Count Up") { Text("Zvolený počet kol (5 až 30) pro každého hráče, vždy tři šipky. Sčítají se všechny body. Nejvyšší skóre vítězí, shoda znamená remízu.") }
             Section("Boti a statistiky") { Text("Každá šipka bota vznikne simulací zásahu na terči. Úrovně 1–20 mají dlouhodobý cíl průměru a úspěšnosti double, jednotlivá kola se liší. Styl u těchto úrovní mění skóre, zavírání a stabilitu. Vlastní bot má nastavený průměr, úspěšnost double až do 100 %, stabilitu, nervy a taktiku. Styl u něj mění míření a stavbu zavření. Adaptive AI mezi zápasy zvolí úroveň podle posledních legů a v nastavení jde vypnout. Průměr X01 používá skutečně zapsaný počet šipek, včetně šipek před otevřením a při přehozu.") }

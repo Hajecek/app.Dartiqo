@@ -90,22 +90,17 @@ struct SegmentSpread: Equatable {
     }
 }
 
-/// Růžicový graf v pořadí terče. 20 je nahoře, čísla jdou po směru hodin.
+/// Stejný terč jako při hře. Žlutá na poli znamená, jak často tam šipka dopadla.
 struct SegmentRoseChart: View {
     var darts: [Dart]
     var title: String
-    /// Jen výseče, bez popisků. Hodí se do řádku, který vede dál.
+    /// Jen terč, bez popisků. Hodí se do řádku, který vede dál.
     var compact: Bool = false
 
     @State private var selected: Int?
 
     private var spread: SegmentSpread { SegmentSpread.make(darts) }
     private let gold = Color(red: 0.91, green: 0.69, blue: 0.24)
-    private let canvas = Color(red: 0.07, green: 0.09, blue: 0.14)
-    /// Čistý single je světlý, double uprostřed, čistý triple tmavý.
-    private let bedLight = RGB(r: 0.99, g: 0.88, b: 0.42)
-    private let bedMid = RGB(r: 0.84, g: 0.52, b: 0.12)
-    private let bedDark = RGB(r: 0.40, g: 0.20, b: 0.05)
 
     var body: some View {
         if compact {
@@ -138,9 +133,8 @@ struct SegmentRoseChart: View {
             }
 
             HStack(spacing: 14) {
-                legendSwatch(0, "Single")
-                legendSwatch(0.5, "Double")
-                legendSwatch(1, "Triple")
+                legendSwatch(BoardFace.heat.opacity(0.35), "Málo")
+                legendSwatch(BoardFace.heat, "Hodně")
             }
 
             Text(readout)
@@ -150,7 +144,8 @@ struct SegmentRoseChart: View {
                 .animation(.snappy, value: selected)
         }
         .padding(16)
-        .background(canvas, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(BoardFace.plate, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .environment(\.colorScheme, .dark)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilitySummary)
         .accessibilityHint("Klepni na výseč, nebo přejeď nahoru a dolů mezi segmenty.")
@@ -179,9 +174,8 @@ struct SegmentRoseChart: View {
                     .gesture(
                         SpatialTapGesture().onEnded { value in
                             guard !compact else { return }
-                            let layout = RoseGeometry(size: geo.size, compact: compact)
-                            guard let index = layout.segmentIndex(at: value.location) else { return }
-                            let segment = BoardGeometry.sectors[index]
+                            let layout = BoardFace.layout(in: geo.size)
+                            guard let segment = segment(at: value.location, center: layout.center, radius: layout.radius) else { return }
                             selected = selected == segment ? nil : segment
                         }
                     )
@@ -193,7 +187,7 @@ struct SegmentRoseChart: View {
         if let selected, let slice = spread.slices.first(where: { $0.segment == selected }) {
             return "\(selected) · S \(slice.singles) · D \(slice.doubles) · T \(slice.triples) · \(percent(slice.share))"
         }
-        return "Plocha je single, tmavý pruh triple a okraj double. Klepni na výseč pro počty."
+        return "Stejný terč jako při hře. Jasnější pole znamená víc zásahů. Klepni na výseč pro počty."
     }
 
     private var accessibilitySummary: String {
@@ -201,13 +195,13 @@ struct SegmentRoseChart: View {
             return "\(title). Segment \(selected), \(slice.count) šipek, \(percent(slice.share)). Single \(slice.singles), double \(slice.doubles), triple \(slice.triples). Bull \(percent(spread.bullShare))."
         }
         guard let best = spread.best, let worst = spread.worst else { return title }
-        return "\(title). Plocha je single, tmavý pruh triple a okraj double. Nejvíc segment \(best.segment), \(percent(best.share)). Nejmíň segment \(worst.segment), \(percent(worst.share)). Bull \(percent(spread.bullShare))."
+        return "\(title). Stejný terč jako při hře, jasnější pole znamená víc zásahů. Nejvíc segment \(best.segment), \(percent(best.share)). Nejmíň segment \(worst.segment), \(percent(worst.share)). Bull \(percent(spread.bullShare))."
     }
 
     private var bullBadge: some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(spread.bullCount > 0 ? bedColor(spread.bullDepth) : Color.white.opacity(0.28))
+                .fill(spread.bullCount > 0 ? BoardFace.heat.opacity(0.45 + 0.55 * spread.bullDepth) : Color.white.opacity(0.28))
                 .frame(width: 9, height: 9)
             Text("Bull")
                 .foregroundStyle(.white.opacity(0.55))
@@ -231,25 +225,15 @@ struct SegmentRoseChart: View {
         }
     }
 
-    private func legendSwatch(_ depth: Double, _ title: String) -> some View {
+    private func legendSwatch(_ color: Color, _ title: String) -> some View {
         HStack(spacing: 5) {
             Circle()
-                .fill(bedColor(depth))
+                .fill(color)
                 .frame(width: 8, height: 8)
             Text(title)
         }
         .font(.caption2.weight(.semibold))
         .foregroundStyle(.white.opacity(0.62))
-    }
-
-    /// Světlá žlutá pro single, bronzová uprostřed, tmavá pro triple.
-    private func bedColor(_ depth: Double, emphasized: Bool = true) -> Color {
-        let t = min(1, max(0, depth))
-        let base = t < 0.5
-            ? bedLight.mix(bedMid, t / 0.5)
-            : bedMid.mix(bedDark, (t - 0.5) / 0.5)
-        let shown = emphasized ? base : base.mix(RGB(r: 0.07, g: 0.09, b: 0.14), 0.5)
-        return shown.color
     }
 
     private func percent(_ share: Double) -> String {
@@ -258,164 +242,57 @@ struct SegmentRoseChart: View {
     }
 
     private func draw(in context: GraphicsContext, size: CGSize) {
-        context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(canvas))
-        let layout = RoseGeometry(size: size, compact: compact)
-        let rings = 4
-        let maxCount = max(spread.slices.map(\.count).max() ?? 0, 1)
-        for (index, slice) in spread.slices.enumerated() {
-            let emphasized = selected == nil || slice.segment == selected
-            let radius = layout.petalRadius(count: slice.count, maxCount: maxCount)
-            let path = layout.wedge(index: index, radius: radius)
-            if slice.count == 0 {
-                context.fill(path, with: .color(Color.white.opacity(emphasized ? 0.16 : 0.08)))
-            } else {
-                let singleShare = Double(slice.singles) / Double(slice.count)
-                let body = slice.singles > 0
-                    ? bedColor(0, emphasized: emphasized).opacity(0.4 + 0.6 * singleShare)
-                    : Color.white.opacity(emphasized ? 0.1 : 0.05)
-                context.fill(path, with: .color(body))
-                if slice.triples > 0 {
-                    let thick = layout.bedThickness(slice.triples, of: slice.count, radius: radius)
-                    let mid = radius * 0.54
-                    context.fill(
-                        layout.annulus(index: index, inner: max(0, mid - thick / 2), outer: mid + thick / 2),
-                        with: .color(bedColor(1, emphasized: emphasized))
-                    )
-                }
-                if slice.doubles > 0 {
-                    let thick = layout.bedThickness(slice.doubles, of: slice.count, radius: radius)
-                    context.fill(
-                        layout.annulus(index: index, inner: max(0, radius - thick), outer: radius),
-                        with: .color(bedColor(0.5, emphasized: emphasized))
-                    )
-                }
-            }
-            if slice.segment == selected {
-                context.stroke(path, with: .color(.white.opacity(0.9)), lineWidth: 1.5)
-            }
-        }
-
-        for index in 0..<20 {
-            var spoke = Path()
-            spoke.move(to: layout.center)
-            spoke.addLine(to: layout.point(layout.outer, degreesFromTop: CGFloat(index) * 18 - 9))
-            context.stroke(spoke, with: .color(.white.opacity(0.10)), lineWidth: 1)
-        }
-        for step in 1...rings {
-            let radius = layout.outer * CGFloat(step) / CGFloat(rings)
-            var circle = Path()
-            circle.addEllipse(in: CGRect(x: layout.center.x - radius, y: layout.center.y - radius, width: radius * 2, height: radius * 2))
-            context.stroke(circle, with: .color(.white.opacity(0.16)), lineWidth: 1)
-        }
-
-        guard !compact else { return }
-
-        for (index, slice) in spread.slices.enumerated() {
-            let spot = layout.point(layout.labelRadius, degreesFromTop: CGFloat(index) * 18)
-            let isBest = slice.segment == spread.best?.segment && slice.count > 0
-            let isSelected = slice.segment == selected
-            let color: Color = isSelected ? .white : (isBest ? gold : .white.opacity(0.58))
-            let label = context.resolve(
-                Text("\(slice.segment)")
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundColor(color)
+        context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(BoardFace.plate))
+        let layout = BoardFace.layout(in: size)
+        BoardFace.drawScoringBeds(context: context, center: layout.center, radius: layout.radius)
+        BoardFace.drawBulls(context: context, center: layout.center, radius: layout.radius)
+        drawHeat(in: context, center: layout.center, radius: layout.radius)
+        BoardFace.drawWires(context: context, center: layout.center, radius: layout.radius)
+        if let selected, let index = BoardGeometry.sectors.firstIndex(of: selected) {
+            let bounds = BoardFace.angles(for: index)
+            context.stroke(
+                BoardFace.ring(inner: BoardGeometry.outerBull, outer: 1, start: bounds.start, end: bounds.end, center: layout.center, radius: layout.radius),
+                with: .color(.white.opacity(0.95)),
+                lineWidth: 2
             )
-            context.draw(label, at: spot, anchor: .center)
+        }
+        if !compact {
+            BoardFace.drawNumbers(context: context, center: layout.center, radius: layout.radius, aimedSegment: selected, aimColor: .white)
         }
     }
-}
 
-/// 0° je dvanáctka, úhel roste po směru hodin. V obrazovce y roste dolů.
-private struct RoseGeometry {
-    var center: CGPoint
-    var outer: CGFloat
-    var labelRadius: CGFloat
-
-    init(size: CGSize, compact: Bool) {
-        let side = min(size.width, size.height)
-        center = CGPoint(x: size.width / 2, y: size.height / 2)
-        outer = side * (compact ? 0.46 : 0.36)
-        labelRadius = outer + side * 0.075
-    }
-
-    func point(_ radius: CGFloat, degreesFromTop: CGFloat) -> CGPoint {
-        let radians = (Double(degreesFromTop) - 90) * .pi / 180
-        return CGPoint(
-            x: center.x + radius * CGFloat(cos(radians)),
-            y: center.y + radius * CGFloat(sin(radians))
-        )
-    }
-
-    /// I nejkratší zásah je pořád výseč. Nula zůstane krátká a tlumená, ať segment nezmizí.
-    func petalRadius(count: Int, maxCount: Int) -> CGFloat {
-        if count <= 0 { return outer * 0.18 }
-        let share = CGFloat(count) / CGFloat(max(maxCount, 1))
-        return outer * (0.36 + 0.64 * share)
-    }
-
-    /// Pár zásahů pořád nakreslí pruh. Čím větší podíl, tím je silnější.
-    func bedThickness(_ count: Int, of total: Int, radius: CGFloat) -> CGFloat {
-        guard count > 0, total > 0 else { return 0 }
-        let share = CGFloat(count) / CGFloat(total)
-        return radius * (0.08 + 0.2 * share)
-    }
-
-    func annulus(index: Int, inner: CGFloat, outer: CGFloat) -> Path {
-        let middle = CGFloat(index) * 18
-        let start = middle - 9 + 0.85
-        let end = middle + 9 - 0.85
-        let steps = 12
-        var path = Path()
-        func degrees(_ step: Int) -> CGFloat {
-            start + (end - start) * CGFloat(step) / CGFloat(steps)
+    /// Žlutá sedí na skutečném poli. Nejsilnější zásah je nejjasnější, prázdné pole zůstane jako na terči.
+    private func drawHeat(in context: GraphicsContext, center: CGPoint, radius: CGFloat) {
+        var beds: [(segment: Int, multiplier: Int, count: Int)] = []
+        for (index, slice) in spread.slices.enumerated() {
+            let segment = BoardGeometry.sectors[index]
+            beds.append((segment, 1, slice.singles))
+            beds.append((segment, 2, slice.doubles))
+            beds.append((segment, 3, slice.triples))
         }
-        path.move(to: point(outer, degreesFromTop: start))
-        for step in 0...steps {
-            path.addLine(to: point(outer, degreesFromTop: degrees(step)))
+        beds.append((25, 1, spread.bullOuter))
+        beds.append((25, 2, spread.bullInner))
+        let maxCount = max(beds.map(\.count).max() ?? 0, 1)
+        for bed in beds where bed.count > 0 {
+            guard let path = BoardFace.bedPath(segment: bed.segment, multiplier: bed.multiplier, center: center, radius: radius) else { continue }
+            let emphasized = selected == nil || bed.segment == selected
+            let share = Double(bed.count) / Double(maxCount)
+            let opacity = (0.22 + 0.58 * share) * (emphasized ? 1 : 0.35)
+            context.fill(path, with: .color(BoardFace.heat.opacity(opacity)))
         }
-        for step in stride(from: steps, through: 0, by: -1) {
-            path.addLine(to: point(inner, degreesFromTop: degrees(step)))
-        }
-        path.closeSubpath()
-        return path
     }
 
-    func wedge(index: Int, radius: CGFloat) -> Path {
-        let middle = CGFloat(index) * 18
-        let start = middle - 9 + 0.85
-        let end = middle + 9 - 0.85
-        var path = Path()
-        path.move(to: center)
-        let steps = 12
-        for step in 0...steps {
-            let degrees = start + (end - start) * CGFloat(step) / CGFloat(steps)
-            path.addLine(to: point(radius, degreesFromTop: degrees))
-        }
-        path.closeSubpath()
-        return path
+    /// Číselník je až za skórovací kružnicí, klepnutí tam pořád vybere segment.
+    private func segment(at location: CGPoint, center: CGPoint, radius: CGFloat) -> Int? {
+        guard radius > 0 else { return nil }
+        let x = Double(location.x - center.x) / Double(radius)
+        let y = Double(location.y - center.y) / Double(radius)
+        let distance = hypot(x, y)
+        guard distance > BoardGeometry.outerBull, distance <= 1.18 else { return nil }
+        let scale = min(distance, 0.99) / distance
+        let dart = BoardGeometry.hit(x: x * scale, y: y * scale)
+        return (1...20).contains(dart.segment) ? dart.segment : nil
     }
-
-    func segmentIndex(at location: CGPoint) -> Int? {
-        let dx = location.x - center.x
-        let dy = location.y - center.y
-        let distance = hypot(dx, dy)
-        guard distance > 8, distance < labelRadius + 14 else { return nil }
-        var fromTop = atan2(dy, dx) * 180 / .pi + 90
-        if fromTop < 0 { fromTop += 360 }
-        let shifted = (fromTop + 9).truncatingRemainder(dividingBy: 360)
-        return Int(shifted / 18) % 20
-    }
-}
-
-private struct RGB {
-    var r, g, b: Double
-
-    func mix(_ other: RGB, _ amount: Double) -> RGB {
-        let t = min(1, max(0, amount))
-        return RGB(r: r + (other.r - r) * t, g: g + (other.g - g) * t, b: b + (other.b - b) * t)
-    }
-
-    var color: Color { Color(red: r, green: g, blue: b) }
 }
 
 #if DEBUG

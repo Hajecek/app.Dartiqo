@@ -33,12 +33,16 @@ struct TrainingHomeView: View {
     }
     private var selected: TrainingDefinition? { games.first { $0.id == selectedID } ?? games.first }
     /// Jen hry, kde `rulesStep` opravdu nabízí nastavení (ne jen text / prázdno).
+    private var selectedIsCricket: Bool {
+        if case .cricket = selected?.kind { return true }
+        return false
+    }
     private var hasRulesStep: Bool {
         switch selected?.id {
         case "around-clock", "shanghai", "checkout-40", "treble-20", "practice-501":
             return true
         default:
-            return false
+            return selectedIsCricket
         }
     }
     private var stepTitles: [String] {
@@ -223,23 +227,15 @@ struct TrainingHomeView: View {
             }
         case "shanghai":
             ruleCard("Čísla") {
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5), spacing: 8) {
-                    ForEach(1...20, id: \.self) { number in
-                        let on = numbers.contains(number)
-                        Button {
-                            if on, numbers.count > 1 { numbers.remove(number) }
-                            else { numbers.insert(number) }
-                        } label: {
-                            Text("\(number)")
-                                .font(.system(.headline, design: .rounded, weight: .bold))
-                                .frame(maxWidth: .infinity, minHeight: 44)
-                                .foregroundStyle(on ? Color.black : Color.primary)
-                                .background(on ? Theme.brand : Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityAddTraits(on ? .isSelected : [])
-                    }
-                }
+                numberGrid(values: Array(1...20))
+            }
+        case _ where selectedIsCricket:
+            ruleCard("Čísla") {
+                numberGrid(values: Array(1...20) + [25])
+                Text("Ve hře se ukážou jen zapnutá čísla, bez celé klávesnice.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         case "checkout-40":
             ruleCard("Checkout") {
@@ -260,6 +256,29 @@ struct TrainingHomeView: View {
             }
         default:
             EmptyView()
+        }
+    }
+
+    private func numberGrid(values: [Int]) -> some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5), spacing: 8) {
+            ForEach(values, id: \.self) { number in
+                let on = numbers.contains(number)
+                let last = on && numbers.count == 1
+                Button {
+                    if on, numbers.count > 1 { numbers.remove(number) }
+                    else if !on { numbers.insert(number) }
+                } label: {
+                    Text(number == 25 ? "B" : "\(number)")
+                        .font(.system(.headline, design: .rounded, weight: .bold))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .foregroundStyle(on ? Color.black : Color.primary)
+                        .background(on ? Theme.brand : Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(last)
+                .accessibilityLabel(number == 25 ? "Bull" : "\(number)")
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
         }
     }
 
@@ -349,7 +368,7 @@ struct TrainingHomeView: View {
     }
 
     private var canAdvance: Bool {
-        if step == rulesStepIndex, selected?.id == "shanghai" { return !numbers.isEmpty }
+        if step == rulesStepIndex, selected?.id == "shanghai" || selectedIsCricket { return !numbers.isEmpty }
         return true
     }
 
@@ -358,6 +377,7 @@ struct TrainingHomeView: View {
         case "around-clock": return "Limit \(dartCount) šipek"
         case "bobs-27": return "D1–D20 · start 27"
         case "shanghai": return numbers.sorted().map(String.init).joined(separator: ", ")
+        case _ where selectedIsCricket: return MatchOptions.cricketNumbersLine(Array(numbers))
         case "checkout-40": return showCheckouts ? "40 · s nápovědou" : "40 · bez nápovědy"
         case "treble-20": return "\(dartCount) šipek · \(Int((accuracy * 100).rounded())) %"
         case "practice-501": return showCheckouts ? "501 · s nápovědou" : "501 · bez nápovědy"
@@ -373,6 +393,8 @@ struct TrainingHomeView: View {
             if selected?.id == "treble-20" { value.requiredAccuracy = accuracy }
         case "shanghai":
             value.segments = numbers.sorted()
+        case _ where selectedIsCricket:
+            value.segments = MatchOptions.orderedCricketNumbers(Array(numbers))
         case "checkout-40", "practice-501":
             value.showCheckouts = showCheckouts
         default:
@@ -391,6 +413,9 @@ struct TrainingHomeView: View {
         case "shanghai": numbers = Set(1...7)
         case "checkout-40", "practice-501": showCheckouts = true
         default: break
+        }
+        if case .cricket(let picked, _) = TrainingCatalog.find(id)?.kind {
+            numbers = Set(picked)
         }
     }
 
@@ -672,7 +697,8 @@ private struct TrainingLesson {
                 "Každý zásah čísla je jedna značka. Tři značky číslo zavřou.",
                 "Triple dá tři značky, takže prázdné číslo zavře jednou šipkou.",
                 "Další zásah zavřeného čísla už nic nepřidá. Body se nesbírají.",
-                "Bull bere oba středy. 25 je jedna značka, 50 jsou dvě. Hra končí, když je zavřené všechno."
+                "Bull bere oba středy. 25 je jedna značka, 50 jsou dvě. Hra končí, když je zavřené všechno.",
+                "V pravidlech si čísla zapneš a vypneš. Na klávesnici zůstanou jen ta."
             ])
         case "practice-501":
             return TrainingLesson(beats: [

@@ -15,6 +15,8 @@ public struct MatchOptions: Codable, Equatable {
     public var entry = EntryStyle.darts
     public var countUpRounds = 10
     public var cricketNoScore = false
+    /// Vybraná pole cricketu. `nil` je klasika 20–15 a bull.
+    public var cricketNumbers: [Int]? = nil
     public var clockStyle = ClockStyle.any
     public var botDelay = 1.5
     public var checkoutHints = true
@@ -24,7 +26,33 @@ public struct MatchOptions: Codable, Equatable {
     public static let dartLimitChoices = [30, 45, 60, 75, 90]
     /// Vlastní limit se volí po kolech, jedno kolo jsou tři šipky.
     public static let dartLimitRounds = 3...100
+    /// Klasický cricket: od dvacítky k patnáctce a nakonec bull.
+    public static let standardCricketNumbers = [20, 19, 18, 17, 16, 15, 25]
     public init() {}
+
+    /// Pole, na která se opravdu hraje. Prázdný nebo neznámý výběr spadne na klasiku.
+    public var activeCricketNumbers: [Int] {
+        Self.orderedCricketNumbers(cricketNumbers ?? Self.standardCricketNumbers)
+    }
+
+    public static func orderedCricketNumbers(_ raw: [Int]) -> [Int] {
+        let allowed = Set(1...20).union([25])
+        var seen = Set<Int>()
+        let unique = raw.filter { allowed.contains($0) && seen.insert($0).inserted }
+        let pool = unique.isEmpty ? standardCricketNumbers : unique
+        return pool.sorted { lhs, rhs in
+            if lhs == 25 { return false }
+            if rhs == 25 { return true }
+            return lhs > rhs
+        }
+    }
+
+    public static func cricketNumbersLine(_ numbers: [Int]) -> String {
+        let ordered = orderedCricketNumbers(numbers)
+        if ordered == standardCricketNumbers { return "20–15 a bull" }
+        if ordered.count > 8 { return "\(ordered.count) čísel" }
+        return ordered.map { $0 == 25 ? "bull" : "\($0)" }.joined(separator: ", ")
+    }
 }
 
 /// Co se ve hře ukáže jako tříšipkový průměr. Chybějící hodnota znamená celý zápas.

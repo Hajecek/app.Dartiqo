@@ -88,7 +88,7 @@ public enum BotTargetSelector {
         case .x01:
             return deterministicAim(in: game, dartsLeft: dartsLeft)
         case .cricket:
-            let numbers = [20, 19, 18, 17, 16, 15, 25]
+            let numbers = game.config.settings.activeCricketNumbers
             if let open = numbers.first(where: { state.marks[$0, default: 0] < 3 }) {
                 return Dart(open, open == 25 ? 2 : 3)
             }

@@ -37,10 +37,21 @@ struct TrainingPlayView: View {
     @State private var pulse = 0
     @State private var previousBest: TrainingResult?
     @State private var entryError: String?
+    /// Index šipky v aktuálním kole, kterou hráč upravuje.
+    @State private var editingDart: Int?
+    /// Pauza kola se při otevření opravy zastaví a po zavření bez změny zase naváže.
+    @State private var pausedHoldForEdit = false
 
     private var projection: TrainingProjection {
         guard let session else { return TrainingProjection() }
         return TrainingEngine.project(session)
+    }
+    /// Cricket ukáže jen zvolená pole. Ostatní hry nechají celou klávesnici.
+    private var scorePadNumbers: [Int]? {
+        if !projection.boardNumbers.isEmpty { return projection.boardNumbers }
+        guard case .cricket(let numbers, _) = definition.kind else { return nil }
+        let picked = config.segments ?? []
+        return picked.isEmpty ? numbers : MatchOptions.orderedCricketNumbers(picked)
     }
     private var finished: Bool { projection.finished || session?.status == .completed }
     private var cameraReady: Bool {
@@ -98,12 +109,9 @@ struct TrainingPlayView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, surface == .grid ? 6 : 10)
             .frame(maxWidth: 780)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: isHoldingVisit)
-            .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: projection.score)
-            .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: projection.scoreText)
         }
         .scrollIndicators(.hidden)
-        .scrollDisabled(surface == .grid && !isHoldingVisit && !finished)
+        .scrollDisabled((surface == .grid || (isHoldingVisit && holdSurface == .grid)) && !finished)
         .background(TrainingColors.background)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if oneEightyFlash == nil { bottomBar }
@@ -120,6 +128,12 @@ struct TrainingPlayView: View {
             Button("OK", role: .cancel) { entryError = nil }
         } message: {
             Text(entryError ?? "")
+        }
+        .sheet(isPresented: Binding(
+            get: { editingDart != nil },
+            set: { if !$0 { editingDart = nil } }
+        ), onDismiss: resumeHoldAfterDartEdit) {
+            trainingDartEditCover
         }
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
@@ -183,6 +197,7 @@ struct TrainingPlayView: View {
                 .lineLimit(1)
                 .foregroundStyle(.white)
                 .contentTransition(busted ? .opacity : .numericText(value: numeric))
+                .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: headline)
                 .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
                 .accessibilityLabel(busted ? "Přehoz" : headline)
             HStack(spacing: 8) {
@@ -212,7 +227,12 @@ struct TrainingPlayView: View {
     private var throwStrip: some View {
         Group {
             if isHoldingVisit && projection.feedback == .bust {
-                VisitHoldSummaryCard(title: "Přehoz", value: "BUST", labels: holdDarts.map(\.label))
+                VisitHoldSummaryCard(
+                    title: "Přehoz",
+                    value: "BUST",
+                    labels: holdDarts.map(\.label),
+                    onLabel: canEditThrownDarts ? { beginDartEdit($0) } : nil
+                )
             } else if isHoldingVisit && holdSurface == .total {
                 VisitHoldSummaryCard(
                     title: "Součet zapsán",
@@ -233,7 +253,10 @@ struct TrainingPlayView: View {
                             dart: filled ? darts[index] : nil,
                             suggestion: suggested,
                             note: note,
-                            setupLeave: suggested == nil ? nil : guide.setupLeave
+                            setupLeave: suggested == nil ? nil : guide.setupLeave,
+                            onEdit: filled && canEditThrownDarts ? {
+                                beginDartEdit(index)
+                            } : nil
                         )
                     }
                 }
@@ -268,9 +291,9 @@ struct TrainingPlayView: View {
 
     @ViewBuilder
     private var input: some View {
-        if isHoldingVisit {
-            // Čísla i součet: bez náhledu terče — jen krátká odezva.
-            if holdSurface != .total && holdSurface != .grid {
+        if isHoldingVisit && holdSurface != .grid {
+            // Součet: bez náhledu. Čísla nechávají mřížku na místě, ať se po třetí šipce nesloží.
+            if holdSurface != .total {
                 ScoringDartboard(marks: holdDarts, interactive: false)
             }
         } else {
@@ -299,9 +322,10 @@ struct TrainingPlayView: View {
                     onTap: { store.tapHaptic(.light) }
                 )
             case .grid, .voice:
-                ManualScorePad(multiplier: $multiplier, onSelect: { store.selectionHaptic() }) { dart in
+                ManualScorePad(multiplier: $multiplier, numbers: scorePadNumbers, onSelect: { store.selectionHaptic() }) { dart in
                     _ = throwDart(dart)
                 }
+                .allowsHitTesting(!isHoldingVisit)
             }
         }
         if !projection.detail.isEmpty || projection.ghost != nil || !projection.bogeys.isEmpty || projection.playerLine != nil {
@@ -624,7 +648,6 @@ struct TrainingPlayView: View {
         var buffer = visitBuffer
         buffer.append(dart)
         let after = TrainingEngine.project(current)
-        // Bez animace u jednotlivých šipek — rychlé klikání by jinak frontovalo snappy přechody.
         session = current
         visitBuffer = buffer
         store.stageTraining(current)
@@ -680,8 +703,6 @@ struct TrainingPlayView: View {
     }
 
     private func beginVisitHold(_ darts: [Dart], surface hold: ScoringSurface) {
-        holdGeneration += 1
-        let generation = holdGeneration
         holdDarts = darts
         holdSurface = hold
         visitBuffer = []
@@ -694,7 +715,7 @@ struct TrainingPlayView: View {
         } else if busted {
             UINotificationFeedbackGenerator().notificationOccurred(.error)
         }
-        var transaction = Transaction()
+        var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) { isHoldingVisit = true }
         if hold == .total {
@@ -704,7 +725,13 @@ struct TrainingPlayView: View {
                 store.feedback(credited)
             }
         }
-        var delay = hold == .grid
+        scheduleTrainingHold(darts: darts, busted: busted, celebrate180: celebrate180)
+    }
+
+    private func scheduleTrainingHold(darts: [Dart], busted: Bool, celebrate180: Bool) {
+        holdGeneration += 1
+        let generation = holdGeneration
+        var delay = holdSurface == .grid
             ? ScoringChrome.gridVisitHoldSeconds(reduceMotion: reduceMotion)
             : ScoringChrome.visitHoldSeconds(reduceMotion: reduceMotion)
         if celebrate180 {
@@ -714,18 +741,108 @@ struct TrainingPlayView: View {
             delay = max(delay, reduceMotion ? 0.9 : 1.6)
         }
         Task { @MainActor in
+            await Task.yield()
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
-            guard generation == holdGeneration, isHoldingVisit, holdDarts == darts else { return }
+            guard generation == holdGeneration, isHoldingVisit, holdDarts == darts, editingDart == nil else { return }
             finishVisitHold()
         }
     }
 
     private func finishVisitHold() {
-        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.28)) {
-            isHoldingVisit = false
-            holdDarts = []
+        if holdSurface == .grid {
+            var quiet = Transaction(animation: nil)
+            quiet.disablesAnimations = true
+            withTransaction(quiet) {
+                isHoldingVisit = false
+                holdDarts = []
+            }
+        } else {
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.28)) {
+                isHoldingVisit = false
+                holdDarts = []
+            }
         }
         if finished { commitIfNeeded() }
+    }
+
+    @ViewBuilder
+    private var trainingDartEditCover: some View {
+        if let editingDart {
+            let darts = isHoldingVisit ? holdDarts : visitBuffer
+            if darts.indices.contains(editingDart) {
+                DartEditSheet(
+                    index: editingDart,
+                    dart: darts[editingDart],
+                    numbers: scorePadNumbers,
+                    onPick: { replaceThrownDart(at: editingDart, with: $0) },
+                    onCancel: { self.editingDart = nil }
+                )
+            }
+        }
+    }
+
+    private var canEditThrownDarts: Bool {
+        guard !saved else { return false }
+        if isHoldingVisit { return holdSurface != .total && !holdDarts.isEmpty }
+        return surface != .total && !visitBuffer.isEmpty && !finished
+    }
+
+    private func beginDartEdit(_ index: Int) {
+        store.selectionHaptic()
+        pausedHoldForEdit = isHoldingVisit
+        editingDart = index
+    }
+
+    private func resumeHoldAfterDartEdit() {
+        guard pausedHoldForEdit else { return }
+        pausedHoldForEdit = false
+        guard isHoldingVisit else { return }
+        let darts = holdDarts
+        let busted = projection.feedback == .bust
+        let celebrate180 = OneEightyCelebration.shouldPlay(
+            credited: darts.reduce(0) { $0 + $1.score },
+            bust: busted,
+            reduceMotion: reduceMotion
+        )
+        scheduleTrainingHold(darts: darts, busted: busted, celebrate180: celebrate180)
+    }
+
+    /// Přepíše jednu šipku a zbytek kola zahraje znovu.
+    private func replaceThrownDart(at index: Int, with dart: Dart) {
+        guard var current = session, !saved else {
+            editingDart = nil
+            return
+        }
+        let holding = isHoldingVisit
+        let source = holding ? holdDarts : visitBuffer
+        guard source.indices.contains(index) else {
+            editingDart = nil
+            return
+        }
+        editingDart = nil
+        guard dart != source[index] else { return }
+
+        let remove = source.count - index
+        for _ in 0..<remove { TrainingEngine.undo(&current) }
+        session = current
+        store.stageTraining(current)
+        if holding {
+            pausedHoldForEdit = false
+            oneEightyFlash = nil
+            var quiet = Transaction(animation: nil)
+            quiet.disablesAnimations = true
+            withTransaction(quiet) {
+                isHoldingVisit = false
+                holdDarts = []
+            }
+        }
+        visitBuffer = Array(source.prefix(index))
+        var replay = source
+        replay[index] = dart
+        for offset in index..<replay.count {
+            guard throwDart(replay[offset]) else { break }
+            if isHoldingVisit { break }
+        }
     }
 
     private func act(_ action: TrainingAction) {

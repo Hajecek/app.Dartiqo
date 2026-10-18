@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Společná plocha zápisu pro zápas i trénink. Barvy sedí na zápasové plátno.
 enum ScoringChrome {
@@ -16,9 +17,9 @@ enum ScoringChrome {
         reduceMotion ? 0.45 : max(1.8, min(2.8, botDelay + 0.6))
     }
 
-    /// U čísel není co prohlížet na terči — jen krátká odezva a hned další hráč.
+    /// U čísel není co prohlížet na terči. Krátká pauza jen proto, aby byly vidět všechny tři šipky, než přijde další hráč.
     static func gridVisitHoldSeconds(reduceMotion: Bool) -> Double {
-        reduceMotion ? 0.15 : 0.3
+        reduceMotion ? 0.15 : 0.4
     }
 
     /// Nápověda zavření / sehrávky do tří slotů (zápas i trénink).
@@ -60,12 +61,22 @@ struct ThrowSlotTile: View {
     var onGlass: Bool = false
     /// Jen čísla bez dlaždice — třeba v bílém modalu průběhu.
     var plain: Bool = false
+    /// Klepnutí na už zapsanou šipku otevře opravu.
+    var onEdit: (() -> Void)? = nil
 
     private var slotRadius: CGFloat { onGlass ? 12 : 14 }
 
     var body: some View {
         if let dart {
-            ThrowSlotFace(index: index, dart: dart, onGlass: onGlass, plain: plain)
+            let face = ThrowSlotFace(index: index, dart: dart, onGlass: onGlass, plain: plain)
+            if let onEdit {
+                Button(action: onEdit) { face }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityHint("Upravit šipku")
+            } else {
+                face
+            }
         } else if let suggestion {
             let setup = setupLeave != nil
             let accent = setup ? ScoringChrome.amber : ScoringChrome.green
@@ -213,6 +224,7 @@ struct VisitHoldSummaryCard: View {
     var title: String
     var value: String
     var labels: [String]
+    var onLabel: ((Int) -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 10) {
@@ -225,9 +237,27 @@ struct VisitHoldSummaryCard: View {
                 .monospacedDigit()
                 .contentTransition(.numericText())
             if !labels.isEmpty {
-                Text(labels.joined(separator: " · "))
-                    .font(AppFont.body(15, weight: .semibold))
-                    .foregroundStyle(ScoringChrome.ink.opacity(0.7))
+                if let onLabel {
+                    HStack(spacing: 8) {
+                        ForEach(Array(labels.enumerated()), id: \.offset) { index, label in
+                            Button { onLabel(index) } label: {
+                                Text(label)
+                                    .font(AppFont.caption(13, weight: .bold))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(ScoringChrome.ink.opacity(0.06), in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("\(index + 1). šipka \(label)")
+                            .accessibilityHint("Upravit šipku")
+                        }
+                    }
+                    .foregroundStyle(ScoringChrome.ink.opacity(0.75))
+                } else {
+                    Text(labels.joined(separator: " · "))
+                        .font(AppFont.body(15, weight: .semibold))
+                        .foregroundStyle(ScoringChrome.ink.opacity(0.7))
+                }
             }
         }
         .frame(maxWidth: .infinity)
@@ -246,11 +276,120 @@ enum ScoringTotal {
     }
 }
 
-/// Ruční zápis šipky: mřížka 1–20, bull, minutí a Double / Triple.
+/// Číslo se zapíše při doteku, ne až při puštění prstu.
+/// SwiftUI `Button` gesto zahodí, když se mřížka mezitím překreslí — rychlé tři šipky se pak ztratí nebo dorazí pozdě.
+private struct InstantPressButton<Label: View>: View {
+    var disabled = false
+    var accessibilityLabel: String
+    var accessibilityHint: String = ""
+    var action: () -> Void
+    @ViewBuilder var label: () -> Label
+    @State private var pressed = false
+
+    var body: some View {
+        label()
+            .opacity(!disabled && pressed ? 0.55 : 1)
+            .overlay {
+                TouchDownCatcher(enabled: !disabled, onDown: {
+                    guard !disabled else { return }
+                    pressed = true
+                    action()
+                }, onUp: {
+                    pressed = false
+                })
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityHint(accessibilityHint)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction {
+                guard !disabled else { return }
+                action()
+            }
+    }
+}
+
+private struct TouchDownCatcher: UIViewRepresentable {
+    var enabled: Bool
+    var onDown: () -> Void
+    var onUp: () -> Void
+
+    func makeUIView(context: Context) -> TouchDownControl {
+        let view = TouchDownControl()
+        view.onDown = onDown
+        view.onUp = onUp
+        view.isEnabled = enabled
+        return view
+    }
+
+    func updateUIView(_ view: TouchDownControl, context: Context) {
+        view.onDown = onDown
+        view.onUp = onUp
+        view.isEnabled = enabled
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: TouchDownControl, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 44, height: proposal.height ?? 44)
+    }
+}
+
+private final class TouchDownControl: UIControl {
+    var onDown: (() -> Void)?
+    var onUp: (() -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        isAccessibilityElement = false
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        releaseScrollDelayIfPinned()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        releaseScrollDelayIfPinned()
+    }
+
+    /// ScrollView jinak podrží dotek, než rozhodne, že to není posun. U čísel je posun vypnutý, takže šipka může jít hned.
+    private func releaseScrollDelayIfPinned() {
+        var ancestor = superview
+        while let view = ancestor {
+            if let scroll = view as? UIScrollView, !scroll.isScrollEnabled {
+                scroll.delaysContentTouches = false
+            }
+            ancestor = view.superview
+        }
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesBegan(touches, with: event)
+        guard isEnabled else { return }
+        onDown?()
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesEnded(touches, with: event)
+        onUp?()
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        super.touchesCancelled(touches, with: event)
+        onUp?()
+    }
+}
+
+/// Ruční zápis šipky. Bez `numbers` je celá mřížka 1–20, jinak jen zvolená pole.
 struct ManualScorePad: View {
     @Binding var multiplier: Int
     /// Jedno zvýrazněné pole, třeba aktuální cíl Kolem hodin. `nil` je obyčejná mřížka.
     var focus: Int? = nil
+    /// Jen tahle pole, v daném pořadí. `nil` nechá klávesnici 1–20.
+    var numbers: [Int]? = nil
     var onSelect: () -> Void = {}
     var onHit: (Dart) -> Void
 
@@ -262,55 +401,41 @@ struct ManualScorePad: View {
         }
     }
     private var bullDisabled: Bool { multiplier == 3 }
+    private var limited: Bool { numbers != nil }
+    private var shownNumbers: [Int] {
+        if let numbers, !numbers.isEmpty { return numbers }
+        return Array(1...20)
+    }
+    /// Málo polí = větší tlačítka. Celá klávesnice zůstane hustá.
+    private var roomy: Bool { limited && shownNumbers.count <= 8 }
+    private var tileHeight: CGFloat { roomy ? 64 : 44 }
+    private var tileFont: CGFloat { roomy ? 32 : 24 }
+    private var limitedColumns: Int {
+        let count = shownNumbers.count + 1
+        if count <= 4 { return count }
+        if count <= 8 { return 4 }
+        return 5
+    }
 
     var body: some View {
         VStack(spacing: 8) {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5), spacing: 6) {
-                ForEach(1...20, id: \.self) { number in
-                    Button { score(Dart(number, multiplier)) } label: {
-                        Text("\(number)")
-                            .font(AppFont.display(24, weight: .bold))
-                            .foregroundStyle(accent)
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                            .background(tileFill(focused: focus == number), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            .overlay(tileStroke(focused: focus == number))
+            if limited {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: limitedColumns), spacing: 6) {
+                    ForEach(shownNumbers, id: \.self) { number in
+                        segmentKey(number)
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("\(multiplierName) \(number)")
-                    .accessibilityAddTraits(focus == number ? .isSelected : [])
+                    missKey
                 }
-            }
-
-            HStack(spacing: 6) {
-                Button {
-                    guard !bullDisabled else { return }
-                    score(Dart(25, min(max(multiplier, 1), 2)))
-                } label: {
-                    Text(multiplier == 2 ? "50" : "25")
-                        .font(AppFont.display(24, weight: .bold))
-                        .foregroundStyle(bullDisabled ? Color.white.opacity(0.22) : accent)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(tileFill(focused: focus == 25 && !bullDisabled, dimmed: bullDisabled), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .overlay(tileStroke(focused: focus == 25 && !bullDisabled))
+            } else {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5), spacing: 6) {
+                    ForEach(1...20, id: \.self) { number in
+                        segmentKey(number)
+                    }
                 }
-                .buttonStyle(.plain)
-                .disabled(bullDisabled)
-                .accessibilityLabel(multiplier == 2 ? "Bull 50" : "Outer 25")
-                .accessibilityHint(bullDisabled ? "Triple bull neexistuje" : "")
-
-                Button {
-                    guard !bullDisabled else { return }
-                    score(.miss)
-                } label: {
-                    Text("0")
-                        .font(AppFont.display(24, weight: .bold))
-                        .foregroundStyle(bullDisabled ? Color.white.opacity(0.22) : .white)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(Color.white.opacity(bullDisabled ? 0.03 : 0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                HStack(spacing: 6) {
+                    segmentKey(25)
+                    missKey
                 }
-                .buttonStyle(.plain)
-                .disabled(bullDisabled)
-                .accessibilityLabel("Mimo terč, 0 bodů")
             }
 
             GlassEffectContainer(spacing: 8) {
@@ -324,6 +449,47 @@ struct ManualScorePad: View {
 
     private var multiplierName: String {
         multiplier == 3 ? "Triple" : multiplier == 2 ? "Double" : "Single"
+    }
+
+    private func segmentKey(_ number: Int) -> some View {
+        let bull = number == 25
+        let disabled = bull && bullDisabled
+        let title = bull ? (multiplier == 2 ? "50" : "25") : "\(number)"
+        return InstantPressButton(
+            disabled: disabled,
+            accessibilityLabel: bull ? (multiplier == 2 ? "Bull 50" : "Outer 25") : "\(multiplierName) \(number)",
+            accessibilityHint: disabled ? "Triple bull neexistuje" : ""
+        ) {
+            if bull {
+                score(Dart(25, min(max(multiplier, 1), 2)))
+            } else {
+                score(Dart(number, multiplier))
+            }
+        } label: {
+            Text(title)
+                .font(AppFont.display(tileFont, weight: .bold))
+                .foregroundStyle(disabled ? Color.white.opacity(0.22) : accent)
+                .frame(maxWidth: .infinity, minHeight: tileHeight)
+                .background(tileFill(focused: focus == number && !disabled, dimmed: disabled), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(tileStroke(focused: focus == number && !disabled))
+        }
+        .accessibilityAddTraits(focus == number && !disabled ? .isSelected : [])
+    }
+
+    private var missKey: some View {
+        let locked = !limited && bullDisabled
+        return InstantPressButton(
+            disabled: locked,
+            accessibilityLabel: "Mimo terč, 0 bodů"
+        ) {
+            score(.miss)
+        } label: {
+            Text("0")
+                .font(AppFont.display(tileFont, weight: .bold))
+                .foregroundStyle(locked ? Color.white.opacity(0.22) : .white)
+                .frame(maxWidth: .infinity, minHeight: tileHeight)
+                .background(Color.white.opacity(locked ? 0.03 : 0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
     }
 
     /// Po zápisu šipky vypne Double / Triple — další hod začíná jako single.
@@ -359,6 +525,83 @@ struct ManualScorePad: View {
         .glassEffect(.regular.tint(tint.opacity(selected ? 1 : 0.62)).interactive(), in: Capsule())
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityLabel(title)
+    }
+}
+
+/// Oprava jedné šipky. Stejná plocha jako zápis v zápase: sklo a ta samá klávesnice.
+struct DartEditSheet: View {
+    var index: Int
+    var dart: Dart
+    /// Stejná sada jako při zápisu. `nil` nechá celou klávesnici.
+    var numbers: [Int]? = nil
+    var onPick: (Dart) -> Void
+    var onCancel: () -> Void
+    @State private var multiplier: Int
+
+    private static let canvas = Color(red: 0.055, green: 0.10, blue: 0.08)
+
+    init(index: Int, dart: Dart, numbers: [Int]? = nil, onPick: @escaping (Dart) -> Void, onCancel: @escaping () -> Void) {
+        self.index = index
+        self.dart = dart
+        self.numbers = numbers
+        self.onPick = onPick
+        self.onCancel = onCancel
+        _multiplier = State(initialValue: Self.startingMultiplier(for: dart))
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("\(index + 1). ŠIPKA")
+                        .font(AppFont.caption(11, weight: .heavy))
+                        .tracking(1.0)
+                        .foregroundStyle(.white.opacity(0.5))
+                    Text(bedName)
+                        .font(AppFont.display(28, weight: .bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+                Spacer(minLength: 8)
+                Button(action: onCancel) {
+                    Image(systemName: "xmark")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                }
+                .buttonStyle(.plain)
+                .glassEffect(.regular.interactive(), in: Circle())
+                .accessibilityLabel("Zrušit")
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+
+            ManualScorePad(multiplier: $multiplier, focus: dart.segment == 0 ? nil : dart.segment, numbers: numbers, onHit: onPick)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 12)
+        .frame(maxWidth: 560)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Self.canvas.ignoresSafeArea())
+        .preferredColorScheme(.dark)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
+        .presentationCornerRadius(28)
+        .presentationBackground(Self.canvas)
+    }
+
+    private var bedName: String {
+        if dart.segment == 0 { return "Mimo" }
+        return dart.label
+    }
+
+    private static func startingMultiplier(for dart: Dart) -> Int {
+        if dart.segment == 0 { return 1 }
+        if dart.segment == 25 { return min(max(dart.multiplier, 1), 2) }
+        return min(max(dart.multiplier, 1), 3)
     }
 }
 
@@ -454,14 +697,26 @@ struct CricketMarksCard: View {
     var active: Int?
 
     var body: some View {
-        VStack(spacing: 6) {
+        let wide = numbers.count > 8
+        return marksTable(compact: wide)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("Značky cricketu")
+    }
+
+    private func marksTable(compact: Bool) -> some View {
+        let table = VStack(spacing: 6) {
             HStack(spacing: 2) {
                 Color.clear.frame(width: 52, height: 1)
                 ForEach(numbers, id: \.self) { number in
                     Text(number == 25 ? "B" : "\(number)")
                         .font(AppFont.caption(12, weight: .bold))
                         .foregroundStyle(ScoringChrome.ink.opacity(0.45))
-                        .frame(maxWidth: .infinity)
+                        .frame(maxWidth: compact ? nil : .infinity)
+                        .frame(minWidth: compact ? 28 : 0)
                 }
             }
             ForEach(names.indices, id: \.self) { index in
@@ -477,17 +732,20 @@ struct CricketMarksCard: View {
                         Text(Self.symbol(marks))
                             .font(AppFont.body(16, weight: .bold))
                             .foregroundStyle(marks >= 3 ? ScoringChrome.green : ScoringChrome.ink.opacity(0.72))
-                            .frame(maxWidth: .infinity, minHeight: 26)
+                            .frame(maxWidth: compact ? nil : .infinity, minHeight: 26)
+                            .frame(minWidth: compact ? 28 : 0)
                             .accessibilityLabel("\(names[index]), \(number == 25 ? "bull" : "\(number)"), \(min(marks, 3)) zásahy")
                     }
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Značky cricketu")
+        return Group {
+            if compact {
+                ScrollView(.horizontal, showsIndicators: false) { table }
+            } else {
+                table
+            }
+        }
     }
 
     private func shortName(_ name: String) -> String {

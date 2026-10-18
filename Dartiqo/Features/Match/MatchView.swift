@@ -44,6 +44,8 @@ private struct LegCeremony: Equatable, Identifiable {
     var byBullOff = false
     var winnerPhoto: Data? = nil
     var winnerAsset: String? = nil
+    /// Tříšipkový průměr profilu v právě dohraném legu. Jen X01, když uživatel házel.
+    var userLegAverage: Double? = nil
 }
 private struct BoardDetailSelection: Identifiable {
     let player: Int
@@ -71,6 +73,8 @@ struct MatchView: View {
     @State private var revision = UUID()
     @State private var holdDarts: [Dart] = []
     @State private var isHoldingVisit = false
+    /// Zruší čekání na dalšího hráče, když se kolo vrátí nebo začne nové.
+    @State private var holdGeneration = 0
     @State private var holdSurface: ScoringSurface = .grid
     @State private var holdPlayer: Int?
     @State private var legCeremony: LegCeremony?
@@ -92,6 +96,10 @@ struct MatchView: View {
     @State private var detailLeg: Int? = 0
     @State private var cameraHits: [CameraHit] = []
     @State private var correcting: Int?
+    /// Index šipky v aktuálním kole, kterou hráč upravuje.
+    @State private var editingDart: Int?
+    /// Pauza kola se při otevření opravy zastaví a po zavření bez změny zase naváže.
+    @State private var pausedHoldForEdit = false
     @State private var decidingLeg = false
     /// Výběr startéra před rozhodujícím legem (např. 3:3).
     @State private var showDecidingStarter = false
@@ -111,6 +119,7 @@ struct MatchView: View {
             .sheet(isPresented: $showLog) { visitLogSheet }
             .sheet(isPresented: $showSettings) { settingsSheet }
             .sheet(isPresented: correctionPresented, onDismiss: resumeHoldAfterCorrection) { correctionCover }
+            .sheet(isPresented: dartEditPresented, onDismiss: resumeHoldAfterDartEdit) { dartEditCover }
             .task(id: botTaskKey) { await throwBotDart() }
             .onAppear(perform: prepareMatch)
             .onDisappear(perform: leaveMatch)
@@ -226,7 +235,6 @@ struct MatchView: View {
                         .preferredColorScheme(.dark)
                 }
             }
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: isHoldingVisit)
     }
     private var matchPrompts: some View {
         matchCovers
@@ -251,6 +259,13 @@ struct MatchView: View {
     private var correctionPresented: Binding<Bool> {
         Binding(get: { correcting != nil }, set: { if !$0 { correcting = nil } })
     }
+    /// Průběh má vlastní sheet, ať se oprava neotevře pod ním.
+    private var dartEditPresented: Binding<Bool> {
+        Binding(get: { editingDart != nil && !showProgress }, set: { if !$0 { editingDart = nil } })
+    }
+    private var progressDartEditPresented: Binding<Bool> {
+        Binding(get: { editingDart != nil && showProgress }, set: { if !$0 { editingDart = nil } })
+    }
     @ViewBuilder
     private var visitLogSheet: some View {
         NavigationStack {
@@ -273,6 +288,45 @@ struct MatchView: View {
     @ViewBuilder
     private var correctionCover: some View {
         if let correcting { correctionSheet(correcting) }
+    }
+    @ViewBuilder
+    private var dartEditCover: some View {
+        if let editingDart, let game = store.activeMatch {
+            let darts = isHoldingVisit ? holdDarts : game.currentDarts
+            if darts.indices.contains(editingDart) {
+                DartEditSheet(
+                    index: editingDart,
+                    dart: darts[editingDart],
+                    numbers: scorePadNumbers(game),
+                    onPick: { replaceThrownDart(at: editingDart, with: $0) },
+                    onCancel: { self.editingDart = nil }
+                )
+            }
+        }
+    }
+    /// Člověk může přepsat šipku, dokud je kolo ještě na obrazovce. Bot, duch a součet kola ne.
+    private func canEditThrownDarts(_ game: Match) -> Bool {
+        guard !paused, legCeremony == nil, !showDecidingStarter, !game.finished else { return false }
+        if isHoldingVisit {
+            guard let player = holdPlayer, game.players.indices.contains(player) else { return false }
+            guard game.players[player].botLevel == nil, !game.isGhost(player) else { return false }
+            if holdSurface == .total || game.visits.last?.enteredAsTotal == true { return false }
+            return !holdDarts.isEmpty
+        }
+        guard game.legWinner == nil, !game.needsBullOff, !game.needsDecidingStarter else { return false }
+        guard game.currentPlayer.botLevel == nil, !game.isGhostTurn else { return false }
+        return !game.currentDarts.isEmpty
+    }
+    private func beginDartEdit(_ index: Int) {
+        store.selectionHaptic()
+        pausedHoldForEdit = isHoldingVisit
+        editingDart = index
+    }
+    private func resumeHoldAfterDartEdit() {
+        guard pausedHoldForEdit else { return }
+        pausedHoldForEdit = false
+        guard isHoldingVisit else { return }
+        scheduleVisitHold(darts: holdDarts, celebrate180: oneEightyFlash != nil)
     }
     private func prepareMatch() {
         if let game = store.activeMatch {
@@ -408,16 +462,16 @@ struct MatchView: View {
                     Group {
                     if surface == .voice {
                         voiceInput(game)
-                    } else if isHoldingVisit {
-                        // Součet i čísla: není co ukazovat na terči — jen krátká odezva a další hráč.
-                        if holdSurface != .total && holdSurface != .grid {
+                    } else if isHoldingVisit && !keepsNumberPad {
+                        // Součet i terč: čísla nechávají mřížku na místě, ať se layout při třetí šipce nesloží.
+                        if holdSurface != .total {
                             frozenHumanSurface(game)
                         }
-                    } else if surface == .total && canUseTotal(game) {
+                    } else if !isHoldingVisit && surface == .total && canUseTotal(game) {
                         totalInput(game)
-                    } else if surface == .board {
+                    } else if !isHoldingVisit && surface == .board {
                         boardInput(game)
-                    } else if surface == .camera {
+                    } else if !isHoldingVisit && surface == .camera {
                         CameraScoreView(
                             calibration: store.boardCalibration,
                             labels: game.currentDarts.map(\.label),
@@ -427,6 +481,7 @@ struct MatchView: View {
                         )
                     } else {
                         dartGrid(game, shown: shown)
+                            .allowsHitTesting(!isHoldingVisit)
                     }
                     }
                     .padding(.top, surface == .grid ? 8 : 14)
@@ -435,7 +490,7 @@ struct MatchView: View {
             }.padding(.horizontal, 16).padding(.vertical, surface == .grid ? 6 : 10).frame(maxWidth: 780)
         }
         .scrollIndicators(.hidden)
-        .scrollDisabled(surface == .grid && !showingBotBoard && !isHoldingVisit && !liveStatsNeedRoom(game))
+        .scrollDisabled(keepsNumberPad && !showingBotBoard && !liveStatsNeedRoom(game))
         .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar(game) }
     }
 
@@ -553,6 +608,85 @@ struct MatchView: View {
             guard finished || (store.activeMatch?.currentDarts.count ?? 0) > pending else { break }
             cameraHits.append(hits[offset])
             if finished { break }
+        }
+        revision = UUID()
+    }
+
+    /// Přepíše jednu šipku a zbytek kola zahraje znovu, ať sedí přehoz i zavření.
+    private func replaceThrownDart(at index: Int, with dart: Dart) {
+        guard legCeremony == nil, var game = store.activeMatch else {
+            editingDart = nil
+            return
+        }
+        let holding = isHoldingVisit
+        let source = holding ? holdDarts : game.currentDarts
+        guard source.indices.contains(index) else {
+            editingDart = nil
+            return
+        }
+        let player = holding ? (holdPlayer ?? game.active) : game.active
+        guard game.players.indices.contains(player),
+              game.players[player].botLevel == nil,
+              !game.isGhost(player) else {
+            editingDart = nil
+            return
+        }
+        if holding, holdSurface == .total || game.visits.last?.enteredAsTotal == true {
+            editingDart = nil
+            return
+        }
+        editingDart = nil
+        guard dart != source[index] else { return }
+
+        if holding {
+            pausedHoldForEdit = false
+            holdGeneration += 1
+            isHoldingVisit = false
+            holdPlayer = nil
+            oneEightyFlash = nil
+            holdDarts = []
+        }
+        for _ in index..<source.count { game.undoLastInput() }
+        store.activeMatch = game
+
+        let previousHits = cameraHits
+        var tailHits: [CameraHit] = []
+        if cameraHits.count == source.count {
+            var copy = cameraHits
+            copy[index].dart = dart
+            copy[index].corrected = true
+            tailHits = Array(copy[index...])
+            cameraHits = Array(copy.prefix(index))
+        }
+
+        var replay = source
+        replay[index] = dart
+        var landed = false
+        for offset in index..<replay.count {
+            let visits = store.activeMatch?.visits.count ?? 0
+            let pending = store.activeMatch?.currentDarts.count ?? 0
+            hit(replay[offset])
+            let finished = (store.activeMatch?.visits.count ?? 0) > visits
+            let advanced = finished || (store.activeMatch?.currentDarts.count ?? 0) > pending
+            guard advanced else { break }
+            landed = true
+            let tailIndex = offset - index
+            if tailHits.indices.contains(tailIndex) {
+                cameraHits.append(tailHits[tailIndex])
+            }
+            if finished { break }
+        }
+        if !landed {
+            cameraHits = previousHits
+            for original in source[index...] {
+                let visits = store.activeMatch?.visits.count ?? 0
+                let pending = store.activeMatch?.currentDarts.count ?? 0
+                hit(original)
+                let finished = (store.activeMatch?.visits.count ?? 0) > visits
+                let advanced = finished || (store.activeMatch?.currentDarts.count ?? 0) > pending
+                guard advanced else { break }
+                if finished { break }
+            }
         }
         revision = UUID()
     }
@@ -1202,20 +1336,20 @@ struct MatchView: View {
             let headline = state.clockTarget >= 21 ? "BULL" : "\(state.clockTarget)"
             return (headline, Double(min(state.clockTarget, 21)), "Hotovo", "\(done)/21", Double(done), "Hotovo \(done) z 21")
         case .cricket:
-            let closed = cricketNumbers.filter { state.marks[$0, default: 0] >= 3 }.count
+            let numbers = game.config.settings.activeCricketNumbers
+            let closed = numbers.filter { state.marks[$0, default: 0] >= 3 }.count
+            let total = numbers.count
             if game.config.settings.cricketNoScore {
                 let rounds = game.states[index].rounds
-                return ("\(closed)/7", Double(closed), "Kola", "\(rounds)", Double(rounds), "\(rounds) kol, zavřeno \(closed) ze 7")
+                return ("\(closed)/\(total)", Double(closed), "Kola", "\(rounds)", Double(rounds), "\(rounds) kol, zavřeno \(closed) z \(total)")
             }
-            return ("\(state.points)", Double(state.points), "Zavřeno", "\(closed)/7", Double(closed), "\(state.points) bodů, zavřeno \(closed) ze 7")
+            return ("\(state.points)", Double(state.points), "Zavřeno", "\(closed)/\(total)", Double(closed), "\(state.points) bodů, zavřeno \(closed) z \(total)")
         case .countUp:
             let rounds = game.states[index].rounds
             let limit = game.config.settings.countUpRounds
             return ("\(state.points)", Double(state.points), "Kola", "\(rounds)/\(limit)", Double(rounds), "\(state.points) bodů, kolo \(rounds) z \(limit)")
         }
     }
-
-    private var cricketNumbers: [Int] { [20, 19, 18, 17, 16, 15, 25] }
 
     @ViewBuilder
     private func gameStrip(_ game: Match, shown: Match) -> some View {
@@ -1225,7 +1359,7 @@ struct MatchView: View {
             CricketMarksCard(
                 names: game.players.map(\.name),
                 marksByPlayer: shown.states.map(\.marks),
-                numbers: cricketNumbers,
+                numbers: game.config.settings.activeCricketNumbers,
                 active: index
             )
         case .aroundClock:
@@ -1254,56 +1388,106 @@ struct MatchView: View {
         let tint: Color = game.players.count <= 2
             ? (onTurn ? MatchColors.coral : MatchColors.amber)
             : Theme.playerColor(player)
-        return NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    playerStatsHero(game, player: player, name: name, score: score, onTurn: onTurn, tint: tint)
-                    resultPlayerReport(game, index: player, card: false)
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 4)
-                .padding(.bottom, 28)
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                playerStatsHero(game, player: player, name: name, score: score, onTurn: onTurn, tint: tint)
+                resultPlayerReport(game, index: player, card: false)
             }
-            .scrollIndicators(.hidden)
-            .background {
-                ZStack {
-                    MatchColors.background
-                    RadialGradient(
-                        colors: [tint.opacity(0.34), .clear],
-                        center: .topLeading,
-                        startRadius: 0,
-                        endRadius: 380
-                    )
-                    RadialGradient(
-                        colors: [MatchColors.green.opacity(0.12), .clear],
-                        center: .bottomTrailing,
-                        startRadius: 0,
-                        endRadius: 280
-                    )
-                }
-                .ignoresSafeArea()
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button { statsPlayer = nil } label: {
-                        Image(systemName: "xmark")
-                            .font(.subheadline.weight(.bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 30, height: 30)
-                            .background(.white.opacity(0.14), in: Circle())
-                    }
-                    .accessibilityLabel("Zavřít")
-                }
-            }
-            .toolbarBackground(.hidden, for: .navigationBar)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .padding(.horizontal, 16)
+            .padding(.top, 28)
+            .padding(.bottom, 28)
         }
-        .presentationDetents([.medium, .large])
+        .scrollIndicators(.hidden)
+        .scrollEdgeEffectHidden(true, for: .bottom)
+        .background {
+            ZStack {
+                MatchColors.background
+                RadialGradient(
+                    colors: [tint.opacity(0.34), .clear],
+                    center: .topLeading,
+                    startRadius: 0,
+                    endRadius: 380
+                )
+                RadialGradient(
+                    colors: [MatchColors.green.opacity(0.12), .clear],
+                    center: .bottomTrailing,
+                    startRadius: 0,
+                    endRadius: 280
+                )
+            }
+            .ignoresSafeArea()
+        }
+        .background(PlayerStatsSheetLock())
+        .presentationDetents([.fraction(0.5), .large])
         .presentationDragIndicator(.visible)
         .presentationBackground(MatchColors.background)
         .presentationCornerRadius(28)
         .preferredColorScheme(.dark)
+    }
+
+    /// Otevře kartu v půlce. Výš ji systém občas vytáhne sám, tažením nahoru ale půjde na celou.
+    private struct PlayerStatsSheetLock: UIViewControllerRepresentable {
+        func makeUIViewController(context: Context) -> PlayerStatsSheetController {
+            let controller = PlayerStatsSheetController()
+            controller.view.backgroundColor = .clear
+            controller.view.isUserInteractionEnabled = false
+            return controller
+        }
+
+        func updateUIViewController(_ controller: PlayerStatsSheetController, context: Context) {
+            controller.lock()
+        }
+    }
+
+    private final class PlayerStatsSheetController: UIViewController {
+        private static let halfID = UISheetPresentationController.Detent.Identifier("player-stats-half")
+        /// Po otevření chvíli držíme půlku, ať se list sám nevytáhne. Pak už výšku řídí prst.
+        private var allowExpandAt = Date().addingTimeInterval(0.45)
+
+        override func viewDidLayoutSubviews() {
+            super.viewDidLayoutSubviews()
+            lock()
+        }
+
+        func lock() {
+            var current: UIViewController? = self
+            while let viewController = current {
+                if let sheet = viewController.sheetPresentationController {
+                    let half = UISheetPresentationController.Detent.custom(identifier: Self.halfID) { context in
+                        context.maximumDetentValue * 0.5
+                    }
+                    sheet.prefersGrabberVisible = true
+                    sheet.prefersScrollingExpandsWhenScrolledToEdge = true
+                    let hasHalf = sheet.detents.contains { $0.identifier == Self.halfID }
+                    let hasLarge = sheet.detents.contains { $0.identifier == .large }
+                    if !hasHalf || !hasLarge {
+                        let selected = sheet.selectedDetentIdentifier
+                        sheet.detents = [half, .large()]
+                        if Date() < allowExpandAt {
+                            sheet.selectedDetentIdentifier = Self.halfID
+                        } else if let selected {
+                            sheet.selectedDetentIdentifier = selected
+                        }
+                    } else if Date() < allowExpandAt, sheet.selectedDetentIdentifier != Self.halfID {
+                        sheet.selectedDetentIdentifier = Self.halfID
+                    }
+                    // Okraj scrollu se hledá v celém listu. Bezprostřední rodič je jen pozadí a scroll v něm není.
+                    hideBottomEdgeEffect(in: viewController.view)
+                    return
+                }
+                current = viewController.parent
+            }
+        }
+
+        /// Tmavý pruh nad čárou domů je okraj scrollu. Systém ho kreslí přes obsah karty.
+        private func hideBottomEdgeEffect(in view: UIView) {
+            if let scroll = view as? UIScrollView {
+                scroll.bottomEdgeEffect.isHidden = true
+            }
+            for subview in view.subviews {
+                hideBottomEdgeEffect(in: subview)
+            }
+        }
     }
 
     private func playerStatsHero(
@@ -1418,7 +1602,10 @@ struct MatchView: View {
                         note: note,
                         setupLeave: suggested == nil ? nil : guide.setupLeave,
                         onGlass: true,
-                        plain: true
+                        plain: true,
+                        onEdit: filled && canEditThrownDarts(game) ? {
+                            beginDartEdit(i)
+                        } : nil
                     )
                 }
             }
@@ -1507,17 +1694,36 @@ struct MatchView: View {
     }
 
     private func bustScoreStrip(_ game: Match) -> some View {
-        let labels: String = {
-            guard let visit = game.visits.last, visit.bust, visit.enteredAsTotal != true else { return "" }
-            return visit.darts.map(\.label).joined(separator: " · ")
-        }()
+        let enteredTotal = game.visits.last?.enteredAsTotal == true
+        let darts = enteredTotal ? [] : holdDarts
+        let canEdit = canEditThrownDarts(game) && !darts.isEmpty
         return HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(labels.isEmpty ? "PŘEHOZ" : labels)
-                    .font(AppFont.caption(10, weight: .heavy))
-                    .tracking(labels.isEmpty ? 1.0 : 0)
-                    .foregroundStyle(.white.opacity(0.55))
-                    .lineLimit(1)
+                if canEdit {
+                    HStack(spacing: 6) {
+                        ForEach(Array(darts.enumerated()), id: \.offset) { index, dart in
+                            Button {
+                                beginDartEdit(index)
+                            } label: {
+                                Text(dart.label)
+                                    .font(AppFont.caption(12, weight: .heavy))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.white.opacity(0.12), in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("\(index + 1). šipka \(dart.label)")
+                            .accessibilityHint("Upravit šipku")
+                        }
+                    }
+                    .foregroundStyle(.white.opacity(0.7))
+                } else {
+                    Text(darts.isEmpty ? "PŘEHOZ" : darts.map(\.label).joined(separator: " · "))
+                        .font(AppFont.caption(10, weight: .heavy))
+                        .tracking(darts.isEmpty ? 1.0 : 0)
+                        .foregroundStyle(.white.opacity(0.55))
+                        .lineLimit(1)
+                }
                 Text("BUST")
                     .font(AppFont.display(34, weight: .bold))
                     .foregroundStyle(ScoringChrome.coral)
@@ -1537,8 +1743,8 @@ struct MatchView: View {
         .frame(minHeight: 36)
         .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(labels.isEmpty ? "Přehoz" : "Přehoz, \(labels)")
+        .accessibilityElement(children: canEdit ? .contain : .combine)
+        .accessibilityLabel(darts.isEmpty ? "Přehoz" : "Přehoz, \(darts.map(\.label).joined(separator: ", "))")
     }
 
     private func matchProgressStrip(_ game: Match) -> some View {
@@ -1766,6 +1972,7 @@ struct MatchView: View {
                 }
                 .toolbarBackground(.hidden, for: .navigationBar)
                 .toolbarColorScheme(.dark, for: .navigationBar)
+                .sheet(isPresented: progressDartEditPresented, onDismiss: resumeHoldAfterDartEdit) { dartEditCover }
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
@@ -2054,7 +2261,10 @@ struct MatchView: View {
                             suggestion: suggested,
                             note: note,
                             setupLeave: suggested == nil ? nil : guide.setupLeave,
-                            plain: true
+                            plain: true,
+                            onEdit: filled && canEditThrownDarts(game) ? {
+                                beginDartEdit(index)
+                            } : nil
                         )
                     }
                 }
@@ -2300,7 +2510,24 @@ struct MatchView: View {
         )
     }
     private func dartGrid(_ game: Match, shown: Match) -> some View {
-        ManualScorePad(multiplier: $multiplier, focus: padFocus(game, shown: shown), onSelect: { store.selectionHaptic() }, onHit: hit)
+        ManualScorePad(
+            multiplier: $multiplier,
+            focus: padFocus(game, shown: shown),
+            numbers: scorePadNumbers(game),
+            onSelect: { store.selectionHaptic() },
+            onHit: hit
+        )
+    }
+
+    /// Cricket ukáže jen zvolená pole. Ostatní režimy nechají celou klávesnici.
+    private func scorePadNumbers(_ game: Match) -> [Int]? {
+        game.config.mode == .cricket ? game.config.settings.activeCricketNumbers : nil
+    }
+
+    /// Číselná mřížka zůstane na obrazovce i v krátké pauze po třetí šipce.
+    private var keepsNumberPad: Bool {
+        if isHoldingVisit { return holdSurface == .grid }
+        return surface == .grid
     }
     private func canUseTotal(_ game: Match) -> Bool { game.config.mode == .x01 && !game.config.anyDoubleIn(players: game.players.count) }
 
@@ -2700,13 +2927,12 @@ struct MatchView: View {
                 if visit.bust {
                     store.feedback(announce: surface != .voice, spoken: "Přehoz")
                 } else {
-                    store.feedback(visit.credited, announce: surface != .voice)
+                    store.feedback(visit.credited, announce: surface != .voice, checkout: visit.checkout, matchWon: game.finished)
                 }
                 multiplier = 1
                 applyVisitHold(game: game, darts: visit.darts, player: thrower, fromBot: false)
             } else {
                 store.tapHaptic(.light)
-                // Bez animace — při rychlém klikání čísel by se fronta animací cítila jako zaseknutí.
                 store.activeMatch = game
             }
         } catch { self.error = error.localizedDescription }
@@ -2717,6 +2943,7 @@ struct MatchView: View {
             error = "Na toto kolo se už nejde vrátit. Starší zápis nemá uložený stav."
             return
         }
+        holdGeneration += 1
         isHoldingVisit = false
         holdPlayer = nil
         legCeremony = nil
@@ -2735,6 +2962,7 @@ struct MatchView: View {
         guard legCeremony == nil, var game = store.activeMatch else { return }
         store.tapHaptic(.soft)
         if isHoldingVisit {
+            holdGeneration += 1
             isHoldingVisit = false
             holdPlayer = nil
             oneEightyFlash = nil
@@ -2762,13 +2990,18 @@ struct MatchView: View {
         } else if game.visits.last?.bust == true {
             UINotificationFeedbackGenerator().notificationOccurred(.error)
         }
-        var transaction = Transaction()
+        var transaction = Transaction(animation: nil)
         transaction.disablesAnimations = true
         withTransaction(transaction) {
             isHoldingVisit = true
         }
-        withAnimation(reduceMotion ? nil : .snappy(duration: 0.35)) {
+        // Skóre se odečítá vlastní animací čísla. Zbytek hřiště se při tom nehýbe, ať rychlé šipky nezaseknou přepnutí tahu.
+        if !fromBot && holdSurface == .grid {
             store.activeMatch = game
+        } else {
+            withAnimation(reduceMotion ? nil : .snappy(duration: 0.35)) {
+                store.activeMatch = game
+            }
         }
         scheduleVisitHold(darts: darts, celebrate180: celebrate180)
     }
@@ -2793,9 +3026,13 @@ struct MatchView: View {
         if store.activeMatch?.visits.last?.bust == true {
             hold = max(hold, reduceMotion ? 0.9 : 1.6)
         }
+        holdGeneration += 1
+        let generation = holdGeneration
         Task { @MainActor in
+            // Nejdřív vykresli tři šipky, teprve potom odpočítávej. Jinak pauza vyprší během záseku a tah skočí naslepo.
+            await Task.yield()
             try? await Task.sleep(nanoseconds: UInt64(hold * 1_000_000_000))
-            guard isHoldingVisit, holdDarts == darts, correcting == nil else { return }
+            guard generation == holdGeneration, isHoldingVisit, holdDarts == darts, correcting == nil, editingDart == nil else { return }
             finishVisitHold()
         }
     }
@@ -2812,10 +3049,20 @@ struct MatchView: View {
             presentLegCeremony(game, winner: winner)
             return
         }
-        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.28)) {
-            isHoldingVisit = false
-            holdDarts = []
-            holdPlayer = nil
+        if holdSurface == .grid {
+            var quiet = Transaction(animation: nil)
+            quiet.disablesAnimations = true
+            withTransaction(quiet) {
+                isHoldingVisit = false
+                holdDarts = []
+                holdPlayer = nil
+            }
+        } else {
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.28)) {
+                isHoldingVisit = false
+                holdDarts = []
+                holdPlayer = nil
+            }
         }
         if game.needsBullOff {
             showProgress = false
@@ -2823,6 +3070,14 @@ struct MatchView: View {
         } else {
             revision = UUID()
         }
+    }
+    /// Průměr uživatele za právě dohraný leg. U jiných režimů než X01 se neukazuje.
+    private func userLegAverage(_ game: Match) -> Double? {
+        guard game.config.mode == .x01,
+              let id = store.profile?.id,
+              let index = game.players.firstIndex(where: { $0.id == id }),
+              game.thrownDarts(for: index, leg: game.leg) > 0 else { return nil }
+        return game.average(for: index, leg: game.leg)
     }
     private func presentLegCeremony(_ game: Match, winner: Int) {
         let visit = game.visits.last { $0.player == winner && $0.leg == game.leg && $0.checkout }
@@ -2847,7 +3102,8 @@ struct MatchView: View {
             duration: auto,
             byBullOff: game.bullOffLegs?[game.leg] == winner,
             winnerPhoto: playerLook(game, index: winner).photo,
-            winnerAsset: playerLook(game, index: winner).asset
+            winnerAsset: playerLook(game, index: winner).asset,
+            userLegAverage: userLegAverage(game)
         )
         performWithoutAnimation {
             ceremonyLeaving = false
@@ -2913,6 +3169,11 @@ struct MatchView: View {
         Task { @MainActor in
             if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
             UIAccessibility.post(notification: .announcement, argument: announcement)
+            if newSet {
+                store.announceMoment(.newSet, fallback: .newLeg)
+            } else {
+                store.announceMoment(.newLeg)
+            }
         }
     }
     private func decidingStarterPicks(_ game: Match) -> [StarterPick] {
@@ -3216,7 +3477,7 @@ struct MatchView: View {
                 if let visit = current.visits.last, visit.bust {
                     store.feedback(spoken: "Přehoz")
                 } else {
-                    store.feedback(current.visits.last?.credited)
+                    store.feedback(current.visits.last?.credited, checkout: current.visits.last?.checkout == true, matchWon: current.finished)
                 }
                 applyVisitHold(game: current, darts: shownDarts, player: thrower, fromBot: true)
             } else {
@@ -3254,7 +3515,7 @@ struct MatchView: View {
                 if visit.bust {
                     store.feedback(announce: surface != .voice, spoken: "Přehoz")
                 } else {
-                    store.feedback(score, announce: surface != .voice)
+                    store.feedback(score, announce: surface != .voice, checkout: visit.checkout, matchWon: game.finished)
                 }
                 applyVisitHold(game: game, darts: visit.darts, player: thrower, fromBot: false)
                 // Vždy součet jako jedno číslo — ne tři syntetické šipky.
@@ -3627,6 +3888,10 @@ struct MatchView: View {
                 }
             }
 
+            let numbered = numberedDarts(game, player: index)
+            if !numbered.isEmpty {
+                segmentHeatmapSection(numbered)
+            }
             if let board {
                 resultBoardSection(board, player: index)
             }
@@ -3670,6 +3935,38 @@ struct MatchView: View {
 
     private func czechCount(_ value: Int, one: String, few: String, many: String) -> String {
         "\(value) \(czechWord(value, one: one, few: few, many: many))"
+    }
+
+    /// Šipky zadané po číslech nemají souřadnice. Heatmapa počítá pole, ne místo na terči.
+    private func numberedDarts(_ game: Match, player: Int) -> [Dart] {
+        var darts = game.visits
+            .filter { $0.player == player && $0.enteredAsTotal != true }
+            .flatMap(\.darts)
+        if game.active == player, let pending = game.pendingDarts, game.legWinner == nil, !game.finished {
+            darts.append(contentsOf: pending)
+        }
+        return darts.filter { $0.x == nil || $0.y == nil }
+    }
+
+    private func segmentHeatmapSection(_ darts: [Dart]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "chart.pie.fill")
+                    .font(.system(size: 14, weight: .bold))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("MAPA SEGMENTŮ")
+                        .font(AppFont.caption(11, weight: .heavy))
+                        .tracking(1.2)
+                    Text("\(czechCount(darts.count, one: "šipka", few: "šipky", many: "šipek")) podle zadaného pole")
+                        .font(AppFont.caption(11, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.5))
+                }
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(MatchColors.green)
+            SegmentRoseChart(darts: darts, title: "Kam šipky padaly")
+        }
+        .accessibilityElement(children: .contain)
     }
 
     private func resultBoardSection(_ board: BoardStats, player: Int) -> some View {
@@ -3716,7 +4013,7 @@ struct MatchView: View {
         }
         .buttonStyle(.plain)
         .padding(14)
-        .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .background(BoardFace.plate, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .accessibilityLabel("Otevřít detailní statistiku terče")
     }
 
@@ -3862,7 +4159,7 @@ struct MatchView: View {
                         .frame(maxWidth: 540)
                         .frame(maxWidth: .infinity)
                         .padding(8)
-                        .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+                        .background(BoardFace.plate, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
                     Text("Přesná místa · \(board.total) šipek zadaných přes terč. Roztáhni prsty pro detail.")
                         .font(.footnote)
                         .foregroundStyle(.white.opacity(0.55))
@@ -4288,6 +4585,13 @@ private struct LegCeremonyView: View {
         return ("Leg \(ceremony.leg)", "flag.checkered")
     }
     private var showsCheckout: Bool { ceremony.isCheckout && ceremony.checkoutScore > 0 }
+    private var userAverageText: String? {
+        ceremony.userLegAverage.map { String(format: "%.1f", $0) }
+    }
+    private var averageSpoken: String {
+        guard let userAverageText else { return "" }
+        return " Tvůj průměr za leg \(userAverageText)."
+    }
     private var outcomeLine: String {
         if ceremony.matchFinished { return "vyhrává zápas" }
         if ceremony.setClosed { return "vyhrává set" }
@@ -4317,12 +4621,23 @@ private struct LegCeremonyView: View {
             background
             VStack(spacing: 0) {
                 Spacer(minLength: 20)
-                Label(badge.title, systemImage: badge.icon)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(accent)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(accent.opacity(0.16), in: Capsule())
+                VStack(spacing: 10) {
+                    Label(badge.title, systemImage: badge.icon)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(accent)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(accent.opacity(0.16), in: Capsule())
+                    if let userAverageText {
+                        Text("Tvůj průměr za leg \(userAverageText)")
+                            .font(.subheadline.weight(.bold))
+                            .monospacedDigit()
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(.white.opacity(0.1), in: Capsule())
+                    }
+                }
 
                 winnerMark
                     .padding(.top, 28)
@@ -4379,12 +4694,12 @@ private struct LegCeremonyView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
             ceremony.matchFinished
-            ? "\(winnerName) vyhrává zápas.\(scoreSpoken)"
+            ? "\(winnerName) vyhrává zápas.\(scoreSpoken)\(averageSpoken)"
             : ceremony.setClosed
-            ? "\(winnerName) vyhrává set.\(scoreSpoken)"
+            ? "\(winnerName) vyhrává set.\(scoreSpoken)\(averageSpoken)"
             : showsCheckout
-            ? "\(winnerName) zavřel na \(ceremony.checkoutScore) a vyhrává leg \(ceremony.leg).\(scoreSpoken)"
-            : "\(winnerName) vyhrává leg \(ceremony.leg).\(scoreSpoken)"
+            ? "\(winnerName) zavřel na \(ceremony.checkoutScore) a vyhrává leg \(ceremony.leg).\(scoreSpoken)\(averageSpoken)"
+            : "\(winnerName) vyhrává leg \(ceremony.leg).\(scoreSpoken)\(averageSpoken)"
         )
         .accessibilityHint(
             ceremony.matchFinished

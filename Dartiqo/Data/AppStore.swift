@@ -66,6 +66,8 @@ struct StoredData: Codable {
     var adaptiveAI: Bool?
     /// Jak se během hry kreslí průměr a další čísla. `nil` = celkový průměr zápasu, nic navíc.
     var matchDisplay: MatchDisplay?
+    /// Komentátor podle profilu. `nil` a `system` = výchozí hlas, `custom` = namluvené hlášky.
+    var commentators: [String: String]?
 }
 struct JSONDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
@@ -88,6 +90,10 @@ enum AppSection: Hashable {
     @Published var localSetupCoversBar = false
     /// Nová hodnota zavře zápas i průvodce a vrátí čistou domovskou obrazovku.
     @Published private(set) var homeGeneration = 0
+    /// Namluvené hlášky aktuálního profilu.
+    let commentary = CommentaryLibrary()
+    /// Posune seznamy nahrávek po uložení nebo smazání.
+    @Published private(set) var commentaryTick = 0
     /// Vlastní audio relace, ať přesun tahu ani vypnutí mikrofonu větu neusekne.
     private let speaker: AVSpeechSynthesizer = {
         let speaker = AVSpeechSynthesizer()
@@ -98,6 +104,11 @@ enum AppSection: Hashable {
     private let file: URL
     /// Spojí rychlé zápisy (šipky) do jednoho zápisu na disk.
     private var saveTask: Task<Void, Never>?
+    /// Jedna připravená odezva. Nový generátor na každý stisk při rychlých třech šipkách zasekne hlavní vlákno.
+    private let lightImpact = UIImpactFeedbackGenerator(style: .light)
+    private let softImpact = UIImpactFeedbackGenerator(style: .soft)
+    private let mediumImpact = UIImpactFeedbackGenerator(style: .medium)
+    private let selectionFeedback = UISelectionFeedbackGenerator()
     init() {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Dartiqo", isDirectory: true)
         file = directory.appendingPathComponent("dartiqo-v1.json")
@@ -114,6 +125,7 @@ enum AppSection: Hashable {
             backfillMatchCompletion()
         }
         locked = data.biometricLock && profile != nil
+        prepareHaptics()
     }
 #if DEBUG
     /// In-memory store pro SwiftUI Previews — nečte ani nepřepisuje produkční soubor.
@@ -126,6 +138,7 @@ enum AppSection: Hashable {
         needsRecovery = false
         backfillMatchXP()
         backfillMatchCompletion()
+        prepareHaptics()
     }
 #endif
     var presets: [GamePreset] { (data.presets ?? []).filter { $0.owner == profile?.id } }
@@ -424,6 +437,7 @@ enum AppSection: Hashable {
         }
         activeMatch = match
         feedback()
+        announceMoment(.matchStart)
         return true
     }
 
@@ -713,27 +727,83 @@ enum AppSection: Hashable {
         section = .home
         homeGeneration += 1
     }
-    func feedback(_ score: Int? = nil, announce: Bool = true, spoken: String? = nil) {
+    /// Výchozí hlas, nebo namluvené hlášky tohoto profilu.
+    var commentator: Commentator {
+        get {
+            guard let key = profile?.id.uuidString else { return .system }
+            return Commentator(rawValue: data.commentators?[key] ?? "") ?? .system
+        }
+        set {
+            guard let key = profile?.id.uuidString else { return }
+            if data.commentators == nil { data.commentators = [:] }
+            data.commentators?[key] = newValue.rawValue
+            if newValue == .custom { data.voice = true }
+            save()
+        }
+    }
+
+    var commentaryCount: Int {
+        guard let owner = profile?.id else { return 0 }
+        _ = commentaryTick
+        return commentary.count(owner: owner)
+    }
+
+    func noteCommentaryChanged() { commentaryTick += 1 }
+
+    func feedback(_ score: Int? = nil, announce: Bool = true, spoken: String? = nil, checkout: Bool = false, matchWon: Bool = false) {
         tapHaptic(.light)
-        // Při hlasovém zápisu nemluvit — TTS bojuje s mikrofonem a AVAudioSession.
+        // Při hlasovém zápisu nemluvit — přehrávání bojuje s mikrofonem a AVAudioSession.
         guard announce, data.voice else { return }
+        let cues = CommentaryCue.playbackOrder(score: score, spoken: spoken, checkout: checkout, matchWon: matchWon)
+        if commentator == .custom, let owner = profile?.id, commentary.play(owner: owner, cues: cues) {
+            if speaker.isSpeaking { speaker.stopSpeaking(at: .immediate) }
+            return
+        }
         let phrase = spoken ?? score.map(String.init)
         guard let phrase else { return }
+        commentary.stop()
         // Fronta, ne přerušení — skóre se dočte i když šipka už ukazuje na dalšího hráče.
         let line = AVSpeechUtterance(string: phrase)
         line.voice = AVSpeechSynthesisVoice(language: "cs-CZ")
         speaker.speak(line)
     }
 
+    /// Zvláštní moment mimo skóre kola. Pustí se jen uložená nahrávka vlastního komentátora.
+    func announceMoment(_ cue: CommentaryCue, fallback: CommentaryCue? = nil) {
+        guard data.voice, commentator == .custom, let owner = profile?.id else { return }
+        var cues = [cue]
+        if let fallback { cues.append(fallback) }
+        guard commentary.play(owner: owner, cues: cues) else { return }
+        if speaker.isSpeaking { speaker.stopSpeaking(at: .immediate) }
+    }
+
     /// Krátká odezva na stisk tlačítka (čísla, double/triple, součet…).
     func tapHaptic(_ style: UIImpactFeedbackGenerator.FeedbackStyle = .light) {
         guard data.haptics else { return }
-        UIImpactFeedbackGenerator(style: style).impactOccurred()
+        let generator = impactGenerator(style)
+        generator.impactOccurred()
+        generator.prepare()
     }
 
     func selectionHaptic() {
         guard data.haptics else { return }
-        UISelectionFeedbackGenerator().selectionChanged()
+        selectionFeedback.selectionChanged()
+        selectionFeedback.prepare()
+    }
+
+    private func prepareHaptics() {
+        lightImpact.prepare()
+        softImpact.prepare()
+        mediumImpact.prepare()
+        selectionFeedback.prepare()
+    }
+
+    private func impactGenerator(_ style: UIImpactFeedbackGenerator.FeedbackStyle) -> UIImpactFeedbackGenerator {
+        switch style {
+        case .soft: return softImpact
+        case .medium, .heavy, .rigid: return mediumImpact
+        default: return lightImpact
+        }
     }
     private var authInFlight = false
 
@@ -769,6 +839,9 @@ enum AppSection: Hashable {
         data.matchXPAwards?.removeAll { $0.owner == id || removedMatchIDs.contains($0.matchID) }
         data.trainingPlan?[id.uuidString] = nil
         data.achievementUnlocks?.removeAll { $0.owner == id }
+        data.commentators?[id.uuidString] = nil
+        commentary.deleteAll(owner: id)
+        commentaryTick += 1
         flushSave()
     }
     var boardCalibration: BoardCalibration? { data.boardCalibration }

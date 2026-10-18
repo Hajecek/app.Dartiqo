@@ -278,6 +278,19 @@ final class GameEngineTests: XCTestCase {
         var m = game(mode:.cricket)
         try m.submit([Dart(25,2),.miss,.miss]); XCTAssertEqual(m.states[0].marks[25],2)
     }
+    func testCricketUsesChosenNumbers() throws {
+        var options = MatchOptions()
+        options.cricketNumbers = [20, 19, 18]
+        var m = game(mode: .cricket)
+        m.config.options = options
+        try m.submit([Dart(15, 3), Dart(16, 3), Dart(17, 3)])
+        XCTAssertEqual(m.states[0].marks[15] ?? 0, 0)
+        XCTAssertFalse(m.finished)
+        m.active = 0
+        try m.submit([Dart(20, 3), Dart(19, 3), Dart(18, 3)])
+        XCTAssertTrue(m.finished)
+        XCTAssertEqual(m.winner, 0)
+    }
     func testClockProgressesWithinVisitAndEndsOnBull() throws {
         var m = game(mode:.aroundClock)
         try m.submit([Dart(1,3),Dart(2,2),Dart(3)]); XCTAssertEqual(m.states[0].clockTarget,4)

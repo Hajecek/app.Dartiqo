@@ -88,6 +88,11 @@ struct SetupView: View {
     @State private var showCoinToss = false
     @State private var coinLaunched = false
     @State private var showH2HAfterToss = false
+    @State private var showH2HAfterBull = false
+    @State private var showPregame = false
+    @State private var pregameLaunched = false
+    /// Bilance už proběhla (los nebo rozhoz). Zahodit rozehraný zápas ji nesmí pustit znovu.
+    @State private var pregameSeen = false
     @State private var coinWinner: Int?
     @State private var pregameSeries: HeadToHead?
     @State private var openSoloTraining = false
@@ -247,12 +252,25 @@ struct SetupView: View {
             if !shown, step > 3 { setStep(3) }
         }
         .onChange(of: showBullOff) { _, shown in
-            if !shown { bullLaunched = false }
+            if !shown {
+                bullLaunched = false
+                showH2HAfterBull = false
+            }
+        }
+        .onChange(of: showPregame) { _, shown in
+            if !shown {
+                pregameLaunched = false
+                pregameSeen = false
+                pregameSeries = nil
+            }
         }
         .confirmationDialog("Máš rozehraný zápas", isPresented: $replace, titleVisibility: .visible) {
-            Button("Pokračovat v rozehraném") { live = true }
-            Button("Zahodit rozehraný a spustit nový", role: .destructive) { start() }
-            Button("Zrušit", role: .cancel) {}
+            Button("Pokračovat v rozehraném") {
+                pregameSeen = false
+                live = true
+            }
+            Button("Zahodit rozehraný a spustit nový", role: .destructive) { confirmReplace() }
+            Button("Zrušit", role: .cancel) { pregameSeen = false }
         }
         .fullScreenCover(isPresented: $live) {
             NavigationStack { MatchView() }
@@ -280,6 +298,10 @@ struct SetupView: View {
             showBullOff = false
             showCoinToss = false
             showH2HAfterToss = false
+            showH2HAfterBull = false
+            showPregame = false
+            pregameLaunched = false
+            pregameSeen = false
             pregameSeries = nil
         }
         .onChange(of: draft.seats.count) { _, count in
@@ -341,6 +363,20 @@ struct SetupView: View {
                 if bullLaunched {
                     NavigationStack { MatchView() }
                         .transition(.opacity)
+                } else if showH2HAfterBull, let series = pregameSeries {
+                    HeadToHeadPregameView(
+                        series: series,
+                        myName: store.profile?.name ?? "Já",
+                        myPhoto: store.profile?.photoJPEG,
+                        theirPhoto: pregameOpponentPhoto(series),
+                        onContinue: { finishAfterBull() },
+                        onCancel: {
+                            showBullOff = false
+                            showH2HAfterBull = false
+                            pregameSeries = nil
+                        }
+                    )
+                    .transition(.opacity)
                 } else {
                     BullOffView(names: draft.seats.indices.map(seatName), bots: draft.seats.indices.map { index in
                         isMe(index) ? nil : (draft.seats[index].isBot ? draft.seats[index].level : nil)
@@ -348,12 +384,16 @@ struct SetupView: View {
                         bullWinner = winner
                         opening = .bull
                         commitScoreFromField()
+                        ensureFriendIDs()
                         if let active = store.activeMatch, !active.finished {
                             showBullOff = false
                             Task { @MainActor in
                                 try? await Task.sleep(nanoseconds: 450_000_000)
                                 replace = true
                             }
+                        } else if let series = makePregameSeries() {
+                            pregameSeries = series
+                            withAnimation(.easeInOut(duration: 0.3)) { showH2HAfterBull = true }
                         } else if makeMatch() {
                             withAnimation(.easeInOut(duration: 0.35)) { bullLaunched = true }
                         } else {
@@ -363,6 +403,35 @@ struct SetupView: View {
                         showBullOff = false
                         if bullWinner == nil { opening = nil }
                     }
+                    .transition(.opacity)
+                }
+            }
+            .environmentObject(store)
+            .onAppear {
+                bullLaunched = false
+                showH2HAfterBull = false
+                pregameSeries = nil
+            }
+        }
+        .fullScreenCover(isPresented: $showPregame) {
+            ZStack {
+                if pregameLaunched {
+                    NavigationStack { MatchView() }
+                        .transition(.opacity)
+                } else if let series = pregameSeries {
+                    HeadToHeadPregameView(
+                        series: series,
+                        myName: store.profile?.name ?? "Já",
+                        myPhoto: store.profile?.photoJPEG,
+                        theirPhoto: pregameOpponentPhoto(series),
+                        onContinue: { finishPregame() },
+                        onCancel: {
+                            showPregame = false
+                            pregameLaunched = false
+                            pregameSeen = false
+                            pregameSeries = nil
+                        }
+                    )
                     .transition(.opacity)
                 }
             }
@@ -1096,7 +1165,7 @@ struct SetupView: View {
                 ruleSection(.finish, "Zavření a otevření", icon: "checkmark.seal.fill", value: finishSummary) { finishGroup }
             }
             if draft.config.mode == .cricket {
-                ruleSection(.mode, "Cricket", icon: "line.3.horizontal.decrease.circle.fill", value: draft.config.settings.cricketNoScore ? "Bez bodů" : "S body") { cricketGroup }
+                ruleSection(.mode, "Cricket", icon: "line.3.horizontal.decrease.circle.fill", value: cricketRuleValue) { cricketGroup }
             }
             if draft.config.mode == .countUp {
                 ruleSection(.mode, "Délka", icon: "chart.bar.fill", value: "\(draft.config.settings.countUpRounds) kol") { countUpGroup }
@@ -1170,7 +1239,7 @@ struct SetupView: View {
             rows.append(SummaryRow(key: .finish, icon: "checkmark.seal.fill", title: "Zavření", value: draft.config.outRule.title))
             rows.append(SummaryRow(key: .finish, icon: "door.left.hand.open", title: "Otevření", value: draft.config.doubleIn ? "Double in" : "Hned"))
         case .cricket:
-            rows.append(SummaryRow(key: .mode, icon: "line.3.horizontal.decrease.circle.fill", title: "Cricket", value: draft.config.settings.cricketNoScore ? "Bez bodů" : "S body"))
+            rows.append(SummaryRow(key: .mode, icon: "line.3.horizontal.decrease.circle.fill", title: "Cricket", value: cricketRuleValue))
         case .countUp:
             rows.append(SummaryRow(key: .mode, icon: "chart.bar.fill", title: "Délka", value: "\(draft.config.settings.countUpRounds) kol"))
         case .aroundClock:
@@ -1464,17 +1533,64 @@ struct SetupView: View {
         }
     }
 
+    private var cricketRuleValue: String {
+        let scoring = draft.config.settings.cricketNoScore ? "Bez bodů" : "S body"
+        return "\(scoring) · \(MatchOptions.cricketNumbersLine(draft.config.settings.activeCricketNumbers))"
+    }
+
     private var cricketGroup: some View {
-        RuleTiles(
-            options: [
-                (id: false, title: "S body", detail: "Zavři čísla a měj víc bodů"),
-                (id: true, title: "Bez bodů", detail: "Vyhrává, kdo první zavře")
-            ],
-            selection: draft.config.settings.cricketNoScore,
-            columns: 2,
-            alignment: .leading
-        ) { value in
-            withAnimation(motion) { options.wrappedValue.cricketNoScore = value }
+        VStack(alignment: .leading, spacing: 14) {
+            RuleTiles(
+                options: [
+                    (id: false, title: "S body", detail: "Zavři čísla a měj víc bodů"),
+                    (id: true, title: "Bez bodů", detail: "Vyhrává, kdo první zavře")
+                ],
+                selection: draft.config.settings.cricketNoScore,
+                columns: 2,
+                alignment: .leading
+            ) { value in
+                withAnimation(motion) { options.wrappedValue.cricketNoScore = value }
+            }
+            Text("Čísla")
+                .font(.subheadline.weight(.semibold))
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5), spacing: 8) {
+                ForEach(Array(1...20) + [25], id: \.self) { number in
+                    let selected = draft.config.settings.activeCricketNumbers
+                    let on = selected.contains(number)
+                    let last = on && selected.count == 1
+                    Button {
+                        toggleCricketNumber(number)
+                    } label: {
+                        Text(number == 25 ? "B" : "\(number)")
+                            .font(.system(.headline, design: .rounded, weight: .bold))
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .foregroundStyle(on ? Color.black : Color.primary)
+                            .background(on ? Theme.brand : Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(last)
+                    .accessibilityLabel(number == 25 ? "Bull" : "\(number)")
+                    .accessibilityAddTraits(on ? .isSelected : [])
+                }
+            }
+            Text("Ve hře se ukážou jen zapnutá čísla, bez celé klávesnice.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func toggleCricketNumber(_ number: Int) {
+        var selected = Set(draft.config.settings.activeCricketNumbers)
+        if selected.contains(number) {
+            guard selected.count > 1 else { return }
+            selected.remove(number)
+        } else {
+            selected.insert(number)
+        }
+        let ordered = MatchOptions.orderedCricketNumbers(Array(selected))
+        withAnimation(motion) {
+            options.wrappedValue.cricketNumbers = ordered == MatchOptions.standardCricketNumbers ? nil : ordered
         }
     }
 
@@ -1977,9 +2093,10 @@ struct SetupView: View {
             coinLaunched = false
             showCoinToss = true
         } else if store.activeMatch != nil {
+            pregameSeen = false
             replace = true
         } else {
-            start()
+            presentPregameOrStart()
         }
     }
 
@@ -1990,9 +2107,25 @@ struct SetupView: View {
         scoreText = "\(draft.config.startingScore)"
     }
 
+    private var visibleRuleKeys: Set<RuleKey> {
+        var keys = Set<RuleKey>()
+        switch draft.config.mode {
+        case .x01: keys.formUnion([.start, .finish, .limit])
+        case .cricket, .countUp, .aroundClock: keys.insert(.mode)
+        }
+        if draft.config.mode == .x01 || draft.config.mode == .cricket { keys.insert(.length) }
+        if draft.config.mode == .x01, draft.seats.count > 1 { keys.insert(.handicap) }
+        return keys
+    }
+
     private func setStep(_ value: Int) {
         commitScoreFromField()
-        withAnimation(motion) { step = value }
+        withAnimation(motion) {
+            step = value
+            if value == 2, let openRule, !visibleRuleKeys.contains(openRule) {
+                self.openRule = draft.config.mode == .x01 ? .start : .mode
+            }
+        }
     }
     /// Fotka místa: ty a ghost berou portrét profilu, kamarád svůj uložený snímek.
     private func seatPhoto(_ index: Int) -> Data? {
@@ -2022,11 +2155,63 @@ struct SetupView: View {
         live = true
     }
 
+    /// H2H před zápasem, když už je jasné, kdo začíná (výběr hráče i rozhoz).
+    private func presentPregameOrStart() {
+        ensureFriendIDs()
+        if let series = makePregameSeries() {
+            pregameSeries = series
+            pregameLaunched = false
+            pregameSeen = true
+            showPregame = true
+        } else {
+            start()
+        }
+    }
+
+    private func confirmReplace() {
+        if pregameSeen {
+            pregameSeen = false
+            start()
+        } else {
+            presentPregameOrStart()
+        }
+    }
+
+    private func finishPregame() {
+        guard makeMatch() else {
+            showPregame = false
+            pregameLaunched = false
+            pregameSeries = nil
+            return
+        }
+        withAnimation(.easeInOut(duration: 0.35)) { pregameLaunched = true }
+    }
+
+    private func finishAfterBull() {
+        if let active = store.activeMatch, !active.finished {
+            showBullOff = false
+            showH2HAfterBull = false
+            pregameSeries = nil
+            pregameSeen = true
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 450_000_000)
+                replace = true
+            }
+        } else if makeMatch() {
+            withAnimation(.easeInOut(duration: 0.35)) { bullLaunched = true }
+        } else {
+            showBullOff = false
+            showH2HAfterBull = false
+            pregameSeries = nil
+        }
+    }
+
     private func finishAfterToss() {
         if let active = store.activeMatch, !active.finished {
             showCoinToss = false
             showH2HAfterToss = false
             pregameSeries = nil
+            pregameSeen = true
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 450_000_000)
                 replace = true
@@ -2141,6 +2326,7 @@ struct SetupView: View {
         }
         store.activeMatch = match
         store.feedback()
+        store.announceMoment(.matchStart)
         return true
     }
 
@@ -2319,7 +2505,7 @@ private struct ModeInfoSheet: View {
     private var rules: String {
         switch mode {
         case .x01: return "Zvolíš start, třeba 501. Šipky od něj odečítají. Skóre pod nulu, nebo zavření bez požadovaného násobiče, je přehoz. Leg vyhraje, kdo se dostane přesně na nulu."
-        case .cricket: return "Cíle jsou 20, 19, 18, 17, 16, 15 a bull. Každý zásah je jedna značka, triple jsou tři. Tři značky číslo zavřou. Další zásahy na číslo, které soupeř ještě nemá, přičítají body. Vyhrává, kdo zavře všechno a má aspoň tolik bodů jako soupeř."
+        case .cricket: return "Čísla si vybereš v pravidlech. Výchozí jsou 20, 19, 18, 17, 16, 15 a bull. Každý zásah je jedna značka, triple jsou tři. Tři značky číslo zavřou. Další zásahy na číslo, které soupeř ještě nemá, přičítají body. Vyhrává, kdo zavře všechno a má aspoň tolik bodů jako soupeř."
         case .aroundClock: return "Jde se popořadě od 1 do 20 a nakonec na bull. Posouvá tě jakýkoli násobič daného čísla. Minutí tě nevrací, jen zůstáváš na stejném cíli."
         case .countUp: return "Nikdo neodečítá. Každá návštěva přičte body a po zvoleném počtu kol vyhrává vyšší součet. Je to závod o maximum, ne o zavření."
         }
