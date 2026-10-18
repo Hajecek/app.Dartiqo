@@ -387,6 +387,10 @@ public struct Match: Codable, Identifiable {
         ghostVisits != nil && ghostPlayerIndex == player
     }
     public var isGhostTurn: Bool { isGhost(active) }
+    /// Člověk u stolu. Bot ani ghost nemají vlastní statistiky.
+    public func isClassicPlayer(_ player: Int) -> Bool {
+        players.indices.contains(player) && players[player].botLevel == nil && !isGhost(player)
+    }
     public var tracksGhostAverage: Bool { ghostKind == .beatPB || ghostKind == .mirror }
     /// Tříšipkový průměr. Bez `leg` je to celý zápas, jinak jen jedna hra.
     public func average(for player: Int, leg: Int? = nil) -> Double {

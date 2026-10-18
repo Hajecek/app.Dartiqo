@@ -1198,10 +1198,20 @@ struct MatchDetailView: View {
         self.match = match
         self.profileID = profileID
         self.showsHeadToHeadLink = showsHeadToHeadLink
-        _focus = State(initialValue: match.players.firstIndex { $0.id == profileID } ?? match.winner ?? 0)
+        let people = MatchDetailView.statPlayers(in: match)
+        let start = people.first { match.players[$0].id == profileID } ?? people.first ?? match.winner ?? 0
+        _focus = State(initialValue: start)
     }
 
-    private var playerIndex: Int { match.players.indices.contains(focus) ? focus : 0 }
+    /// Statistiky patří jen klasickým hráčům. Bot a ghost v přehledu nejsou.
+    private static func statPlayers(in match: Match) -> [Int] {
+        let people = match.players.indices.filter(match.isClassicPlayer)
+        return people.isEmpty ? Array(match.players.indices) : people
+    }
+
+    private var statPlayers: [Int] { Self.statPlayers(in: match) }
+
+    private var playerIndex: Int { statPlayers.contains(focus) ? focus : (statPlayers.first ?? 0) }
 
     var body: some View {
         ScrollView {
@@ -1243,11 +1253,11 @@ struct MatchDetailView: View {
 
     @ToolbarContentBuilder
     private var detailToolbar: some ToolbarContent {
-        if page == .stats, match.players.count > 1 {
+        if page == .stats, statPlayers.count > 1 {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     Picker("Hráč", selection: $focus) {
-                        ForEach(match.players.indices, id: \.self) { index in
+                        ForEach(statPlayers, id: \.self) { index in
                             Label(playerName(index), systemImage: match.winner == index ? "crown" : "person").tag(index)
                         }
                     }
@@ -1370,7 +1380,7 @@ struct MatchDetailView: View {
 
     private func statistics(_ index: Int) -> some View {
         VStack(alignment: .leading, spacing: 20) {
-            if match.players.count > 1 {
+            if statPlayers.count > 1 {
                 playerStrip
             }
             section("Výkon", symbol: "chart.bar.fill") { playerStats(index) }
@@ -1390,7 +1400,7 @@ struct MatchDetailView: View {
     private var playerStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(match.players.indices, id: \.self) { index in
+                ForEach(statPlayers, id: \.self) { index in
                     Button { focus = index } label: {
                         HStack(spacing: 7) {
                             Avatar(name: match.players[index].name, bot: match.players[index].botLevel != nil, size: 28, photo: store.photo(for: match.players[index].id), asset: match.players[index].botLevel.map { BotLevel.get($0).photo })

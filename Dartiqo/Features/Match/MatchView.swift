@@ -170,7 +170,7 @@ struct MatchView: View {
         .preferredColorScheme(.dark)
         .tint(.white)
         .toolbar(leavingHome || hidesMatchChrome ? .hidden : .automatic, for: .navigationBar)
-        .statusBarHidden(hidesMatchChrome)
+        .statusBarHidden(hidesMatchChrome || leavingHome)
         .transaction(value: hidesMatchChrome) { transaction in
             transaction.animation = nil
             transaction.disablesAnimations = true
@@ -2983,8 +2983,9 @@ struct MatchView: View {
         guard !leavingHome else { return }
         leavingHome = true
         flushClock()
+        let wait = MatchSavedSplash.hold(reduceMotion: reduceMotion)
         Task { @MainActor in
-            try? await Task.sleep(nanoseconds: reduceMotion ? 700_000_000 : 1_400_000_000)
+            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
             store.returnHome()
             dismiss()
         }
@@ -3354,7 +3355,7 @@ struct MatchView: View {
     }
 
     private func result(_ game: Match) -> some View {
-        let order = game.players.indices.sorted { a, b in
+        let order = game.players.indices.filter(game.isClassicPlayer).sorted { a, b in
             if game.winner == a { return true }
             if game.winner == b { return false }
             if game.config.playsSets, game.states[a].sets != game.states[b].sets {
@@ -3371,14 +3372,16 @@ struct MatchView: View {
                     resultXPBanner(xp)
                         .modifier(ResultRise(shown: resultShown, delay: 0.08, reduceMotion: reduceMotion))
                 }
-                Text("Hráči")
-                    .font(.title3.bold())
-                    .foregroundStyle(.white)
-                    .padding(.top, 8)
-                    .modifier(ResultRise(shown: resultShown, delay: 0.14, reduceMotion: reduceMotion))
-                ForEach(Array(order.enumerated()), id: \.element) { offset, i in
-                    resultPlayerReport(game, index: i)
-                        .modifier(ResultRise(shown: resultShown, delay: 0.18 + Double(offset) * 0.06, reduceMotion: reduceMotion))
+                if !order.isEmpty {
+                    Text("Hráči")
+                        .font(.title3.bold())
+                        .foregroundStyle(.white)
+                        .padding(.top, 8)
+                        .modifier(ResultRise(shown: resultShown, delay: 0.14, reduceMotion: reduceMotion))
+                    ForEach(Array(order.enumerated()), id: \.element) { offset, i in
+                        resultPlayerReport(game, index: i)
+                            .modifier(ResultRise(shown: resultShown, delay: 0.18 + Double(offset) * 0.06, reduceMotion: reduceMotion))
+                    }
                 }
                 Button("Opravit poslední šipku") { undo() }
                     .font(.subheadline)
@@ -4032,27 +4035,153 @@ struct MatchView: View {
     }
 }
 
-/// Krátká obrazovka po uložení — pak návrat domů.
+/// Krátká obrazovka po uložení — liquid glass karta, pak návrat domů.
 private struct MatchSavedSplash: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var shown = false
+    @State private var drift = false
+    @State private var progress: CGFloat = 0
+
+    /// Délka obrazovky. `saveAndLeave` na ni čeká, ať ukazatel doběhne před odchodem.
+    static func hold(reduceMotion: Bool) -> TimeInterval {
+        reduceMotion ? 0.7 : 1.45
+    }
+
     var body: some View {
-        VStack(spacing: 18) {
-            Spacer()
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 64, weight: .semibold))
-                .foregroundStyle(MatchColors.finish)
-                .symbolRenderingMode(.hierarchical)
-            Text("Hra uložena")
-                .font(AppFont.title(28, weight: .bold))
-                .foregroundStyle(.white)
-            Text("Vracím tě na Domů…")
-                .font(AppFont.body(16))
-                .foregroundStyle(.white.opacity(0.6))
-            Spacer()
+        ZStack {
+            backdrop
+            card
+                .scaleEffect(shown || reduceMotion ? 1 : 0.92)
+                .opacity(shown ? 1 : 0)
+                .offset(y: shown || reduceMotion ? 0 : 16)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(MatchColors.background.ignoresSafeArea())
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Hra uložena")
+        .accessibilityLabel("Hra uložena. Vracím tě na Domů.")
+        .onAppear(perform: play)
+    }
+
+    private var backdrop: some View {
+        ZStack {
+            MatchColors.background
+            MeshGradient(
+                width: 3,
+                height: 3,
+                points: meshPoints,
+                colors: [
+                    Color(red: 0.03, green: 0.09, blue: 0.07),
+                    Color(red: 0.05, green: 0.32, blue: 0.20),
+                    Color(red: 0.02, green: 0.08, blue: 0.07),
+                    Color(red: 0.02, green: 0.14, blue: 0.16),
+                    Color(red: 0.06, green: 0.20, blue: 0.13),
+                    Theme.brand.opacity(0.55),
+                    Color(red: 0.02, green: 0.06, blue: 0.05),
+                    MatchColors.green.opacity(0.45),
+                    Color(red: 0.03, green: 0.10, blue: 0.08)
+                ]
+            )
+            Circle()
+                .fill(MatchColors.green.opacity(0.55))
+                .frame(width: 260, height: 260)
+                .blur(radius: 72)
+                .offset(x: drift ? -70 : 24, y: drift ? -210 : -150)
+            Circle()
+                .fill(Theme.brand.opacity(0.42))
+                .frame(width: 200, height: 200)
+                .blur(radius: 64)
+                .offset(x: drift ? 110 : 48, y: drift ? 200 : 130)
+            Circle()
+                .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+                .frame(width: 280, height: 280)
+            Circle()
+                .strokeBorder(Color.white.opacity(0.05), lineWidth: 1)
+                .frame(width: 420, height: 420)
+        }
+        .ignoresSafeArea()
+    }
+
+    private var meshPoints: [SIMD2<Float>] {
+        let shift: Float = drift ? 0.08 : -0.04
+        return [
+            SIMD2(0, 0), SIMD2(0.5, 0), SIMD2(1, 0),
+            SIMD2(0, 0.5), SIMD2(0.5 + shift, 0.46 - shift), SIMD2(1, 0.5),
+            SIMD2(0, 1), SIMD2(0.5, 1), SIMD2(1, 1)
+        ]
+    }
+
+    private var card: some View {
+        GlassEffectContainer(spacing: 22) {
+            VStack(spacing: -34) {
+                badge
+                    .zIndex(1)
+
+                VStack(spacing: 16) {
+                    VStack(spacing: 6) {
+                        Text("Hra uložena")
+                            .font(AppFont.title(28, weight: .bold))
+                            .foregroundStyle(.white)
+                        Label("Vracím tě na Domů", systemImage: "house.fill")
+                            .font(AppFont.body(16, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.78))
+                            .labelStyle(.titleAndIcon)
+                    }
+
+                    Capsule()
+                        .fill(Color.white.opacity(0.14))
+                        .overlay(alignment: .leading) {
+                            GeometryReader { geo in
+                                Capsule()
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [MatchColors.green, Color(red: 0.62, green: 0.96, blue: 0.68)],
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
+                                    )
+                                    .frame(width: max(10, geo.size.width * progress))
+                                    .shadow(color: MatchColors.green.opacity(0.7), radius: 6)
+                            }
+                        }
+                        .frame(height: 5)
+                        .accessibilityHidden(true)
+                }
+                .padding(.top, 52)
+                .padding(.horizontal, 28)
+                .padding(.bottom, 22)
+                .frame(maxWidth: 320)
+                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 34, style: .continuous))
+            }
+        }
+        .padding(.horizontal, 28)
+    }
+
+    private var badge: some View {
+        let mark = Image(systemName: "checkmark")
+            .font(.system(size: 32, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(width: 92, height: 92)
+            .glassEffect(.regular.tint(MatchColors.green), in: Circle())
+        return Group {
+            if reduceMotion {
+                mark
+            } else {
+                mark.symbolEffect(.bounce, options: .speed(0.55), value: shown)
+            }
+        }
+    }
+
+    private func play() {
+        let motion = reduceMotion
+        withAnimation(motion ? nil : .spring(duration: 0.48, bounce: 0.28)) {
+            shown = true
+        }
+        withAnimation(motion ? nil : .easeInOut(duration: 2.6).repeatForever(autoreverses: true)) {
+            drift = true
+        }
+        let fill = max(0.35, Self.hold(reduceMotion: motion) - 0.22)
+        withAnimation(motion ? .linear(duration: fill) : .easeInOut(duration: fill)) {
+            progress = 1
+        }
     }
 }
 

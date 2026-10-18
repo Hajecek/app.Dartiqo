@@ -88,7 +88,12 @@ enum AppSection: Hashable {
     @Published var localSetupCoversBar = false
     /// Nová hodnota zavře zápas i průvodce a vrátí čistou domovskou obrazovku.
     @Published private(set) var homeGeneration = 0
-    private let speaker = AVSpeechSynthesizer()
+    /// Vlastní audio relace, ať přesun tahu ani vypnutí mikrofonu větu neusekne.
+    private let speaker: AVSpeechSynthesizer = {
+        let speaker = AVSpeechSynthesizer()
+        speaker.usesApplicationAudioSession = false
+        return speaker
+    }()
     @Published private(set) var needsRecovery = false
     private let file: URL
     /// Spojí rychlé zápisy (šipky) do jednoho zápisu na disk.
@@ -714,7 +719,7 @@ enum AppSection: Hashable {
         guard announce, data.voice else { return }
         let phrase = spoken ?? score.map(String.init)
         guard let phrase else { return }
-        speaker.stopSpeaking(at: .immediate)
+        // Fronta, ne přerušení — skóre se dočte i když šipka už ukazuje na dalšího hráče.
         let line = AVSpeechUtterance(string: phrase)
         line.voice = AVSpeechSynthesisVoice(language: "cs-CZ")
         speaker.speak(line)

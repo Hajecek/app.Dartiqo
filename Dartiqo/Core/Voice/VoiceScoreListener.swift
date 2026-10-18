@@ -112,11 +112,14 @@ final class VoiceScoreListener: ObservableObject {
     func stop() {
         startGeneration += 1
         let generation = startGeneration
+        let ownedSession = sessionReady
         // Synchronní cleanup — ať asynchronní tearDown z předchozího cyklu nesahá na nový recorder.
         invalidateCapture()
         phase = .idle
         transcript = ""
         inputLevel = 0
+        // Bez nahrávání nesahej na audio. Deaktivace by usekla hlasové skóre při předání tahu.
+        guard ownedSession else { return }
         Task {
             guard generation == startGeneration else { return }
             await deactivateSession()
