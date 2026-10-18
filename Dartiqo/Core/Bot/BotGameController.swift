@@ -66,7 +66,7 @@ public enum BotGameController {
         let form = BotFormEngine.form(in: game, profile: profile)
         var thrown: [SimulatedDart] = []
         for _ in 0..<3 {
-            if played.finished || played.legWinner != nil || played.needsBullOff { break }
+            if played.finished || played.legWinner != nil || played.needsBullOff || played.needsDecidingStarter { break }
             let shot = simulateDart(in: played, profile: profile, form: form, using: &rng)
             thrown.append(shot)
             let before = played.visits.count

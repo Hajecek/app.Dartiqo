@@ -11,7 +11,7 @@ extension Match {
     }
     private mutating func applyVisit(_ darts: [Dart]) throws {
         guard !finished else { throw GameError.finished }
-        guard legWinner == nil, !needsBullOff else { throw GameError.legEnded }
+        guard legWinner == nil, !needsBullOff, !needsDecidingStarter else { throw GameError.legEnded }
         guard (1...3).contains(darts.count), darts.allSatisfy(\.isValid) else { throw GameError.invalidDarts }
         undoStack.append(snapshot)
         let index = active
@@ -120,6 +120,25 @@ extension Match {
             return fresh
         }
         starter = (starter + 1) % players.count; active = starter; leg += 1; legWinner = nil
+        if openingStarter == nil { openingStarter = resolvedOpeningStarter }
+        awaitingDecidingStarter = Self.isDecidingLegScore(states: states, legsToWin: config.legsToWin, players: players.count) ? true : nil
+    }
+    /// Stav, kdy další leg rozhoduje set nebo zápas (např. 3:3 při first-to-4).
+    public static func isDecidingLegScore(states: [PlayerState], legsToWin: Int, players: Int) -> Bool {
+        guard players > 1, legsToWin > 1 else { return false }
+        return states.filter { $0.legs >= legsToWin - 1 }.count >= 2
+    }
+    /// Potvrdí, kdo začíná rozhodující leg.
+    public mutating func resolveDecidingStarter(to player: Int) {
+        guard needsDecidingStarter, players.indices.contains(player) else { return }
+        starter = player
+        active = player
+        awaitingDecidingStarter = nil
+    }
+    /// Pro simulace a testy — ve hře start rozhodujícího legu volí hráč.
+    public mutating func autoResolveDecidingStarterIfNeeded() {
+        guard needsDecidingStarter else { return }
+        resolveDecidingStarter(to: resolvedOpeningStarter)
     }
     public mutating func undo() {
         guard let old = undoStack.popLast() else { return }
@@ -128,6 +147,7 @@ extension Match {
         legWinner = old.legWinner; winner = old.winner; finished = old.finished
         awaitingBullOff = old.awaitingBullOff; bullOffLegs = old.bullOffLegs
         continuedPastLimitLegs = old.continuedPastLimitLegs
+        awaitingDecidingStarter = old.awaitingDecidingStarter
         ghostVisitIndex = old.ghostVisitIndex
         visits = Array(visits.prefix(old.visitCount)); completedAt = nil
     }

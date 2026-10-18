@@ -299,7 +299,10 @@ final class BotEngineTests: XCTestCase {
                     XCTAssertTrue(rule.allows(visit.darts.last ?? .miss))
                     XCTAssertEqual(game.states[visit.player].remaining, 0)
                 }
-                if game.legWinner != nil && !game.finished { game.nextLeg() }
+                if game.legWinner != nil && !game.finished {
+                    game.nextLeg()
+                    game.autoResolveDecidingStarterIfNeeded()
+                }
             }
         }
 
@@ -487,7 +490,10 @@ final class BotEngineTests: XCTestCase {
             XCTAssertLessThanOrEqual(darts.count, 3)
             try game.submit(darts)
             XCTAssertEqual(game.visits.count, before + 1)
-            if game.legWinner != nil && !game.finished { game.nextLeg() }
+            if game.legWinner != nil && !game.finished {
+                game.nextLeg()
+                game.autoResolveDecidingStarterIfNeeded()
+            }
         }
         XCTAssertTrue(game.finished)
         for visit in game.visits where visit.checkout {

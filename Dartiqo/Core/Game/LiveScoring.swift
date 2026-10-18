@@ -18,7 +18,7 @@ extension Match {
     /// One tap is one dart. The third dart, bust or checkout ends a visit automatically.
     public mutating func recordDart(_ dart: Dart) throws {
         guard !finished else { throw GameError.finished }
-        guard legWinner == nil, !needsBullOff else { throw GameError.legEnded }
+        guard legWinner == nil, !needsBullOff, !needsDecidingStarter else { throw GameError.legEnded }
         guard dart.isValid, currentDarts.count < 3 else { throw GameError.invalidDarts }
         let input = currentDarts + [dart]
         var next = self

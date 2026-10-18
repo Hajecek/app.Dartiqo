@@ -303,6 +303,7 @@ public struct GameSnapshot: Codable, Equatable {
     public var awaitingBullOff: Bool? = nil
     public var bullOffLegs: [Int: Int]? = nil
     public var continuedPastLimitLegs: Set<Int>? = nil
+    public var awaitingDecidingStarter: Bool? = nil
     public var ghostVisitIndex: Int? = nil
 }
 public enum GameError: Error, LocalizedError {
@@ -320,6 +321,8 @@ public struct Match: Codable, Identifiable {
     public var states: [PlayerState]
     public var active = 0
     public var starter = 0
+    /// Kdo házel první v 1. legu. Nemění se při střídání ani při výběru v rozhodujícím legu.
+    public var openingStarter: Int? = nil
     public var leg = 1
     public var legWinner: Int?
     public var winner: Int?
@@ -333,7 +336,10 @@ public struct Match: Codable, Identifiable {
     public var bullOffLegs: [Int: Int]?
     /// Legy, které hráči po vypršení limitu zvolili dohrát bez dalšího omezení.
     public var continuedPastLimitLegs: Set<Int>?
+    /// Rozhodující leg čeká na výběr, kdo hází první.
+    public var awaitingDecidingStarter: Bool?
     public var needsBullOff: Bool { awaitingBullOff == true }
+    public var needsDecidingStarter: Bool { awaitingDecidingStarter == true }
     /// Čas s otevřenou hrou. Pauza, odchod ze hry ani appka na pozadí se nepočítají.
     public var playSeconds: Double?
     /// Ghost Mode: typ zdroje, popisek, průměr a fronta návštěv. Volitelná pole pro JSON v1.
@@ -366,6 +372,14 @@ public struct Match: Codable, Identifiable {
         self.config = config; self.players = players
         self.states = players.indices.map { PlayerState(config: config, player: $0) }
         active = min(max(firstPlayer, 0), players.count - 1); starter = active
+        openingStarter = active
+    }
+    /// Kdo otevřel zápas. U starších uložených her se dopočítá z aktuálního střídání.
+    public var resolvedOpeningStarter: Int {
+        if let openingStarter, players.indices.contains(openingStarter) { return openingStarter }
+        let count = max(players.count, 1)
+        let steps = max(leg - 1, 0)
+        return ((starter - steps) % count + count) % count
     }
     public var currentPlayer: Player { players[active] }
     public var currentState: PlayerState { states[active] }
@@ -406,7 +420,8 @@ public struct Match: Codable, Identifiable {
         GameSnapshot(
             states: states, active: active, starter: starter, leg: leg, legWinner: legWinner, winner: winner,
             finished: finished, visitCount: visits.count, awaitingBullOff: awaitingBullOff, bullOffLegs: bullOffLegs,
-            continuedPastLimitLegs: continuedPastLimitLegs, ghostVisitIndex: ghostVisitIndex
+            continuedPastLimitLegs: continuedPastLimitLegs, awaitingDecidingStarter: awaitingDecidingStarter,
+            ghostVisitIndex: ghostVisitIndex
         )
     }
     public var isSane: Bool {

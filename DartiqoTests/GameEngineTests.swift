@@ -227,6 +227,34 @@ final class GameEngineTests: XCTestCase {
         m.nextLeg(); XCTAssertEqual(m.active,1); XCTAssertEqual(m.leg,2)
         m.undo(); XCTAssertEqual(m.leg,1); XCTAssertEqual(m.active,0); XCTAssertEqual(m.states[0].remaining,40); XCTAssertEqual(m.states[0].legs,0)
     }
+
+    func testDecidingLegWaitsForStarterChoice() throws {
+        var m = Match(
+            config: GameConfig(mode: .x01, outRule: .double, legsToWin: 4),
+            players: [Player(name: "A"), Player(name: "B")],
+            firstPlayer: 0
+        )
+        XCTAssertEqual(m.openingStarter, 0)
+        m.states[0].legs = 3
+        m.states[1].legs = 2
+        m.states[1].remaining = 40
+        m.starter = 1
+        m.active = 1
+        m.leg = 6
+        try m.submit([Dart(20, 2)])
+        XCTAssertEqual(m.states[0].legs, 3)
+        XCTAssertEqual(m.states[1].legs, 3)
+        XCTAssertFalse(m.finished)
+        m.nextLeg()
+        XCTAssertTrue(m.needsDecidingStarter)
+        XCTAssertThrowsError(try m.submit([Dart(20), Dart(20), Dart(20)]))
+        m.resolveDecidingStarter(to: 0)
+        XCTAssertFalse(m.needsDecidingStarter)
+        XCTAssertEqual(m.active, 0)
+        XCTAssertEqual(m.starter, 0)
+        try m.submit([Dart(1), Dart(1), Dart(1)])
+        XCTAssertEqual(m.active, 1)
+    }
     func testUndoBotReplyReturnsHumanTurn() throws {
         var m = game(); m.players[1].botLevel = 3
         try m.submit([Dart(20),Dart(20),Dart(20)])
@@ -362,7 +390,10 @@ final class GameEngineTests: XCTestCase {
             for _ in 0..<3000 {
                 if m.finished { break }
                 try m.submit(Bot.visit(in:m,using:&rng))
-                if m.legWinner != nil && !m.finished { m.nextLeg() }
+                if m.legWinner != nil && !m.finished {
+                    m.nextLeg()
+                    m.autoResolveDecidingStarterIfNeeded()
+                }
             }
             XCTAssertTrue(m.finished,"Bot stalled in \(mode)")
         }

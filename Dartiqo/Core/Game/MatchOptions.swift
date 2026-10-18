@@ -196,7 +196,7 @@ extension Match {
     public mutating func submitTotal(_ score: Int, checkoutDarts: Int = 3) throws {
         guard config.mode == .x01, currentState.opened else { throw ScoreEntryError.unsupported }
         guard !finished else { throw GameError.finished }
-        guard legWinner == nil, !needsBullOff else { throw GameError.legEnded }
+        guard legWinner == nil, !needsBullOff, !needsDecidingStarter else { throw GameError.legEnded }
         guard (0...180).contains(score) else { throw ScoreEntryError.impossible }
         let remaining = currentState.remaining
         let rule = config.outRule(for: active)
@@ -220,7 +220,7 @@ extension Match {
         guard currentDarts.isEmpty else { throw GameError.unfinishedVisit }
         guard config.mode == .x01, currentState.opened else { throw ScoreEntryError.unsupported }
         guard !finished else { throw GameError.finished }
-        guard legWinner == nil, !needsBullOff else { throw GameError.legEnded }
+        guard legWinner == nil, !needsBullOff, !needsDecidingStarter else { throw GameError.legEnded }
         guard (1...3).contains(darts) else { throw GameError.invalidDarts }
         guard canBust(remaining: currentState.remaining, darts: darts) else { throw ScoreEntryError.invalidBust }
         undoStack.append(snapshot)

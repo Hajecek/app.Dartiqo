@@ -93,6 +93,8 @@ struct MatchView: View {
     @State private var cameraHits: [CameraHit] = []
     @State private var correcting: Int?
     @State private var decidingLeg = false
+    /// Výběr startéra před rozhodujícím legem (např. 3:3).
+    @State private var showDecidingStarter = false
     @State private var leavingHome = false
     /// Začátek právě běžícího úseku hry. Stopky stojí při pauze, mimo hru a na pozadí.
     @State private var clockStart: Date?
@@ -195,6 +197,17 @@ struct MatchView: View {
                     )
                 }
             }
+            .fullScreenCover(isPresented: $showDecidingStarter) {
+                if let game = store.activeMatch {
+                    DecidingLegStarterView(
+                        names: game.players.map(\.name),
+                        bots: game.players.map(\.botLevel),
+                        picks: decidingStarterPicks(game),
+                        openingStarter: game.resolvedOpeningStarter,
+                        onFinish: resolveDecidingStarter
+                    )
+                }
+            }
             .fullScreenCover(item: $boardDetail) { selection in
                 if let game = store.activeMatch {
                     boardDetailScreen(game, player: selection.player)
@@ -266,6 +279,7 @@ struct MatchView: View {
             seedSurface(for: game)
             UIApplication.shared.isIdleTimerDisabled = game.config.settings.keepAwake
             if game.currentPlayer.botLevel != nil || game.isGhostTurn { holdDarts = game.currentDarts }
+            if game.needsDecidingStarter { showDecidingStarter = true }
         }
         syncClock()
         lastActivity = Date()
@@ -336,12 +350,12 @@ struct MatchView: View {
     private var botTaskKey: String {
         guard let g = store.activeMatch else { return "none" }
         // isHoldingVisit / legCeremony intentionally omitted — must not cancel mid-throw.
-        return "\(g.id)-\(g.active)-\(g.leg)-\(g.visits.last?.id.uuidString ?? "start")-\(g.currentDarts.map(\.label).joined())-\(paused)-\(showSettings)-\(showLog)-\(showProgress)-\(showLeave)-\(statsPlayer != nil)-\(scenePhase == .active)-\(g.finished)-\(g.legWinner ?? -1)-\(revision)"
+        return "\(g.id)-\(g.active)-\(g.leg)-\(g.visits.last?.id.uuidString ?? "start")-\(g.currentDarts.map(\.label).joined())-\(paused)-\(showSettings)-\(showLog)-\(showProgress)-\(showLeave)-\(statsPlayer != nil)-\(scenePhase == .active)-\(g.finished)-\(g.legWinner ?? -1)-\(g.needsDecidingStarter)-\(showDecidingStarter)-\(revision)"
     }
     private var botIsThrowing: Bool {
         guard let game = store.activeMatch, !isHoldingVisit else { return false }
         // Bot čeká, dokud ceremonie úplně nezmizí — šipka nesmí naskočit v prolínání.
-        if legCeremony != nil { return false }
+        if legCeremony != nil || showDecidingStarter || game.needsDecidingStarter { return false }
         return game.currentPlayer.botLevel != nil || game.isGhostTurn
     }
     private var holdingBotVisit: Bool {
@@ -2191,7 +2205,7 @@ struct MatchView: View {
     /// Spodní lišta: Liquid Glass — Zpět, režim hlasu a způsob zápisu.
     @ViewBuilder
     private func bottomBar(_ game: Match) -> some View {
-        let humanInput = !paused && game.legWinner == nil && !game.needsBullOff && !showingBotBoard && !isHoldingVisit
+        let humanInput = !paused && game.legWinner == nil && !game.needsBullOff && !game.needsDecidingStarter && !showingBotBoard && !isHoldingVisit && !showDecidingStarter
         let canUndo = isHoldingVisit || !game.currentDarts.isEmpty || !game.visits.isEmpty
         let showTotalConfirm = humanInput && surface == .total && canUseTotal(game)
         let showVoiceModes = surface == .voice && canUseTotal(game) && !isHoldingVisit
@@ -2298,15 +2312,17 @@ struct MatchView: View {
             && legCeremony == nil
             && game.legWinner == nil
             && !game.needsBullOff
+            && !game.needsDecidingStarter
             && !game.finished
             && game.currentPlayer.botLevel == nil
             && !game.isGhostTurn
             && !showProgress
+            && !showDecidingStarter
     }
 
     private var voiceSyncKey: String {
         guard let game = store.activeMatch else { return "none" }
-        return "\(surface.rawValue)-\(game.active)-\(isHoldingVisit)-\(paused)-\(showProgress)-\(game.finished)-\(game.legWinner ?? -1)-\(game.needsBullOff)-\(botIsThrowing)"
+        return "\(surface.rawValue)-\(game.active)-\(isHoldingVisit)-\(paused)-\(showProgress)-\(game.finished)-\(game.legWinner ?? -1)-\(game.needsBullOff)-\(game.needsDecidingStarter)-\(botIsThrowing)"
     }
 
     private func effectiveVoiceMode(for game: Match) -> VoiceScoreMode {
@@ -2674,7 +2690,7 @@ struct MatchView: View {
         }
     }
     private func hit(_ dart: Dart) {
-        guard !paused, !isHoldingVisit, legCeremony == nil, var game = store.activeMatch, game.currentPlayer.botLevel == nil, !game.finished, game.legWinner == nil, !game.needsBullOff else { return }
+        guard !paused, !isHoldingVisit, legCeremony == nil, !showDecidingStarter, var game = store.activeMatch, game.currentPlayer.botLevel == nil, !game.finished, game.legWinner == nil, !game.needsBullOff, !game.needsDecidingStarter else { return }
         let thrower = game.active
         let count = game.visits.count
         do {
@@ -2874,8 +2890,6 @@ struct MatchView: View {
         guard var game = store.activeMatch, game.legWinner != nil, !game.finished else { return }
         let newSet = legCeremony?.setClosed == true
         game.nextLeg()
-        let starter = game.players.indices.contains(game.active) ? game.players[game.active].name : "Hráč"
-        let leg = game.leg
         var quiet = Transaction(animation: nil)
         quiet.disablesAnimations = true
         withTransaction(quiet) {
@@ -2886,12 +2900,52 @@ struct MatchView: View {
             multiplier = 1
             sumText = ""
         }
-        let announcement = "\(newSet ? "Nový set" : "Nový leg") \(leg). Začíná \(starter)."
+        if game.needsDecidingStarter {
+            showDecidingStarter = true
+            return
+        }
+        announceLegStart(game, newSet: newSet)
+    }
+    private func announceLegStart(_ game: Match, newSet: Bool) {
+        let starter = game.players.indices.contains(game.active) ? game.players[game.active].name : "Hráč"
+        let announcement = "\(newSet ? "Nový set" : "Nový leg") \(game.leg). Začíná \(starter)."
         let delay = reduceMotion ? 0 : CeremonyFade.seconds
         Task { @MainActor in
             if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
             UIAccessibility.post(notification: .announcement, argument: announcement)
         }
+    }
+    private func decidingStarterPicks(_ game: Match) -> [StarterPick] {
+        game.players.indices.map { index in
+            let player = game.players[index]
+            let look = playerLook(game, index: index)
+            let detail: String = {
+                if game.isGhost(index) { return "Ghost" }
+                if player.botLevel != nil { return "Bot" }
+                if player.id == store.profile?.id { return "Ty" }
+                return "Hráč"
+            }()
+            return StarterPick(
+                id: index,
+                name: player.name,
+                detail: detail,
+                photo: look.photo,
+                asset: look.asset,
+                bot: player.botLevel != nil,
+                tint: Theme.playerColor(index)
+            )
+        }
+    }
+    private func resolveDecidingStarter(_ player: Int) {
+        guard var game = store.activeMatch, game.needsDecidingStarter else {
+            showDecidingStarter = false
+            return
+        }
+        game.resolveDecidingStarter(to: player)
+        store.activeMatch = game
+        showDecidingStarter = false
+        revision = UUID()
+        announceLegStart(game, newSet: false)
     }
     /// Statistiky jsou celé vidět ještě pod ceremonií, ať po prolínání nic nedojíždí.
     private func revealMatchResult() {
@@ -3128,12 +3182,12 @@ struct MatchView: View {
     }
     @MainActor private func throwBotDart() async {
         guard scenePhase == .active, !paused, !showSettings, !showLog, !showProgress, !showLeave, statsPlayer == nil else { return }
-        guard let game = store.activeMatch, !game.finished, game.legWinner == nil, !game.needsBullOff else { return }
+        guard let game = store.activeMatch, !game.finished, game.legWinner == nil, !game.needsBullOff, !game.needsDecidingStarter, !showDecidingStarter else { return }
         let auto = game.currentPlayer.botLevel != nil || game.isGhostTurn
         guard auto else { return }
         guard await waitUntilThrowIsClear() else { return }
-        guard scenePhase == .active, !paused, !showSettings, !showLog, !showProgress, !showLeave, statsPlayer == nil, !isHoldingVisit, legCeremony == nil else { return }
-        guard let ready = store.activeMatch, !ready.finished, ready.legWinner == nil, !ready.needsBullOff else { return }
+        guard scenePhase == .active, !paused, !showSettings, !showLog, !showProgress, !showLeave, statsPlayer == nil, !isHoldingVisit, legCeremony == nil, !showDecidingStarter else { return }
+        guard let ready = store.activeMatch, !ready.finished, ready.legWinner == nil, !ready.needsBullOff, !ready.needsDecidingStarter else { return }
         guard ready.currentPlayer.botLevel != nil || ready.isGhostTurn else { return }
         if holdDarts.count != ready.currentDarts.count { holdDarts = ready.currentDarts }
         let key = botTaskKey
