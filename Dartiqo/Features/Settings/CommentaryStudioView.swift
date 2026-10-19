@@ -802,10 +802,10 @@ struct CommentatorOptionRow: View {
                     )
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.title)
-                        .font(.body.weight(.semibold))
+                        .font(.body)
                         .foregroundStyle(.primary)
                     Text(detail)
-                        .font(.caption)
+                        .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 8)
@@ -832,10 +832,10 @@ struct CommentatorOptionRow: View {
     private var detail: String {
         switch item {
         case .system:
-            return "Systém přečte skóre kola"
+            return "Čte dosažené skóre"
         case .custom:
             let count = store.commentaryCount
-            if count == 0 { return "Nahraj si vlastní hlášky" }
+            if count == 0 { return "Zatím bez nahrávek" }
             return CommentaryCopy.countPhrase(count)
         }
     }
