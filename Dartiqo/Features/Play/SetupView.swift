@@ -2260,6 +2260,7 @@ struct SetupView: View {
     }
 
     private func pregameOpponentPhoto(_ series: HeadToHead) -> Data? {
+        if series.isGhost { return store.profile?.photoJPEG }
         guard case .person(let id) = series.key.kind else { return nil }
         return store.photo(for: id)
     }

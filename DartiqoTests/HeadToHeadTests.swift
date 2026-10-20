@@ -55,6 +55,42 @@ final class HeadToHeadTests: XCTestCase {
         XCTAssertEqual(rivals.count, 2)
     }
 
+    func testSideStatsSplitBothPlayers() {
+        var game = match(opponent: Player(id: friend, name: "Pepa"), winner: 0)
+        game.visits = [
+            Visit(
+                player: 0,
+                leg: 1,
+                darts: [Dart(20, 3, x: 0.1, y: 0.2), Dart(20, 3, x: 0.11, y: 0.2), Dart(20, 3, x: 0.12, y: 0.2)],
+                credited: 180,
+                bust: false,
+                checkout: false,
+                remaining: 321
+            ),
+            Visit(
+                player: 1,
+                leg: 1,
+                darts: [Dart(1, x: 0.4, y: 0.1)],
+                credited: 1,
+                bust: false,
+                checkout: false,
+                remaining: 500
+            )
+        ]
+        game.states[0].legs = 1
+        let series = HeadToHead.series(from: [game], me: me, key: RivalKey(kind: .person(friend)))
+        let mine = series?.side(me: me, mine: true)
+        let theirs = series?.side(me: me, mine: false)
+        XCTAssertEqual(mine?.oneEighties, 1)
+        XCTAssertEqual(mine?.tons, 1)
+        XCTAssertEqual(mine?.darts, 3)
+        XCTAssertEqual(mine?.positioned.count, 3)
+        XCTAssertEqual(mine?.legsWon, 1)
+        XCTAssertEqual(theirs?.darts, 1)
+        XCTAssertEqual(theirs?.oneEighties, 0)
+        XCTAssertEqual(theirs?.positioned.count, 1)
+    }
+
     func testGhostKindIsSeparateKey() {
         let ghost = match(
             opponent: Player(name: "Ghost · 90"),

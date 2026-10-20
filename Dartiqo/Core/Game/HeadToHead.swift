@@ -55,6 +55,24 @@ public struct H2HFormPoint: Identifiable, Equatable {
     public var theirWins: Int
 }
 
+/// Souhrn výkonu jedné strany vzájemné série.
+public struct H2HSide: Equatable {
+    public var average: Double?
+    public var first9: Double?
+    public var checkout = CheckoutStats()
+    public var bestVisit = 0
+    /// Návštěvy 100 a výš, včetně 180.
+    public var tons = 0
+    public var oneEighties = 0
+    public var darts = 0
+    public var legsWon = 0
+    public var positioned: [Dart] = []
+
+    public var hasNumbers: Bool {
+        average != nil || first9 != nil || checkout.hasData || bestVisit > 0 || darts > 0 || legsWon > 0
+    }
+}
+
 /// Bilance tebe proti jednomu soupeři.
 public struct HeadToHead: Identifiable {
     public var key: RivalKey
@@ -189,6 +207,52 @@ public struct HeadToHead: Identifiable {
             stats.merge(CheckoutStats.make(from: match, player: theirs))
         }
         return stats
+    }
+
+    /// Výkon jedné strany série. Průměr a zavírání jen z X01, hody a legy ze všech režimů.
+    public func side(me: UUID, mine: Bool) -> H2HSide {
+        var line = H2HSide()
+        var points = 0
+        var scoringDarts = 0
+        var points9 = 0
+        var darts9 = 0
+        var sawX01 = false
+        for match in matches {
+            guard let player = index(in: match, me: me, mine: mine) else { continue }
+            let visits = match.visits.filter { $0.player == player }
+            line.darts += visits.reduce(0) { $0 + $1.darts.count }
+            if match.states.indices.contains(player) { line.legsWon += match.states[player].legs }
+            line.bestVisit = max(line.bestVisit, visits.map(\.credited).max() ?? 0)
+            line.positioned += visits
+                .filter { $0.enteredAsTotal != true }
+                .flatMap(\.darts)
+                .filter { $0.x != nil && $0.y != nil }
+            guard match.config.mode == .x01 else { continue }
+            sawX01 = true
+            points += visits.reduce(0) { $0 + $1.credited }
+            scoringDarts += visits.reduce(0) { $0 + $1.darts.count }
+            for visit in visits where !visit.bust {
+                if visit.credited >= 100 { line.tons += 1 }
+                if visit.credited == 180 { line.oneEighties += 1 }
+            }
+            for leg in Set(visits.map(\.leg)) {
+                let opening = visits.filter { $0.leg == leg }.prefix(3)
+                points9 += opening.reduce(0) { $0 + $1.credited }
+                darts9 += opening.reduce(0) { $0 + $1.darts.count }
+            }
+            line.checkout.merge(CheckoutStats.make(from: match, player: player))
+        }
+        if sawX01, scoringDarts > 0 { line.average = Double(points) * 3 / Double(scoringDarts) }
+        if darts9 > 0 { line.first9 = Double(points9) * 3 / Double(darts9) }
+        return line
+    }
+
+    private func index(in match: Match, me: UUID, mine: Bool) -> Int? {
+        guard let myIndex = match.players.firstIndex(where: { $0.id == me }) else { return nil }
+        if mine { return myIndex }
+        return match.players.indices.first {
+            $0 != myIndex && Self.matchesKey(key, opponent: match.players[$0], match: match)
+        }
     }
 
     public static func rivals(from all: [Match], me: UUID) -> [HeadToHead] {

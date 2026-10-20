@@ -67,23 +67,27 @@ struct HeadToHeadListView: View {
         let winShare = CGFloat(totalWins) / CGFloat(decided)
         let tied = totalWins == totalLosses
         return VStack(spacing: 18) {
-            VStack(spacing: 6) {
-                Text("CELKEM")
-                    .font(.caption.weight(.heavy))
-                    .tracking(0.8)
-                    .foregroundStyle(.secondary)
-                Text("\(totalWins) : \(totalLosses)")
-                    .font(.system(size: 48, weight: .heavy, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(standingTint)
-                Text(tied ? "Vyrovnáno" : (totalWins > totalLosses ? "Vedeš" : "Prohráváš"))
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(standingTint)
-                Text(rivals.count == 1 ? "1 soupeř" : "\(rivals.count) soupeřů")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            HStack(alignment: .center, spacing: 16) {
+                Avatar(name: store.profile?.name ?? "Já", size: 72, photo: store.profile?.photoJPEG)
+                    .overlay(Circle().strokeBorder(standingTint.opacity(0.75), lineWidth: 2.5))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("CELKEM")
+                        .font(.caption.weight(.heavy))
+                        .tracking(0.8)
+                        .foregroundStyle(.secondary)
+                    Text("\(totalWins) : \(totalLosses)")
+                        .font(.system(size: 40, weight: .heavy, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(standingTint)
+                    Text(tied ? "Vyrovnáno" : (totalWins > totalLosses ? "Vedeš" : "Prohráváš"))
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(standingTint)
+                    Text(rivals.count == 1 ? "1 soupeř" : "\(rivals.count) soupeřů")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity)
 
             GeometryReader { geo in
                 HStack(spacing: 3) {
@@ -178,6 +182,7 @@ struct HeadToHeadDetailView: View {
     }
 
     private func opponentPhoto(_ series: HeadToHead) -> Data? {
+        if series.isGhost { return store.profile?.photoJPEG }
         guard case .person(let id) = series.key.kind else { return nil }
         return store.photo(for: id)
     }
@@ -533,9 +538,10 @@ struct HeadToHeadStandingView: View {
     var body: some View {
         VStack(spacing: compact ? 14 : 20) {
             header
-            // Pregame je jen rychlý přehled bilance — výkon patří do profilového H2H.
+            // Pregame je jen rychlý přehled bilance — terč a heatmapa patří do profilového H2H.
             if style == .light {
                 performanceCard
+                boardsCard
             }
             if !historyMatches.isEmpty || !compact {
                 resultsCard
@@ -774,12 +780,10 @@ struct HeadToHeadStandingView: View {
     }
 
     private var performanceCard: some View {
-        let myAvg = series.myAverage(me: me)
-        let theirAvg = series.theirAverage(me: me)
-        let myCheck = series.myCheckout(me: me)
-        let theirCheck = series.theirCheckout(me: me)
-        let hasAvg = myAvg != nil || theirAvg != nil
-        let hasCheck = myCheck.hasData || theirCheck.hasData
+        let mine = series.side(me: me, mine: true)
+        let theirs = series.side(me: me, mine: false)
+        let hasAvg = mine.average != nil || theirs.average != nil
+        let hasCheck = mine.checkout.hasData || theirs.checkout.hasData
 
         return VStack(alignment: .leading, spacing: style == .light ? 18 : 14) {
             if style == .light {
@@ -792,70 +796,90 @@ struct HeadToHeadStandingView: View {
                     .foregroundStyle(secondaryText)
             }
 
-            if !hasAvg && !hasCheck {
-                Text("Po X01 zápasech tu uvidíš průměr a zavírání.")
+            if !mine.hasNumbers && !theirs.hasNumbers {
+                Text("Po společných zápasech tu uvidíš průměr, skóre, zavírání a hody.")
                     .font(.subheadline)
                     .foregroundStyle(secondaryText)
             } else if style == .light {
                 VStack(spacing: 10) {
                     if hasAvg {
-                        duelRow(
-                            title: "Průměr",
-                            symbol: "target",
-                            mine: myAvg.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "—",
-                            theirs: theirAvg.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "—",
-                            mineValue: myAvg ?? 0,
-                            theirValue: theirAvg ?? 0
-                        )
+                        duelRow("Průměr", "target", decimal(mine.average), decimal(theirs.average), mine.average ?? 0, theirs.average ?? 0)
+                    }
+                    if mine.first9 != nil || theirs.first9 != nil {
+                        duelRow("Prvních 9", "9.circle.fill", decimal(mine.first9), decimal(theirs.first9), mine.first9 ?? 0, theirs.first9 ?? 0)
+                    }
+                    if mine.oneEighties > 0 || theirs.oneEighties > 0 {
+                        duelRow("180", "flame.fill", "\(mine.oneEighties)", "\(theirs.oneEighties)", Double(mine.oneEighties), Double(theirs.oneEighties))
+                    }
+                    if mine.tons > 0 || theirs.tons > 0 {
+                        duelRow("100+", "bolt.fill", "\(mine.tons)", "\(theirs.tons)", Double(mine.tons), Double(theirs.tons))
+                    }
+                    if mine.bestVisit > 0 || theirs.bestVisit > 0 {
+                        duelRow("Nejlepší kolo", "star.fill", "\(mine.bestVisit)", "\(theirs.bestVisit)", Double(mine.bestVisit), Double(theirs.bestVisit))
                     }
                     if hasCheck {
                         duelRow(
-                            title: "Zavírání",
-                            symbol: "checkmark.seal.fill",
-                            mine: myCheck.percentage.map { "\(Int($0.rounded())) %" } ?? "—",
-                            theirs: theirCheck.percentage.map { "\(Int($0.rounded())) %" } ?? "—",
-                            mineValue: myCheck.percentage ?? 0,
-                            theirValue: theirCheck.percentage ?? 0
+                            "Zavírání",
+                            "checkmark.seal.fill",
+                            mine.checkout.percentage.map { "\(Int($0.rounded())) %" } ?? "—",
+                            theirs.checkout.percentage.map { "\(Int($0.rounded())) %" } ?? "—",
+                            mine.checkout.percentage ?? 0,
+                            theirs.checkout.percentage ?? 0
                         )
                     }
-                    if myCheck.hasData || theirCheck.hasData {
+                    if mine.checkout.attempts > 0 || theirs.checkout.attempts > 0 {
                         duelRow(
-                            title: "Zásahy na double",
-                            symbol: "scope",
-                            mine: "\(myCheck.hits)/\(myCheck.attempts)",
-                            theirs: "\(theirCheck.hits)/\(theirCheck.attempts)",
-                            mineValue: myCheck.attempts > 0 ? Double(myCheck.hits) / Double(myCheck.attempts) : 0,
-                            theirValue: theirCheck.attempts > 0 ? Double(theirCheck.hits) / Double(theirCheck.attempts) : 0
+                            "Zásahy na double",
+                            "scope",
+                            "\(mine.checkout.hits)/\(mine.checkout.attempts)",
+                            "\(theirs.checkout.hits)/\(theirs.checkout.attempts)",
+                            mine.checkout.attempts > 0 ? Double(mine.checkout.hits) / Double(mine.checkout.attempts) : 0,
+                            theirs.checkout.attempts > 0 ? Double(theirs.checkout.hits) / Double(theirs.checkout.attempts) : 0
                         )
                     }
-                    if myCheck.highest > 0 || theirCheck.highest > 0 {
+                    if mine.checkout.highest > 0 || theirs.checkout.highest > 0 {
                         duelRow(
-                            title: "Nejvyšší checkout",
-                            symbol: "trophy.fill",
-                            mine: myCheck.highest > 0 ? "\(myCheck.highest)" : "—",
-                            theirs: theirCheck.highest > 0 ? "\(theirCheck.highest)" : "—",
-                            mineValue: Double(myCheck.highest),
-                            theirValue: Double(theirCheck.highest)
+                            "Nejvyšší checkout",
+                            "trophy.fill",
+                            mine.checkout.highest > 0 ? "\(mine.checkout.highest)" : "—",
+                            theirs.checkout.highest > 0 ? "\(theirs.checkout.highest)" : "—",
+                            Double(mine.checkout.highest),
+                            Double(theirs.checkout.highest)
                         )
+                    }
+                    if mine.legsWon > 0 || theirs.legsWon > 0 {
+                        duelRow("Legy", "flag.fill", "\(mine.legsWon)", "\(theirs.legsWon)", Double(mine.legsWon), Double(theirs.legsWon))
+                    }
+                    if mine.darts > 0 || theirs.darts > 0 {
+                        duelRow("Šipky", "smallcircle.filled.circle", "\(mine.darts)", "\(theirs.darts)", Double(mine.darts), Double(theirs.darts))
                     }
                 }
             } else {
                 if hasAvg {
                     ceremonyMetric(
                         title: "Průměr X01",
-                        mine: myAvg.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "—",
-                        theirs: theirAvg.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "—",
-                        mineRatio: relativeRatio(myAvg, theirAvg),
-                        theirRatio: relativeRatio(theirAvg, myAvg)
+                        mine: decimal(mine.average),
+                        theirs: decimal(theirs.average),
+                        mineRatio: relativeRatio(mine.average, theirs.average),
+                        theirRatio: relativeRatio(theirs.average, mine.average)
                     )
                 }
                 if hasCheck {
                     ceremonyMetric(
                         title: "Zavírání",
-                        mine: myCheck.percentage.map { "\(Int($0.rounded())) %" } ?? "—",
-                        theirs: theirCheck.percentage.map { "\(Int($0.rounded())) %" } ?? "—",
-                        mineRatio: relativeRatio(myCheck.percentage, theirCheck.percentage),
-                        theirRatio: relativeRatio(theirCheck.percentage, myCheck.percentage)
+                        mine: mine.checkout.percentage.map { "\(Int($0.rounded())) %" } ?? "—",
+                        theirs: theirs.checkout.percentage.map { "\(Int($0.rounded())) %" } ?? "—",
+                        mineRatio: relativeRatio(mine.checkout.percentage, theirs.checkout.percentage),
+                        theirRatio: relativeRatio(theirs.checkout.percentage, mine.checkout.percentage)
+                    )
+                }
+                if mine.oneEighties > 0 || theirs.oneEighties > 0 {
+                    ceremonyMetric(
+                        title: "180",
+                        mine: "\(mine.oneEighties)",
+                        theirs: "\(theirs.oneEighties)",
+                        mineRatio: relativeRatio(Double(mine.oneEighties), Double(theirs.oneEighties)),
+                        theirRatio: relativeRatio(Double(theirs.oneEighties), Double(mine.oneEighties))
                     )
                 }
             }
@@ -875,14 +899,103 @@ struct HeadToHeadStandingView: View {
         return left / ceiling
     }
 
+    private func decimal(_ value: Double?) -> String {
+        value.map { $0.formatted(.number.precision(.fractionLength(1))) } ?? "—"
+    }
+
+    @ViewBuilder
+    private var boardsCard: some View {
+        let mine = series.side(me: me, mine: true)
+        let theirs = series.side(me: me, mine: false)
+        if !mine.positioned.isEmpty || !theirs.positioned.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Terče", systemImage: "target")
+                    .font(.headline)
+                    .foregroundStyle(primaryText)
+                HStack(alignment: .top, spacing: 10) {
+                    boardLink(
+                        name: myName,
+                        photo: myPhoto,
+                        bot: false,
+                        asset: nil,
+                        darts: mine.positioned
+                    )
+                    boardLink(
+                        name: series.opponentName,
+                        photo: theirPhoto,
+                        bot: series.opponentBotLevel != nil || series.isGhost,
+                        asset: series.opponentBotLevel.map { BotLevel.get($0).photo },
+                        darts: theirs.positioned
+                    )
+                }
+                Text("Klepnutím otevřeš heatmapu a rozpad zásahů.")
+                    .font(.caption)
+                    .foregroundStyle(secondaryText)
+            }
+            .padding(compact ? 14 : 16)
+            .background(cardFill, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(Theme.stroke, lineWidth: 0.5)
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func boardLink(name: String, photo: Data?, bot: Bool, asset: String?, darts: [Dart]) -> some View {
+        let face = VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Avatar(name: name, bot: bot, size: 28, photo: photo, asset: asset)
+                Text(name)
+                    .font(.caption.weight(.bold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Spacer(minLength: 0)
+            }
+            if darts.isEmpty {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.primary.opacity(0.05))
+                    .aspectRatio(1, contentMode: .fit)
+                    .overlay {
+                        Text("Bez přesných hodů")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(8)
+                    }
+            } else {
+                TouchDartboard(marks: darts, interactive: false, showMarkNumbers: false) { _ in }
+                    .allowsHitTesting(false)
+                    .padding(6)
+                    .background(BoardFace.plate, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .environment(\.colorScheme, .dark)
+                Text("\(darts.count) šipek")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+
+        if darts.isEmpty {
+            face
+        } else {
+            NavigationLink {
+                HeatmapView(darts: darts, title: name)
+            } label: {
+                face
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
     /// Ty | metrika | soupeř — přehledné srovnání s pruhem uprostřed.
     private func duelRow(
-        title: String,
-        symbol: String,
-        mine: String,
-        theirs: String,
-        mineValue: Double,
-        theirValue: Double
+        _ title: String,
+        _ symbol: String,
+        _ mine: String,
+        _ theirs: String,
+        _ mineValue: Double,
+        _ theirValue: Double
     ) -> some View {
         let ceiling = max(mineValue, theirValue, 1)
         let mineLead = mineValue > theirValue
@@ -895,9 +1008,13 @@ struct HeadToHeadStandingView: View {
 
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Ty")
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        Avatar(name: myName, size: 18, photo: myPhoto)
+                        Text("Ty")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                     Text(mine)
                         .font(.system(size: 26, weight: .heavy, design: .rounded))
                         .monospacedDigit()
@@ -908,10 +1025,19 @@ struct HeadToHeadStandingView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text(series.opponentName)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(series.opponentName)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        Avatar(
+                            name: series.opponentName,
+                            bot: series.opponentBotLevel != nil || series.isGhost,
+                            size: 18,
+                            photo: theirPhoto,
+                            asset: series.opponentBotLevel.map { BotLevel.get($0).photo }
+                        )
+                    }
                     Text(theirs)
                         .font(.system(size: 26, weight: .heavy, design: .rounded))
                         .monospacedDigit()
@@ -957,14 +1083,23 @@ struct HeadToHeadStandingView: View {
             Text(title)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(primaryText)
-            compareRow(label: "Ty", value: mine, ratio: mineRatio, tint: myTint)
-            compareRow(label: series.opponentName, value: theirs, ratio: theirRatio, tint: theirTint)
+            compareRow(label: "Ty", value: mine, ratio: mineRatio, tint: myTint, photo: myPhoto, bot: false, asset: nil)
+            compareRow(
+                label: series.opponentName,
+                value: theirs,
+                ratio: theirRatio,
+                tint: theirTint,
+                photo: theirPhoto,
+                bot: series.opponentBotLevel != nil || series.isGhost,
+                asset: series.opponentBotLevel.map { BotLevel.get($0).photo }
+            )
         }
     }
 
-    private func compareRow(label: String, value: String, ratio: Double, tint: Color) -> some View {
+    private func compareRow(label: String, value: String, ratio: Double, tint: Color, photo: Data?, bot: Bool, asset: String?) -> some View {
         VStack(alignment: .leading, spacing: 5) {
-            HStack {
+            HStack(spacing: 8) {
+                Avatar(name: label, bot: bot, size: 22, photo: photo, asset: asset)
                 Text(label)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(primaryText)
@@ -1045,6 +1180,21 @@ struct HeadToHeadStandingView: View {
                 .frame(width: 28, height: 28)
                 .background(tone, in: Circle())
 
+            if style == .light {
+                HStack(spacing: -8) {
+                    Avatar(name: myName, size: 26, photo: myPhoto)
+                        .overlay(Circle().strokeBorder(cardFill, lineWidth: 1.5))
+                    Avatar(
+                        name: series.opponentName,
+                        bot: series.opponentBotLevel != nil || series.isGhost,
+                        size: 26,
+                        photo: theirPhoto,
+                        asset: series.opponentBotLevel.map { BotLevel.get($0).photo }
+                    )
+                    .overlay(Circle().strokeBorder(cardFill, lineWidth: 1.5))
+                }
+            }
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(series.scoreLine(of: match, me: me))
                     .font(.subheadline.weight(.semibold))
@@ -1082,13 +1232,14 @@ private struct RivalRow: View {
     private var tied: Bool { series.myWins == series.theirWins }
 
     private var opponentPhoto: Data? {
+        if series.isGhost { return store.profile?.photoJPEG }
         guard case .person(let id) = series.key.kind else { return nil }
         return store.photo(for: id)
     }
 
     var body: some View {
         HStack(spacing: 14) {
-            ZStack(alignment: .bottomTrailing) {
+            ZStack(alignment: .bottomLeading) {
                 Avatar(
                     name: series.opponentName,
                     bot: series.opponentBotLevel != nil || series.isGhost,
@@ -1097,6 +1248,9 @@ private struct RivalRow: View {
                     asset: series.opponentBotLevel.map { BotLevel.get($0).photo }
                 )
                 .overlay(Circle().strokeBorder(tint.opacity(0.5), lineWidth: 2.5))
+                .offset(x: 14)
+                Avatar(name: store.profile?.name ?? "Já", size: 28, photo: store.profile?.photoJPEG)
+                    .overlay(Circle().strokeBorder(Theme.card, lineWidth: 2))
                 if let level = series.opponentBotLevel {
                     Text("Lv.\(level)")
                         .font(.system(size: 9, weight: .bold, design: .rounded))
@@ -1104,9 +1258,10 @@ private struct RivalRow: View {
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(Theme.brand, in: Capsule())
-                        .offset(x: 4, y: 4)
+                        .offset(x: 46, y: 4)
                 }
             }
+            .frame(width: 74, height: 60, alignment: .bottomLeading)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(series.opponentName)
@@ -1187,18 +1342,32 @@ private struct RivalRow: View {
 
 /// Kompaktní náhled vzájemné bilance (např. v detailu zápasu).
 struct HeadToHeadPreviewCard: View {
+    @EnvironmentObject private var store: AppStore
     let series: HeadToHead
 
     private var tint: Color { h2hStandingTint(mine: series.myWins, theirs: series.theirWins) }
 
+    private var opponentPhoto: Data? {
+        if series.isGhost { return store.profile?.photoJPEG }
+        guard case .person(let id) = series.key.kind else { return nil }
+        return store.photo(for: id)
+    }
+
     var body: some View {
         HStack(spacing: 14) {
-            Avatar(
-                name: series.opponentName,
-                bot: series.opponentBotLevel != nil || series.isGhost,
-                size: 44,
-                asset: series.opponentBotLevel.map { BotLevel.get($0).photo }
-            )
+            ZStack(alignment: .bottomLeading) {
+                Avatar(
+                    name: series.opponentName,
+                    bot: series.opponentBotLevel != nil || series.isGhost,
+                    size: 44,
+                    photo: opponentPhoto,
+                    asset: series.opponentBotLevel.map { BotLevel.get($0).photo }
+                )
+                .offset(x: 16)
+                Avatar(name: store.profile?.name ?? "Já", size: 28, photo: store.profile?.photoJPEG)
+                    .overlay(Circle().strokeBorder(Theme.card, lineWidth: 2))
+            }
+            .frame(width: 62, height: 48, alignment: .bottomLeading)
             VStack(alignment: .leading, spacing: 3) {
                 Text(series.opponentName)
                     .font(.headline)
@@ -1239,11 +1408,8 @@ struct HeadToHeadProfileEntry: View {
             HeadToHeadListView()
         } label: {
             HStack(spacing: 12) {
-                Image(systemName: "person.2.fill")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.black)
-                    .frame(width: 44, height: 44)
-                    .background(Theme.brand, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                Avatar(name: store.profile?.name ?? "Já", size: 44, photo: store.profile?.photoJPEG)
+                    .overlay(Circle().strokeBorder(Theme.brand, lineWidth: 2))
 
                 Text("Head-to-Head")
                     .font(.headline)

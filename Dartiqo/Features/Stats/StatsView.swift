@@ -416,6 +416,8 @@ struct HistoryView: View {
         ranked: Int
     ) -> some View {
         HStack(alignment: .center, spacing: 14) {
+            Avatar(name: store.profile?.name ?? "", size: 52, photo: store.profile?.photoJPEG)
+                .overlay(Circle().strokeBorder(tone.opacity(ranked == 0 ? 0.2 : 0.55), lineWidth: 2))
             VStack(spacing: 1) {
                 Text(rate)
                     .font(.system(size: 28, weight: .heavy, design: .rounded))
@@ -427,7 +429,7 @@ struct HistoryView: View {
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
-            .frame(width: 96, height: 78)
+            .frame(width: 84, height: 72)
             .background(
                 tone.opacity(ranked == 0 ? 0.08 : 0.14),
                 in: RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -802,6 +804,7 @@ private func trainingDuration(_ session: TrainingSession) -> TimeInterval {
 }
 
 private struct FeaturedTrainingCard: View {
+    @EnvironmentObject private var store: AppStore
     let session: TrainingSession
 
     private var outcome: GameOutcome { trainingOutcome(session) }
@@ -810,7 +813,8 @@ private struct FeaturedTrainingCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            HStack {
+            HStack(spacing: 10) {
+                Avatar(name: store.profile?.name ?? "", size: 36, photo: store.profile?.photoJPEG)
                 Label(category?.title ?? "Trénink", systemImage: category?.symbol ?? "figure.strengthtraining.traditional")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
@@ -871,6 +875,7 @@ private struct FeaturedTrainingCard: View {
 }
 
 private struct TrainingHistoryRow: View {
+    @EnvironmentObject private var store: AppStore
     let session: TrainingSession
 
     private var outcome: GameOutcome { trainingOutcome(session) }
@@ -878,6 +883,8 @@ private struct TrainingHistoryRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
+            Avatar(name: store.profile?.name ?? "", size: 36, photo: store.profile?.photoJPEG)
+                .overlay(Circle().strokeBorder(outcome.color.opacity(0.55), lineWidth: 2))
             VStack(spacing: 1) {
                 Text(date.formatted(.dateTime.day()))
                     .font(.system(.title3, design: .rounded).weight(.bold))
@@ -1021,8 +1028,55 @@ private struct TrainingSessionDetailView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
+            if !result.visitScores.isEmpty {
+                trainingRounds(result.visitScores)
+            }
+            if !result.tallies.isEmpty {
+                trainingAims(result.tallies)
+            }
         }
         .surface()
+    }
+
+    private func trainingRounds(_ scores: [Int]) -> some View {
+        let shown = Array(scores.prefix(18))
+        let peak = max(shown.max() ?? 1, 1)
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Kola")
+                .font(.subheadline.weight(.semibold))
+            HStack(alignment: .bottom, spacing: 4) {
+                ForEach(Array(shown.enumerated()), id: \.offset) { _, score in
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(score >= 100 ? Color.red.opacity(0.85) : Theme.positive)
+                        .frame(height: max(8, 68 * CGFloat(score) / CGFloat(peak)))
+                        .frame(maxWidth: .infinity)
+                        .accessibilityLabel("Kolo \(score)")
+                }
+            }
+            .frame(height: 72, alignment: .bottom)
+        }
+    }
+
+    private func trainingAims(_ tallies: [AimTally]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Zásahy")
+                .font(.subheadline.weight(.semibold))
+            ForEach(tallies.prefix(8)) { tally in
+                HStack(spacing: 10) {
+                    Text(tally.key)
+                        .font(.subheadline.weight(.semibold))
+                        .frame(width: 56, alignment: .leading)
+                        .lineLimit(1)
+                    ProgressView(value: tally.rate)
+                        .tint(Theme.positive)
+                    Text("\(tally.hits)/\(tally.attempts)")
+                        .font(.caption.weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .frame(width: 52, alignment: .trailing)
+                }
+            }
+        }
     }
 
     private var meta: some View {
@@ -1064,11 +1118,25 @@ private struct TrainingSessionDetailView: View {
 }
 
 private struct MatchHistoryRow: View {
+    @EnvironmentObject private var store: AppStore
     let match: Match
     let outcome: GameOutcome
 
     var body: some View {
         HStack(spacing: 12) {
+            HStack(spacing: -8) {
+                ForEach(Array(match.players.prefix(3).enumerated()), id: \.offset) { _, player in
+                    Avatar(
+                        name: player.name,
+                        bot: player.botLevel != nil,
+                        size: 30,
+                        photo: store.photo(for: player.id),
+                        asset: player.botLevel.map { BotLevel.get($0).photo }
+                    )
+                    .overlay(Circle().strokeBorder(Theme.card, lineWidth: 1.5))
+                }
+            }
+            .frame(minWidth: 30, alignment: .leading)
             VStack(spacing: 1) {
                 Text(date.formatted(.dateTime.day()))
                     .font(.system(.title3, design: .rounded).weight(.bold))
@@ -1573,89 +1641,180 @@ struct MatchDetailView: View {
     private func playerStats(_ index: Int) -> some View {
         let visits = match.visits.filter { $0.player == index }
         let darts = visits.reduce(0) { $0 + $1.darts.count }
+        let legs = match.states.indices.contains(index) ? match.states[index].legs : 0
         return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
-                Avatar(name: match.players[index].name, bot: match.players[index].botLevel != nil, size: 48, photo: store.photo(for: match.players[index].id), asset: match.players[index].botLevel.map { BotLevel.get($0).photo })
+                Avatar(name: match.players[index].name, bot: match.players[index].botLevel != nil, size: 52, photo: store.photo(for: match.players[index].id), asset: match.players[index].botLevel.map { BotLevel.get($0).photo })
+                    .overlay(Circle().strokeBorder(match.winner == index ? Theme.positive : Theme.stroke, lineWidth: 2))
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(match.players[index].name).font(.headline)
-                    Text("\(czechCount(darts, "šipka", "šipky", "šipek")) · \(czechCount(visits.count, "kolo", "kola", "kol"))")
-                        .font(.subheadline).foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        Text(playerName(index)).font(.headline).lineLimit(1)
+                        if match.winner == index {
+                            Image(systemName: "crown.fill").font(.caption).foregroundStyle(Theme.positive)
+                        }
+                    }
+                    Text("\(czechCount(darts, "šipka", "šipky", "šipek")) · \(czechCount(visits.count, "kolo", "kola", "kol")) · \(czechCount(legs, "leg", "legy", "legů"))")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
-                Spacer()
-                if match.winner == index { Image(systemName: "crown.fill").foregroundStyle(Theme.positive) }
+                Spacer(minLength: 8)
+                if match.config.mode == .x01 {
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Text(String(format: "%.1f", match.average(for: index)))
+                            .font(.system(size: 32, weight: .heavy, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(Theme.positive)
+                        Text("průměr")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], spacing: 8) {
                 ForEach(metrics(index, visits: visits), id: \.label) { item in
-                    metric(item.value, item.label)
+                    metric(item.value, item.label, item.icon, item.tint)
                 }
             }
         }
         .surface()
     }
 
-    private func metrics(_ index: Int, visits: [Visit]) -> [(value: String, label: String)] {
+    private func metrics(_ index: Int, visits: [Visit]) -> [(value: String, label: String, icon: String, tint: Color)] {
         switch match.config.mode {
         case .x01:
+            let checkout = CheckoutStats.make(from: match, player: index)
+            let first = firstNine(index)
             return [
-                (String(format: "%.1f", match.average(for: index)), "Průměr"),
-                ("\(match.best(for: index))", "Nejlepší kolo"),
-                ("\(visits.filter { $0.credited == 180 }.count)", "180"),
-                ("\(visits.filter(\.checkout).count)", "Zavření"),
-                (CheckoutStats.make(from: match, player: index).percentage.map { "\(Int($0.rounded())) %" } ?? "—", "Na double"),
-                ("\(visits.filter(\.bust).count)", "Přehozy")
+                (first > 0 ? String(format: "%.1f", first) : "—", "Prvních 9", "9.circle.fill", .blue),
+                (checkout.percentage.map { "\(Int($0.rounded())) %" } ?? "—", "Na double", "scope", Theme.positive),
+                ("\(match.best(for: index))", "Nejlepší kolo", "star.fill", .orange),
+                ("\(visits.filter { $0.credited == 180 }.count)", "180", "flame.fill", .red),
+                ("\(visits.filter(\.checkout).count)", "Zavření", "checkmark.seal.fill", Theme.positive),
+                ("\(visits.filter(\.bust).count)", "Přehozy", "arrow.uturn.backward", .red),
+                (checkout.highest > 0 ? "\(checkout.highest)" : "—", "Nejvyšší checkout", "trophy.fill", .orange),
+                (bestLegDarts(index).map(String.init) ?? "—", "Šipek na leg", "stopwatch.fill", .purple)
             ]
         case .cricket, .countUp:
-            return [("\(match.states[index].points)", "Body"), ("\(match.states[index].rounds)", "Kola"), ("\(match.best(for: index))", "Maximum")]
+            return [
+                ("\(match.states[index].points)", "Body", "sum", Theme.positive),
+                ("\(match.states[index].rounds)", "Kola", "repeat", .blue),
+                ("\(match.best(for: index))", "Maximum", "star.fill", .orange),
+                ("\(visits.flatMap(\.darts).count)", "Šipky", "smallcircle.filled.circle", .purple)
+            ]
         case .aroundClock:
-            return [(match.states[index].clockTarget >= 21 ? "Hotovo" : "\(match.states[index].clockTarget)", "Cíl"), ("\(visits.flatMap(\.darts).count)", "Šipky"), ("\(visits.count)", "Kola")]
+            return [
+                (match.states[index].clockTarget >= 21 ? "Hotovo" : "\(match.states[index].clockTarget)", "Cíl", "target", Theme.positive),
+                ("\(visits.flatMap(\.darts).count)", "Šipky", "smallcircle.filled.circle", .blue),
+                ("\(visits.count)", "Kola", "repeat", .orange)
+            ]
         }
     }
 
-    private func metric(_ value: String, _ label: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(value)
-                .font(.system(.title3, design: .rounded).weight(.bold))
-                .monospacedDigit()
-                .foregroundStyle(Theme.positive)
-                .lineLimit(1)
-                .minimumScaleFactor(0.65)
-            Text(label).font(.caption).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.75)
+    private func firstNine(_ index: Int) -> Double {
+        let visits = match.visits.filter { $0.player == index }
+        var points = 0
+        var darts = 0
+        for leg in Set(visits.map(\.leg)) {
+            let opening = visits.filter { $0.leg == leg }.prefix(3)
+            points += opening.reduce(0) { $0 + $1.credited }
+            darts += opening.reduce(0) { $0 + $1.darts.count }
+        }
+        guard darts > 0 else { return 0 }
+        return Double(points) * 3 / Double(darts)
+    }
+
+    private func bestLegDarts(_ index: Int) -> Int? {
+        let visits = match.visits.filter { $0.player == index }
+        var best: Int?
+        for leg in Set(visits.map(\.leg)) {
+            guard visits.contains(where: { $0.leg == leg && $0.checkout }) else { continue }
+            let count = visits.filter { $0.leg == leg }.reduce(0) { $0 + $1.darts.count }
+            best = min(best ?? count, count)
+        }
+        return best
+    }
+
+    private func metric(_ value: String, _ label: String, _ icon: String, _ tint: Color) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: icon)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(tint)
+                .frame(width: 28, height: 28)
+                .background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(value)
+                    .font(.system(.title3, design: .rounded).weight(.bold))
+                    .monospacedDigit()
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+                Text(label)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
+            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(10)
-        .background(Theme.background, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(Theme.background, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 
     private func scoringBands(_ index: Int) -> some View {
         let visits = match.visits.filter { $0.player == index && !$0.bust }
         let bands: [(String, Int, Color)] = [
-            ("180", visits.filter { $0.credited == 180 }.count, .red),
+            ("180", visits.filter { $0.credited == 180 }.count, Color(red: 0.95, green: 0.28, blue: 0.28)),
             ("140+", visits.filter { (140..<180).contains($0.credited) }.count, .orange),
-            ("100+", visits.filter { (100..<140).contains($0.credited) }.count, .yellow),
-            ("60+", visits.filter { (60..<100).contains($0.credited) }.count, Theme.positive),
-            ("<60", visits.filter { $0.credited < 60 }.count, .secondary.opacity(0.35))
+            ("100+", visits.filter { (100..<140).contains($0.credited) }.count, Color(red: 0.95, green: 0.78, blue: 0.15)),
+            ("80+", visits.filter { (80..<100).contains($0.credited) }.count, Color(red: 0.55, green: 0.85, blue: 0.35)),
+            ("60+", visits.filter { (60..<80).contains($0.credited) }.count, Theme.positive),
+            ("40+", visits.filter { (40..<60).contains($0.credited) }.count, Color(red: 0.25, green: 0.72, blue: 0.78)),
+            ("20+", visits.filter { (20..<40).contains($0.credited) }.count, Color(red: 0.35, green: 0.52, blue: 0.92)),
+            ("pod 20", visits.filter { $0.credited < 20 }.count, Color.secondary.opacity(0.45))
         ]
         let total = max(1, bands.reduce(0) { $0 + $1.1 })
-        return VStack(spacing: 14) {
+        let columns = [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)]
+        return VStack(alignment: .leading, spacing: 14) {
             GeometryReader { proxy in
                 HStack(spacing: 2) {
                     ForEach(bands, id: \.0) { band in
                         if band.1 > 0 {
                             Rectangle().fill(band.2)
-                                .frame(width: max(4, (proxy.size.width - 8) * CGFloat(band.1) / CGFloat(total)))
+                                .frame(width: max(4, (proxy.size.width - CGFloat(bands.count)) * CGFloat(band.1) / CGFloat(total)))
                         }
                     }
                 }
                 .clipShape(Capsule())
             }
             .frame(height: 14)
-            HStack(spacing: 0) {
+            .accessibilityHidden(true)
+            LazyVGrid(columns: columns, spacing: 8) {
                 ForEach(bands, id: \.0) { band in
                     VStack(spacing: 2) {
-                        Text("\(band.1)").font(.headline.monospacedDigit())
-                        Text(band.0).font(.caption2).foregroundStyle(.secondary)
+                        Text("\(band.1)")
+                            .font(.system(.headline, design: .rounded).weight(.bold))
+                            .monospacedDigit()
+                        HStack(spacing: 4) {
+                            Circle().fill(band.2).frame(width: 6, height: 6)
+                            Text(band.0)
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                        }
+                        Text("\(Int((Double(band.1) / Double(total) * 100).rounded())) %")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .monospacedDigit()
                     }
                     .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .accessibilityElement(children: .combine)
                 }
             }
         }
@@ -1664,32 +1823,45 @@ struct MatchDetailView: View {
 
     @ViewBuilder
     private func boardBlock(_ index: Int) -> some View {
-        let marks = match.visits
-            .filter { $0.player == index && $0.enteredAsTotal != true }
-            .flatMap(\.darts)
-            .filter { $0.x != nil && $0.y != nil }
+        let marks = positionedDarts(index)
         if !marks.isEmpty {
             section("Terč", symbol: "target") {
+                SegmentRoseChart(darts: marks, title: "Podíl zásahů")
                 NavigationLink {
                     HeatmapView(darts: marks, title: match.players[index].name)
                 } label: {
-                    HStack(spacing: 16) {
-                        SegmentRoseChart(darts: marks, title: "", compact: true)
-                            .frame(width: 108, height: 108)
-                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text("Rozložení hodů").font(.headline)
-                            Text(boardSummary(marks))
-                                .font(.subheadline).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 12) {
+                        TouchDartboard(marks: marks, interactive: false, showMarkNumbers: marks.count <= 12) { _ in }
+                            .allowsHitTesting(false)
+                            .padding(8)
+                            .background(BoardFace.plate, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                            .environment(\.colorScheme, .dark)
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Heatmapa")
+                                    .font(.headline)
+                                Text(boardSummary(marks))
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 8)
+                            Label("Přiblížit", systemImage: "arrow.up.left.and.arrow.down.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Theme.accent)
                         }
-                        Spacer()
-                        Image(systemName: "chevron.right").foregroundStyle(.tertiary)
                     }
                     .surface()
                 }
                 .buttonStyle(.plain)
             }
         }
+    }
+
+    private func positionedDarts(_ index: Int) -> [Dart] {
+        match.visits
+            .filter { $0.player == index && $0.enteredAsTotal != true }
+            .flatMap(\.darts)
+            .filter { $0.x != nil && $0.y != nil }
     }
 
     private func boardSummary(_ marks: [Dart]) -> String {
@@ -1704,15 +1876,19 @@ struct MatchDetailView: View {
 }
 
 private struct ThrowPreviewRow: View {
+    @EnvironmentObject private var store: AppStore
     let match: Match
     let visit: Visit
 
     var body: some View {
         HStack(spacing: 10) {
-            Circle()
-                .fill(Theme.playerColor(visit.player))
-                .frame(width: 8, height: 8)
-                .accessibilityHidden(true)
+            Avatar(
+                name: match.players[visit.player].name,
+                bot: match.players[visit.player].botLevel != nil,
+                size: 32,
+                photo: store.photo(for: match.players[visit.player].id),
+                asset: match.players[visit.player].botLevel.map { BotLevel.get($0).photo }
+            )
             VStack(alignment: .leading, spacing: 3) {
                 Text("\(match.players[visit.player].name) · leg \(visit.leg)")
                     .font(.subheadline.weight(.semibold))
