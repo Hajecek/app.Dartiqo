@@ -77,6 +77,8 @@ public enum BotCheckoutEngine {
             return Dart(19, 3)
         }
         if darts == 1 {
+            // 18 po minutém D18 je D9. S16 by nechalo D1.
+            if let finish = oneDartFinish(remaining: remaining, rule: rule) { return finish }
             // 116: T20 nechá 56. T19 jen když v dvacítce už není místo. Single 16 ne.
             if remaining == 116 {
                 let occupied = thrown.filter { $0.segment == 20 && $0.multiplier == 3 }
@@ -99,6 +101,13 @@ public enum BotCheckoutEngine {
             }
         }
         return nil
+    }
+
+    /// Checkout jednou šipkou. Nechání se řeší až když tohle skóre zavřít nejde.
+    private static func oneDartFinish(remaining: Int, rule: OutRule) -> Dart? {
+        guard let finish = Checkout.route(for: remaining, rule: rule, darts: 1)?.first,
+              isSafe(finish, remaining: remaining, rule: rule) else { return nil }
+        return finish
     }
 
     /// Single mimo velká čísla, jen aby zbylo 170. Třeba 179 → S9.
@@ -135,6 +144,9 @@ public enum BotCheckoutEngine {
             let occupied = thrown.filter { $0.segment == 20 && $0.multiplier == 3 }
             if !trebleHasRoom(segment: 20, occupied: occupied, profile: profile) { return Dart(19, 3) }
             return Dart(20, 3)
+        }
+        if darts == 1, let finish = oneDartFinish(remaining: remaining, rule: rule) {
+            return finish
         }
         if rule == .double, darts == 1,
            let natural = ScoringSetup.lastDart(remaining: remaining, allowAwkward170: false),

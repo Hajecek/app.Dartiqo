@@ -189,6 +189,23 @@ final class BotEngineTests: XCTestCase {
         XCTAssertEqual(planned(116, darts: 1, thrown: packedTreble(segment: 20)), Dart(19, 3))
         XCTAssertEqual(planned(179, darts: 1), Dart(20, 3))
         XCTAssertEqual(planned(210, darts: 1), Dart(20, 3))
+        // 36 je D18. Po S18 zbývá 18 a poslední šipka jde na D9, ne na S16.
+        XCTAssertEqual(planned(36), Dart(18, 2))
+        XCTAssertEqual(planned(36, darts: 1), Dart(18, 2))
+        XCTAssertEqual(planned(18, darts: 2), Dart(9, 2))
+        XCTAssertEqual(planned(18, darts: 1), Dart(9, 2))
+        var afterMiss = BotRNG(seed: 7)
+        XCTAssertEqual(
+            BotCheckoutEngine.aim(
+                remaining: 18,
+                dartsLeft: 1,
+                rule: .double,
+                opened: true,
+                profile: strong,
+                using: &afterMiss
+            ),
+            Dart(9, 2)
+        )
         var awkward = 0
         var plain = 0
         for seed in 1...80 {
