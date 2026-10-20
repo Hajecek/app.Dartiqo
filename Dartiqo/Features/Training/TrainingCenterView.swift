@@ -8,59 +8,34 @@ func trainingDayCount(_ count: Int) -> String {
     }
 }
 
-/// Krátké centrum nahoře, pod ním hledání a všechny hry po kategoriích.
+/// Nahoře přehled progresu, pod ním samostatné hry jako dlaždice. Hry se přidávají do `TrainingCatalog.showcase`.
 struct TrainingCenterView: View {
     @EnvironmentObject private var store: AppStore
-    @State private var query = ""
     @State private var setupID: String?
     @State private var infoGame: TrainingDefinition?
 
-    private var groups: [TrainingGameGroup] {
-        let text = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return TrainingCategory.allCases.compactMap { category in
-            let games = TrainingCatalog.showcaseGames.filter { game in
-                game.category == category && (text.isEmpty || game.title.localizedStandardContains(text) || game.summary.localizedStandardContains(text))
-            }
-            guard !games.isEmpty else { return nil }
-            return TrainingGameGroup(category: category, games: games)
-        }
-    }
+    private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+    private var games: [TrainingDefinition] { TrainingCatalog.showcaseGames }
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 8, pinnedViews: [.sectionHeaders]) {
-                Section {
-                    metrics
-                    xpGuide
-                    searchField
-                        .padding(.top, 2)
-                }
-                if groups.isEmpty {
-                    ContentUnavailableView.search(text: query)
-                } else {
-                    ForEach(groups) { group in
-                        Section {
-                            ForEach(group.games) { game in
-                                ChoiceCard(
-                                    title: game.title,
-                                    detail: game.summary,
-                                    symbol: game.category.symbol,
-                                    selected: false,
-                                    action: { setupID = game.id },
-                                    info: { infoGame = game }
-                                )
-                            }
-                        } header: {
-                            categoryHeader(group)
-                        }
-                    }
-                }
+            VStack(alignment: .leading, spacing: 24) {
+                progressCard
+                gamesSection
             }
             .padding(16)
         }
         .screen()
         .navigationTitle("Trénink")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink { XPInfoView() } label: {
+                    Image(systemName: "bolt.fill")
+                }
+                .accessibilityLabel("Za co dostávám XP")
+            }
+        }
         .navigationDestination(item: $setupID) { id in
             TrainingHomeView(gameIDs: [id])
         }
@@ -70,178 +45,203 @@ struct TrainingCenterView: View {
                 setupID = game.id
             }
         }
-        .scrollDismissesKeyboard(.immediately)
     }
 
-    private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.body.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
-            TextField("Najít hru", text: $query)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-            if !query.isEmpty {
-                Button {
-                    query = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Smazat hledání")
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
+    // MARK: Progres
 
-    private func categoryHeader(_ group: TrainingGameGroup) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: group.category.symbol)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(.black)
-                .frame(width: 22, height: 22)
-                .background(Theme.brand, in: Circle())
-                .accessibilityHidden(true)
-            Text(group.category.title)
-                .font(.subheadline.weight(.bold))
-            Spacer(minLength: 8)
-            Text("\(group.games.count)")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.background)
-    }
-
-    private var metrics: some View {
+    private var progressCard: some View {
         let accuracy = store.trainingAccuracy.map { "\(Int(($0 * 100).rounded())) %" } ?? "—"
-        let tasks = TrainingDaily.tasks(in: store.trainingHistory, profile: store.profile?.id)
-        let done = tasks.filter(\.done).count
-        let next = tasks.first { !$0.done }
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Label {
+        return VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "flame.fill")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.black)
+                    .frame(width: 48, height: 48)
+                    .background(Theme.brand, in: Circle())
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
                     Text(trainingDayCount(store.trainingStreak))
                         .font(.system(.title2, design: .rounded).weight(.bold))
                         .monospacedDigit()
-                } icon: {
-                    Image(systemName: "flame.fill")
-                        .font(.title3.weight(.bold))
+                        .foregroundStyle(.white)
+                    Text(store.trainingStreak > 0 ? "tréninku v řadě" : "Začni sérii prvním tréninkem")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.6))
                 }
-                .labelStyle(.titleAndIcon)
-                .foregroundStyle(.black)
                 Spacer(minLength: 8)
                 Text("Level \(store.level)")
                     .font(.subheadline.weight(.bold))
-                    .foregroundStyle(.black.opacity(0.7))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(.black.opacity(0.08), in: Capsule())
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Theme.brand, in: Capsule())
             }
-            HStack(alignment: .top, spacing: 0) {
-                compactStat(accuracy, "přesnost")
-                VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 0) {
+                stat(accuracy, "přesnost")
+                divider
+                VStack(alignment: .leading, spacing: 2) {
                     PlayTimeLabel(seconds: store.trainingPlayed, layout: .inline)
-                        .foregroundStyle(.black)
+                        .foregroundStyle(.white)
                     Text("u terče")
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(.black.opacity(0.55))
+                        .foregroundStyle(.white.opacity(0.55))
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                compactStat("\(store.trainingWeekXP)", "XP / týden")
-            }
-            Group {
-                if let next, done < tasks.count {
-                    Button { setupID = next.gameID } label: {
-                        dailyLine(done: done, total: tasks.count, doneAll: false)
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    dailyLine(done: done, total: tasks.count, doneAll: true)
-                }
+                .padding(.leading, 12)
+                divider
+                stat("\(store.trainingWeekXP)", "XP / týden")
+                    .padding(.leading, 12)
             }
         }
-        .padding(14)
-        .background(Theme.brand, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .padding(18)
+        .background(Theme.heroWash, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(.white.opacity(0.08), lineWidth: 1))
     }
 
-    private func dailyLine(done: Int, total: Int, doneAll: Bool) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: doneAll ? "checkmark.seal.fill" : "flag.fill")
-                .font(.caption.weight(.bold))
-                .accessibilityHidden(true)
-            Text(doneAll ? "Denní výzva splněná" : "Denní výzva \(done)/\(total)")
-                .font(.caption.weight(.semibold))
-            Spacer(minLength: 0)
-            if !doneAll {
-                Text("+50 XP")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.black.opacity(0.55))
-                Image(systemName: "chevron.right")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.black.opacity(0.4))
-                    .accessibilityHidden(true)
-            }
-        }
-        .foregroundStyle(.black.opacity(0.72))
+    private var divider: some View {
+        Rectangle()
+            .fill(.white.opacity(0.12))
+            .frame(width: 1, height: 30)
     }
 
-    private func compactStat(_ value: String, _ label: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
+    private func stat(_ value: String, _ label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
             Text(value)
                 .font(.system(.title3, design: .rounded).weight(.bold))
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
+                .foregroundStyle(.white)
             Text(label)
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(.black.opacity(0.55))
+                .foregroundStyle(.white.opacity(0.55))
         }
-        .foregroundStyle(.black)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var xpGuide: some View {
-        NavigationLink {
-            XPInfoView()
-        } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "bolt.fill")
-                    .font(.body.weight(.bold))
-                    .foregroundStyle(Theme.brand)
-                    .frame(width: 36, height: 36)
-                    .background(Theme.brand.opacity(0.14), in: Circle())
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Za co dostávám XP")
+    // MARK: Hry
+
+    private var gamesSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Hry")
+                    .font(.title3.weight(.bold))
+                Spacer(minLength: 8)
+                if !games.isEmpty {
+                    Text("\(games.count)")
                         .font(.subheadline.weight(.bold))
-                    Text("Základ, splnění, rekord a denní výzva")
-                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
-                    .accessibilityHidden(true)
             }
-            .padding(12)
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            if games.isEmpty {
+                emptyGames
+            } else {
+                LazyVGrid(columns: columns, spacing: 12) {
+                    ForEach(games) { game in
+                        Button { setupID = game.id } label: {
+                            TrainingGameTile(game: game)
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            Button("Pravidla", systemImage: "info.circle") { infoGame = game }
+                        }
+                    }
+                }
+            }
         }
-        .buttonStyle(.plain)
     }
 
+    private var emptyGames: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "scope")
+                .font(.system(size: 34, weight: .semibold))
+                .foregroundStyle(.black)
+                .frame(width: 72, height: 72)
+                .background(Theme.brand, in: Circle())
+                .accessibilityHidden(true)
+            Text("Hry se připravují")
+                .font(.headline)
+            Text("Tréninkové hry přidáváme postupně, jednu po druhé. Brzy tu najdeš první.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 36)
+        .padding(.horizontal, 24)
+        .frame(maxWidth: .infinity)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(Theme.stroke, style: StrokeStyle(lineWidth: 1, dash: [6, 5]))
+        )
+        .accessibilityElement(children: .combine)
+    }
 }
 
-private struct TrainingGameGroup: Identifiable {
-    var category: TrainingCategory
-    var games: [TrainingDefinition]
-    var id: String { category.id }
+/// Dlaždice jedné tréninkové hry. Barva a ikona vychází z kategorie.
+private struct TrainingGameTile: View {
+    var game: TrainingDefinition
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+        let colors = game.category.tileColors
+        VStack(alignment: .leading, spacing: 4) {
+            Image(systemName: game.category.symbol)
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 38, height: 38)
+                .background(.white.opacity(0.18), in: Circle())
+                .accessibilityHidden(true)
+            Spacer(minLength: 14)
+            Text(game.title)
+                .font(.headline)
+                .foregroundStyle(.white)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
+            Text(game.summary)
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.85))
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Label("\(game.minutes) min", systemImage: "clock")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.white.opacity(0.75))
+                .padding(.top, 4)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, minHeight: 170, alignment: .topLeading)
+        .background {
+            ZStack(alignment: .bottomTrailing) {
+                LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
+                Image(systemName: game.category.symbol)
+                    .font(.system(size: 90, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.12))
+                    .rotationEffect(.degrees(-12))
+                    .offset(x: 26, y: 26)
+                    .accessibilityHidden(true)
+            }
+        }
+        .clipShape(shape)
+        .overlay(shape.stroke(.white.opacity(0.12), lineWidth: 1))
+        .contentShape(shape)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private extension TrainingCategory {
+    var tileColors: [Color] {
+        switch self {
+        case .accuracy: return [Color(red: 1.0, green: 0.72, blue: 0.20), Color(red: 0.95, green: 0.48, blue: 0.08)]
+        case .doubles: return [Color(red: 1.0, green: 0.42, blue: 0.29), Color(red: 0.86, green: 0.20, blue: 0.20)]
+        case .checkout: return [Color(red: 0.18, green: 0.78, blue: 0.48), Color(red: 0.05, green: 0.50, blue: 0.32)]
+        case .scoring: return [Color(red: 0.18, green: 0.48, blue: 0.98), Color(red: 0.08, green: 0.22, blue: 0.72)]
+        case .endurance: return [Color(red: 0.20, green: 0.74, blue: 0.86), Color(red: 0.06, green: 0.42, blue: 0.62)]
+        case .original: return [Color(red: 0.58, green: 0.28, blue: 0.96), Color(red: 0.34, green: 0.12, blue: 0.70)]
+        case .adaptive: return [Color(red: 0.96, green: 0.36, blue: 0.62), Color(red: 0.70, green: 0.14, blue: 0.42)]
+        case .daily: return [Color(red: 0.36, green: 0.36, blue: 0.40), Color(red: 0.14, green: 0.14, blue: 0.16)]
+        }
+    }
 }
 
 struct TrainingDailyTask: Identifiable {

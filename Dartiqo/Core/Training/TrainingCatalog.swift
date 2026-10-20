@@ -3,10 +3,7 @@ import Foundation
 enum TrainingCatalog {
     static let all: [TrainingDefinition] = make()
     /// Hry viditelné v tréninku. Další se přidávají sem.
-    static let showcase = [
-        "around-clock", "treble-20", "bull-challenge", "cricket-practice",
-        "bobs-27", "shanghai", "checkout-40", "practice-501"
-    ]
+    static let showcase: [String] = []
     static var showcaseGames: [TrainingDefinition] { showcase.compactMap(find) }
     static func find(_ id: String) -> TrainingDefinition? { all.first { $0.id == id } }
 
