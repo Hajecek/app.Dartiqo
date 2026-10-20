@@ -41,10 +41,17 @@ struct TrainingPlayView: View {
     @State private var editingDart: Int?
     /// Pauza kola se při otevření opravy zastaví a po zavření bez změny zase naváže.
     @State private var pausedHoldForEdit = false
+    @State private var showSeriesStats = false
 
     private var projection: TrainingProjection {
         guard let session else { return TrainingProjection() }
         return TrainingEngine.project(session)
+    }
+    /// Série na jeden double: místo klávesnice jen trefa / vedle.
+    private var hitOrMiss: Bool { session.map(DoubleTraining.isHitOrMiss) ?? false }
+    private var seriesStats: TargetSeriesStats? {
+        guard hitOrMiss, let session else { return nil }
+        return TargetSeriesStats.make(session)
     }
     /// Cricket ukáže jen zvolená pole. Ostatní hry nechají celou klávesnici.
     private var scorePadNumbers: [Int]? {
@@ -171,6 +178,11 @@ struct TrainingPlayView: View {
         .sheet(isPresented: $showXP) {
             TrainingXPBreakdownSheet(breakdown: xpBreakdown)
         }
+        .sheet(isPresented: $showSeriesStats) {
+            if let stats = seriesStats {
+                TargetSeriesStatsSheet(stats: stats, history: longTermHistory(for: stats.target))
+            }
+        }
         .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { date in
             guard config.timeLimit != nil || definition.id == "rush" else { return }
             guard var current = session, current.status == .playing else { return }
@@ -182,7 +194,73 @@ struct TrainingPlayView: View {
         .sensoryFeedback(.impact, trigger: pulse)
     }
 
+    @ViewBuilder
     private var scoreboard: some View {
+        if let stats = seriesStats {
+            Button {
+                store.tapHaptic(.light)
+                showSeriesStats = true
+            } label: {
+                seriesScoreboard(stats)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Zobrazí úspěšnost série")
+        } else {
+            classicScoreboard
+        }
+    }
+
+    private func seriesScoreboard(_ stats: TargetSeriesStats) -> some View {
+        let percent = "\(Int((stats.rate * 100).rounded())) %"
+        return VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text(definition.title)
+                    .font(AppFont.body(14, weight: .semibold))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chart.bar.fill")
+                    .font(AppFont.caption(12, weight: .bold))
+                    .opacity(0.6)
+                    .accessibilityHidden(true)
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(stats.target.label)
+                    .font(AppFont.display(64, weight: .bold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.5)
+                Spacer(minLength: 8)
+                Text(percent)
+                    .font(AppFont.display(34, weight: .bold))
+                    .monospacedDigit()
+                    .contentTransition(.numericText(value: stats.rate))
+                    .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: stats.hits)
+            }
+            .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+            HStack(spacing: 8) {
+                capsule("zásahy \(stats.hits)/\(stats.thrown)")
+                capsule("zbývá \(stats.left)")
+                capsule("cíl \(Int((stats.goal * 100).rounded())) %")
+            }
+        }
+        .foregroundStyle(TrainingColors.ink)
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(TrainingColors.coral, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Cíl \(stats.target.label), úspěšnost \(percent), zásahy \(stats.hits) z \(stats.thrown), zbývá \(stats.left) šipek")
+    }
+
+    private func longTermHistory(for target: Aim) -> DoubleInsight? {
+        guard case .segment(let number, _) = target else { return nil }
+        let past = store.trainingHistory.filter { $0.id != session?.id }
+        return DoubleTraining.insights(matches: store.matches, sessions: past, profileID: store.profile?.id)[number]
+    }
+
+    private var classicScoreboard: some View {
         let busted = isHoldingVisit && projection.feedback == .bust
         let headline = busted ? "BUST" : (projection.target.isEmpty ? projection.scoreText : projection.target)
         let numeric = Double(projection.score)
@@ -242,27 +320,38 @@ struct TrainingPlayView: View {
             } else {
                 let darts = visitDarts
                 let guide = trainingCheckoutGuide(thrown: darts.count)
-                HStack(spacing: 8) {
+                HStack(spacing: 0) {
                     ForEach(0..<3, id: \.self) { index in
                         let filled = darts.count > index
                         let suggested = (!filled && guide.route.indices.contains(index - darts.count))
                             ? guide.route[index - darts.count] : nil
                         let note = (!filled && suggested == nil && index == darts.count) ? guide.note : nil
+                        if index > 0 {
+                            Rectangle()
+                                .fill(.white.opacity(0.18))
+                                .frame(width: 1, height: 36)
+                                .padding(.horizontal, 6)
+                                .accessibilityHidden(true)
+                        }
                         ThrowSlotTile(
                             index: index,
                             dart: filled ? darts[index] : nil,
                             suggestion: suggested,
                             note: note,
                             setupLeave: suggested == nil ? nil : guide.setupLeave,
+                            onGlass: true,
+                            plain: true,
                             onEdit: filled && canEditThrownDarts ? {
                                 beginDartEdit(index)
                             } : nil
                         )
                     }
                 }
-                .frame(height: 88)
-                .padding(10)
-                .background(.white, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .frame(height: 72)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel(isHoldingVisit ? "Kolo hotovo" : "Aktuální hod")
             }
@@ -291,7 +380,13 @@ struct TrainingPlayView: View {
 
     @ViewBuilder
     private var input: some View {
-        if isHoldingVisit && holdSurface != .grid {
+        if let target = seriesStats?.target {
+            HitMissPad(target: target.label) { hit in
+                store.selectionHaptic()
+                _ = throwDart(hit ? target.example : .miss)
+            }
+            .allowsHitTesting(!isHoldingVisit)
+        } else if isHoldingVisit && holdSurface != .grid {
             // Součet: bez náhledu. Čísla nechávají mřížku na místě, ať se po třetí šipce nesloží.
             if holdSurface != .total {
                 ScoringDartboard(marks: holdDarts, interactive: false)
@@ -569,27 +664,29 @@ struct TrainingPlayView: View {
                     Spacer(minLength: 0)
                 }
 
-                Menu {
-                    ForEach(playSurfaces) { item in
-                        Button {
-                            changeSurface(item)
-                        } label: {
-                            Label(item.title, systemImage: surface == item ? "checkmark" : item.icon)
+                if !hitOrMiss {
+                    Menu {
+                        ForEach(playSurfaces) { item in
+                            Button {
+                                changeSurface(item)
+                            } label: {
+                                Label(item.title, systemImage: surface == item ? "checkmark" : item.icon)
+                            }
+                            .disabled(item == .total && !visitBuffer.isEmpty)
                         }
-                        .disabled(item == .total && !visitBuffer.isEmpty)
+                    } label: {
+                        Image(systemName: surface.icon)
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .frame(width: 52, height: 52)
+                            .contentShape(Circle())
+                            .glassEffect(.regular.interactive(), in: Circle())
                     }
-                } label: {
-                    Image(systemName: surface.icon)
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .frame(width: 52, height: 52)
-                        .contentShape(Circle())
-                        .glassEffect(.regular.interactive(), in: Circle())
+                    .buttonStyle(.plain)
+                    .disabled(isHoldingVisit)
+                    .accessibilityLabel("Způsob zápisu")
+                    .accessibilityValue(surface.title)
                 }
-                .buttonStyle(.plain)
-                .disabled(isHoldingVisit)
-                .accessibilityLabel("Způsob zápisu")
-                .accessibilityValue(surface.title)
             }
         }
         .padding(.horizontal, 16)
@@ -782,7 +879,7 @@ struct TrainingPlayView: View {
     }
 
     private var canEditThrownDarts: Bool {
-        guard !saved else { return false }
+        guard !saved, !hitOrMiss else { return false }
         if isHoldingVisit { return holdSurface != .total && !holdDarts.isEmpty }
         return surface != .total && !visitBuffer.isEmpty && !finished
     }

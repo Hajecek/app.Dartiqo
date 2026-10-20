@@ -71,6 +71,34 @@ final class DoubleTrainingTests: XCTestCase {
         return session
     }
 
+    func testSeriesStatsTrackVisitsStreakAndGoal() {
+        let definition = TrainingCatalog.find(DoubleTraining.definitionID)!
+        var session = TrainingEngine.start(
+            definition: definition,
+            config: DoubleTraining.config(segment: 16, darts: 30, accuracy: 0.25),
+            owner: me,
+            seed: 1
+        )
+        XCTAssertTrue(DoubleTraining.isHitOrMiss(session))
+        for dart in [Dart(16, 2), Dart(16, 2), .miss, Dart(16, 2), .miss] {
+            TrainingEngine.record(.dart(dart), into: &session, at: session.startedAt)
+        }
+        let stats = TargetSeriesStats.make(session)!
+        XCTAssertEqual(stats.thrown, 5)
+        XCTAssertEqual(stats.hits, 3)
+        XCTAssertEqual(stats.left, 25)
+        XCTAssertEqual(stats.bestStreak, 2)
+        XCTAssertEqual(stats.currentStreak, 0)
+        XCTAssertEqual(stats.visits, [[true, true, false], [true, false]])
+        XCTAssertEqual(stats.hitsNeeded, 5)
+        XCTAssertTrue(stats.goalReachable)
+        XCTAssertFalse(DoubleTraining.isHitOrMiss(start(TrainingCatalog.find("treble-20")!)))
+    }
+
+    private func start(_ definition: TrainingDefinition) -> TrainingSession {
+        TrainingEngine.start(definition: definition, config: TrainingConfig(), owner: me, seed: 1)
+    }
+
     func testBullTrainingNeedsInnerBull() {
         let definition = TrainingCatalog.find(DoubleTraining.definitionID)!
         let session = TrainingEngine.start(

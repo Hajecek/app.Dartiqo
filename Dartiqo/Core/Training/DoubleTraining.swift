@@ -12,6 +12,49 @@ struct DoubleInsight: Identifiable, Equatable {
     var percentText: String { "\(Int((rate * 100).rounded())) %" }
 }
 
+/// Průběžný stav série na jeden cíl: kolik padlo, kolik chybí k cíli a jak šla kola.
+struct TargetSeriesStats: Equatable {
+    var target: Aim
+    var thrown = 0
+    var hits = 0
+    var total = 0
+    var goal = 0.0
+    var currentStreak = 0
+    var bestStreak = 0
+    /// Zásahy po kolech po třech šipkách, poslední kolo může být neúplné.
+    var visits: [[Bool]] = []
+
+    var rate: Double { thrown == 0 ? 0 : Double(hits) / Double(thrown) }
+    var left: Int { max(0, total - thrown) }
+    /// Engine hodnotí podíl zásahů ze všech šipek série.
+    var hitsNeeded: Int { max(0, Int((goal * Double(total) - 1e-9).rounded(.up)) - hits) }
+    var goalReached: Bool { hitsNeeded == 0 }
+    var goalReachable: Bool { hitsNeeded <= left }
+
+    static func make(_ session: TrainingSession) -> TargetSeriesStats? {
+        guard session.assignment.aims.count == 1, let target = session.assignment.aims.first else { return nil }
+        guard case .segments(_, _, let darts, let accuracy) = session.kind else { return nil }
+        var stats = TargetSeriesStats(target: target, total: darts, goal: accuracy)
+        var streak = 0
+        for action in session.actions {
+            guard case .dart(let dart) = action else { continue }
+            let hit = target.matches(dart)
+            if stats.thrown % 3 == 0 { stats.visits.append([]) }
+            stats.visits[stats.visits.count - 1].append(hit)
+            stats.thrown += 1
+            if hit {
+                stats.hits += 1
+                streak += 1
+                stats.bestStreak = max(stats.bestStreak, streak)
+            } else {
+                streak = 0
+            }
+        }
+        stats.currentStreak = streak
+        return stats
+    }
+}
+
 enum DoubleTraining {
     static let definitionID = "double-focus"
     static let segments = Array(1...20) + [25]
@@ -63,6 +106,11 @@ enum DoubleTraining {
         if key == "BULL" { return 25 }
         guard key.hasPrefix("D"), let number = Int(key.dropFirst()), (1...20).contains(number) else { return nil }
         return number
+    }
+
+    /// Hra má jediný cíl, takže se zapisuje jen trefa nebo vedle.
+    static func isHitOrMiss(_ session: TrainingSession) -> Bool {
+        session.definitionID == definitionID && session.assignment.aims.count == 1
     }
 
     static func config(segment: Int, darts: Int, accuracy: Double) -> TrainingConfig {
