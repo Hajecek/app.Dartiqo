@@ -8,20 +8,24 @@ func trainingDayCount(_ count: Int) -> String {
     }
 }
 
-/// Nahoře přehled progresu, pod ním samostatné hry jako dlaždice. Hry se přidávají do `TrainingCatalog.showcase`.
+/// Nahoře přehled progresu a doporučení ze statistik, pod tím kategorie se samostatnými hrami.
+/// Hry se přidávají do `TrainingCatalog.shelves`.
 struct TrainingCenterView: View {
     @EnvironmentObject private var store: AppStore
-    @State private var setupID: String?
+    @State private var launch: TrainingLaunch?
     @State private var infoGame: TrainingDefinition?
+    @State private var suggestions: [TrainingSuggestion] = []
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
-    private var games: [TrainingDefinition] { TrainingCatalog.showcaseGames }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 28) {
                 progressCard
-                gamesSection
+                suggestionsSection
+                ForEach(TrainingCatalog.shelves) { shelf in
+                    shelfSection(shelf)
+                }
             }
             .padding(16)
         }
@@ -36,15 +40,68 @@ struct TrainingCenterView: View {
                 .accessibilityLabel("Za co dostávám XP")
             }
         }
-        .navigationDestination(item: $setupID) { id in
-            TrainingHomeView(gameIDs: [id])
+        .navigationDestination(item: $launch) { launch in
+            TrainingSetupDestination(launch: launch)
         }
         .sheet(item: $infoGame) { game in
             TrainingInfoSheet(definition: game) {
                 infoGame = nil
-                setupID = game.id
+                launch = TrainingLaunch(gameID: game.id)
             }
         }
+        .task(id: store.matches.count &+ store.trainingHistory.count) {
+            suggestions = TrainingSuggestions.make(matches: store.matches, sessions: store.trainingHistory, profileID: store.profile?.id)
+        }
+    }
+
+    // MARK: Doporučené
+
+    private var suggestionsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeader(title: "Doporučeno pro tebe", detail: "Podle tvých statistik", symbol: "sparkles", count: suggestions.count)
+            if suggestions.isEmpty {
+                placeholder(symbol: "chart.bar.xaxis", text: "Zatím málo dat. Odehraj pár zápasů X01 nebo tréninků a doporučení se objeví.")
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(suggestions) { item in
+                        Button { launch = item.launch } label: {
+                            suggestionRow(item)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+    }
+
+    private func suggestionRow(_ item: TrainingSuggestion) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: item.symbol)
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(.black)
+                .frame(width: 44, height: 44)
+                .background(Theme.brand, in: Circle())
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.title)
+                    .font(.headline)
+                Text(item.reason)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.bold))
+                .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Theme.brand.opacity(0.45), lineWidth: 1))
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: Progres
@@ -119,26 +176,18 @@ struct TrainingCenterView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    // MARK: Hry
+    // MARK: Kategorie
 
-    private var gamesSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Hry")
-                    .font(.title3.weight(.bold))
-                Spacer(minLength: 8)
-                if !games.isEmpty {
-                    Text("\(games.count)")
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(.secondary)
-                }
-            }
+    private func shelfSection(_ shelf: TrainingShelf) -> some View {
+        let games = shelf.definitions
+        return VStack(alignment: .leading, spacing: 12) {
+            sectionHeader(title: shelf.title, detail: shelf.detail, symbol: shelf.symbol, count: games.count)
             if games.isEmpty {
-                emptyGames
+                placeholder(symbol: "hourglass", text: "Hry se připravují. Přidáváme je postupně.")
             } else {
                 LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(games) { game in
-                        Button { setupID = game.id } label: {
+                        Button { launch = TrainingLaunch(gameID: game.id) } label: {
                             TrainingGameTile(game: game)
                         }
                         .buttonStyle(.plain)
@@ -151,28 +200,49 @@ struct TrainingCenterView: View {
         }
     }
 
-    private var emptyGames: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "scope")
-                .font(.system(size: 34, weight: .semibold))
+    private func sectionHeader(title: String, detail: String, symbol: String, count: Int) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .font(.subheadline.weight(.bold))
                 .foregroundStyle(.black)
-                .frame(width: 72, height: 72)
+                .frame(width: 32, height: 32)
                 .background(Theme.brand, in: Circle())
                 .accessibilityHidden(true)
-            Text("Hry se připravují")
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.title3.weight(.bold))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            if count > 0 {
+                Text("\(count)")
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    private func placeholder(symbol: String, text: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol)
                 .font(.headline)
-            Text("Tréninkové hry přidáváme postupně, jednu po druhé. Brzy tu najdeš první.")
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            Text(text)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
-        .padding(.vertical, 36)
-        .padding(.horizontal, 24)
+        .padding(16)
         .frame(maxWidth: .infinity)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(Theme.stroke, style: StrokeStyle(lineWidth: 1, dash: [6, 5]))
         )
         .accessibilityElement(children: .combine)
@@ -229,7 +299,7 @@ private struct TrainingGameTile: View {
     }
 }
 
-private extension TrainingCategory {
+extension TrainingCategory {
     var tileColors: [Color] {
         switch self {
         case .accuracy: return [Color(red: 1.0, green: 0.72, blue: 0.20), Color(red: 0.95, green: 0.48, blue: 0.08)]

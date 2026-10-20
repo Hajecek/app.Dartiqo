@@ -1,9 +1,27 @@
 import Foundation
 
+/// Kategorie na obrazovce Trénink. Pořadí her v `games` je pořadí dlaždic.
+struct TrainingShelf: Identifiable {
+    var id: String
+    var title: String
+    var detail: String
+    var symbol: String
+    var games: [String]
+    var definitions: [TrainingDefinition] { games.compactMap(TrainingCatalog.find) }
+}
+
 enum TrainingCatalog {
     static let all: [TrainingDefinition] = make()
-    /// Hry viditelné v tréninku. Další se přidávají sem.
-    static let showcase: [String] = []
+    /// Hry viditelné v tréninku po kategoriích. Další se přidávají sem.
+    static let shelves: [TrainingShelf] = [
+        TrainingShelf(id: "scoring", title: "Skórování", detail: "Body, průměr a trojité segmenty", symbol: "chart.bar.fill", games: [
+            "darts-100-20", "treble-20", "high-score", "ton", "practice-501"
+        ]),
+        TrainingShelf(id: "doubles", title: "Doubly", detail: "Zavírání a jistota na doublu", symbol: "circle.circle", games: [
+            DoubleTraining.definitionID, "bobs-27", "around-clock-doubles", "double-trouble"
+        ])
+    ]
+    static var showcase: [String] { shelves.flatMap(\.games) }
     static var showcaseGames: [TrainingDefinition] { showcase.compactMap(find) }
     static func find(_ id: String) -> TrainingDefinition? { all.first { $0.id == id } }
 
@@ -136,6 +154,7 @@ enum TrainingCatalog {
         add(78, "final-dart", "Final Dart", "Úkol plní jen třetí šipka návštěvy.", "První dvě se do cíle nepočítají.", .original, 5, .advanced, .finalDart(visits: 8, need: 4), options: rounds)
         add(79, "daily-9", "Dartiqo Daily 9", "Devět cílů podle dne.", "Stejné semínko dne vrátí stejnou devítku.", .daily, 8, .advanced, .daily(tasks: 9))
         add(80, "world-tour", "World Tour", "Osm zastávek a v každé jiný úkol.", "Tři minuty na zastávce končí turné.", .original, 12, .advanced, .world(stops: 8))
+        add(65, DoubleTraining.definitionID, "Trénink doublů", "Jeden double, celá série jen na něj.", "Vybereš si double sám, nebo vezmeš doporučený nejslabší ze statistik. Počítá se jen zvolený double, single ani triple stejného čísla ne. Úspěch je dosažená úspěšnost za sérii.", .doubles, 6, .beginner, .segments(pick: .list([16]), mult: 2, darts: 30, accuracy: 0.25), options: segments)
         return items
     }
 }

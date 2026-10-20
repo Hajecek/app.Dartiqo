@@ -98,7 +98,8 @@ enum TrainingCoach {
     }
 
     private static let dailyExcluded: Set<String> = [
-        "ghost", "comeback", "endurance-1001", "checkout-1-100", "challenge-9", "challenge-15"
+        "ghost", "comeback", "endurance-1001", "checkout-1-100", "challenge-9", "challenge-15",
+        DoubleTraining.definitionID
     ]
 
     private static func stableBits(_ profile: UUID?) -> UInt64 {

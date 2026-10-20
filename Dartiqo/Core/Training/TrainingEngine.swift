@@ -134,7 +134,11 @@ extension TrainingKind {
         case .volume(let aim, let darts, let accuracy):
             let count = config.dartCount ?? darts
             let rate = config.requiredAccuracy ?? easierAccuracy(accuracy, level)
-            return .volume(aim: aim, darts: count, accuracy: rate)
+            var target = aim
+            if case .segment(_, let mult) = aim, let pick = config.segments?.first, (1...20).contains(pick) || pick == 25 {
+                target = pick == 25 ? .bull : .segment(pick, mult)
+            }
+            return .volume(aim: target, darts: count, accuracy: rate)
         case .shanghai(let numbers, let instant, let limit):
             let picked = (config.segments ?? []).filter { (1...20).contains($0) }
             let used = picked.isEmpty ? numbers : picked.sorted()
@@ -405,7 +409,7 @@ enum TrainingDeals {
 
     private static func segmentAims(_ pick: SegmentPick, mult: Int?, config: TrainingConfig, context: TrainingContext) -> [Aim] {
         if let custom = config.segments?.filter({ (1...20).contains($0) || $0 == 25 }), !custom.isEmpty {
-            return custom.map { Aim.segment($0, $0 == 25 ? nil : mult) }
+            return custom.map { Aim.segment($0, $0 == 25 ? (mult == 2 ? 2 : nil) : mult) }
         }
         switch pick {
         case .list(let numbers):

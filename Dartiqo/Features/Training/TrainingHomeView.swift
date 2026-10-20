@@ -713,6 +713,19 @@ private struct TrainingLesson {
                 "Nula platí jen doublem. Zbylých 40 zavře D20, zbylých 32 zavře D16.",
                 "Leg je hotový, když skončíš přesně na nule. Sleduje se průměr a počet šipek."
             ])
+        case DoubleTraining.definitionID:
+            return TrainingLesson(beats: [
+                TrainingDemoBeat(darts: [Dart(16, 2)], caption: "Cíl je jeden double, třeba D16. Zásah se počítá."),
+                TrainingDemoBeat(darts: [Dart(16)], caption: "S16 je minuta, i když leží na stejném čísle."),
+                TrainingDemoBeat(darts: [Dart(8, 2)], caption: "Jiný double taky neplatí. Platí jen zvolený."),
+                TrainingDemoBeat(darts: [Dart(16, 2), Dart(16, 2), Dart(16)], caption: "Po sérii se spočítá úspěšnost.")
+            ], steps: [
+                "Vyber si double sám, nebo vezmi doporučený nejslabší ze svých statistik.",
+                "Celou sérii házíš jen na tento double. Každá šipka je jeden pokus.",
+                "Single ani triple stejného čísla se nepočítají. U bullu platí jen 50.",
+                "Po posledním hodu uspěješ, když trefíš aspoň zvolený podíl šipek.",
+                "Zásahy se propisují do statistik, takže příští doporučení vychází i z tréninku."
+            ])
         default:
             return TrainingLesson(
                 beats: [TrainingDemoBeat(darts: [Dart(20)], caption: definitionFallback)],
