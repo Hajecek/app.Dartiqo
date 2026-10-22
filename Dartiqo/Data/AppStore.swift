@@ -16,6 +16,8 @@ struct Profile: Codable, Identifiable {
     var email: String?
     /// Dokončené a zrušené zápasy. Historie se dá smazat, tahle bilance ne.
     var matchCompletion: MatchCompletionLedger?
+    /// Webový účet Dartiqo, ke kterému profil patří.
+    var accountID: Int?
 }
 struct Friend: Codable, Identifiable, Equatable {
     var id = UUID()
@@ -121,6 +123,7 @@ enum AppSection: Hashable {
             }
         } catch { needsRecovery = true; storageError = "Data se nepodařilo načíst. Původní soubor nebyl přepsán. Použij obrazovku obnovy pro uložení kopie dat. \(error.localizedDescription)" }
         if !needsRecovery {
+            wipeLocalOnlyDataOnce()
             backfillMatchXP()
             backfillMatchCompletion()
         }
@@ -620,6 +623,40 @@ enum AppSection: Hashable {
         save()
     }
     func signOut() { data.selectedProfile = nil; save() }
+
+    /// Profil přihlášeného webového účtu. Při prvním přihlášení na tomto telefonu ho založí.
+    func bindAccount(_ user: AccountUser) {
+        if let existing = data.profiles.first(where: { $0.accountID == user.id }) {
+            data.selectedProfile = existing.id
+        } else {
+            let name = String((user.first.isEmpty ? user.username : user.first).prefix(24))
+            var profile = Profile(name: name)
+            profile.username = user.username
+            profile.email = user.email
+            profile.accountID = user.id
+            data.profiles.append(profile)
+            data.selectedProfile = profile.id
+        }
+        locked = false
+        flushSave()
+    }
+
+    /// Jednorázově smaže lokální profily a hry z doby před účty. Nastavení zařízení zůstane.
+    private func wipeLocalOnlyDataOnce() {
+        let key = "dartiqo.wipedBeforeAccounts"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        for profile in data.profiles {
+            commentary.deleteAll(owner: profile.id)
+        }
+        var fresh = StoredData()
+        fresh.appearance = data.appearance
+        fresh.haptics = data.haptics
+        fresh.voice = data.voice
+        fresh.boardCalibration = data.boardCalibration
+        data = fresh
+        writeToDisk()
+        UserDefaults.standard.set(true, forKey: key)
+    }
     func finish() {
         guard let match = activeMatch, match.finished else { return }
         if !data.matches.contains(where: { $0.id == match.id }) {

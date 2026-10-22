@@ -1,13 +1,10 @@
 import SwiftUI
 
-/// Přihlášení k webovému účtu Dartiqo kvůli živému přenosu zápasu na web.
+/// Přihlášený webový účet Dartiqo a živý přenos zápasu na web.
 struct AccountView: View {
+    @EnvironmentObject private var store: AppStore
     @ObservedObject private var account = DartiqoAccount.shared
-    @State private var identity = ""
-    @State private var password = ""
-    @State private var server = ""
-    @State private var busy = false
-    @State private var error: String?
+    @State private var confirmLogout = false
 
     var body: some View {
         Form {
@@ -15,74 +12,47 @@ struct AccountView: View {
                 Section {
                     LabeledContent("Jméno", value: user.fullName)
                     LabeledContent("Uživatel", value: "@\(user.username)")
+                    LabeledContent("E-mail", value: user.email)
                     LabeledContent("Server", value: account.serverURL)
                 } header: {
                     Text("Přihlášený účet")
                 }
-                Section {
-                    Toggle("Živý přenos na web", isOn: $account.liveSharing).tint(Theme.mint)
-                } footer: {
-                    Text("Rozehraný zápas se po každé šipce ukáže na webu. V Přehledu vyskočí banner Živě z mobilu a zápas pak sleduješ na celé obrazovce počítače.")
-                }
-                Section {
-                    Button("Odhlásit", role: .destructive) {
-                        Task { await account.logout() }
-                    }
-                }
-            } else {
-                Section {
-                    TextField("E-mail nebo uživatelské jméno", text: $identity)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .textContentType(.username)
-                    SecureField("Heslo", text: $password)
-                        .textContentType(.password)
-                    Button {
-                        Task { await login() }
-                    } label: {
-                        HStack {
-                            Text("Přihlásit")
-                            if busy {
-                                Spacer()
-                                ProgressView()
-                            }
-                        }
-                    }
-                    .disabled(busy || identity.trimmingCharacters(in: .whitespaces).isEmpty || password.isEmpty)
-                    if let error {
-                        Text(error).font(.footnote).foregroundStyle(.red)
-                    }
-                } header: {
-                    Text("Přihlášení")
-                } footer: {
-                    Text("Použij stejný účet jako na webu Dartiqo.")
-                }
-                Section {
-                    TextField("Adresa serveru", text: $server)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.URL)
-                } header: {
-                    Text("Server")
-                } footer: {
-                    Text("Simulátor: http://localhost/dartiqo. iPhone ve stejné Wi-Fi jako Mac s XAMPPem: IP adresa Macu, třeba http://192.168.1.20/dartiqo. Ostrý provoz: https adresa webu.")
-                }
+            }
+            Section {
+                Toggle("Živý přenos na web", isOn: $account.liveSharing).tint(Theme.mint)
+            } footer: {
+                Text("Rozehraný zápas se po každé šipce ukáže na webu. V Přehledu vyskočí banner Živě z mobilu a zápas pak sleduješ na celé obrazovce počítače.")
+            }
+            Section {
+                Button("Odhlásit se", role: .destructive) { confirmLogout = true }
             }
         }
         .navigationTitle("Dartiqo účet")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { server = account.serverURL }
+        .logoutConfirmation(isPresented: $confirmLogout)
     }
+}
 
-    private func login() async {
-        busy = true
-        error = nil
-        defer { busy = false }
-        do {
-            try await account.login(server: server, identity: identity.trimmingCharacters(in: .whitespaces), password: password)
-            password = ""
-        } catch {
-            self.error = error.localizedDescription
+extension View {
+    /// Potvrzení odhlášení. Hry zůstanou v telefonu u profilu účtu a po dalším přihlášení se vrátí.
+    func logoutConfirmation(isPresented: Binding<Bool>) -> some View {
+        modifier(LogoutConfirmation(isPresented: isPresented))
+    }
+}
+
+private struct LogoutConfirmation: ViewModifier {
+    @EnvironmentObject private var store: AppStore
+    @Binding var isPresented: Bool
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog("Odhlásit se z účtu Dartiqo?", isPresented: $isPresented, titleVisibility: .visible) {
+            Button("Odhlásit se", role: .destructive) {
+                store.signOut()
+                Task { await DartiqoAccount.shared.logout() }
+            }
+            Button("Zrušit", role: .cancel) {}
+        } message: {
+            Text("Hry zůstanou v telefonu a po dalším přihlášení se vrátí.")
         }
     }
 }

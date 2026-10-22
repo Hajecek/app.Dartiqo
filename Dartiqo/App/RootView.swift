@@ -3,13 +3,21 @@ import Combine
 
 struct RootView: View {
     @EnvironmentObject private var store: AppStore
+    @ObservedObject private var account = DartiqoAccount.shared
 
     var body: some View {
         Group {
             if store.needsRecovery { StorageRecoveryView() }
-            else if store.locked { LockView() }
-            else if store.profile == nil { WelcomeView() }
-            else { MainTabView() }
+            else if let user = account.user {
+                if store.profile?.accountID != user.id {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .task { store.bindAccount(user) }
+                }
+                else if store.locked { LockView() }
+                else { MainTabView() }
+            }
+            else { LoginView() }
         }
     }
 }

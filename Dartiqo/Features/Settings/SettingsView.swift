@@ -7,9 +7,8 @@ struct SettingsView: View {
     @EnvironmentObject var store: AppStore
     @ObservedObject private var account = DartiqoAccount.shared
     @State private var name = ""
-    @State private var username = ""
-    @State private var email = ""
     @State private var deletion = false
+    @State private var confirmLogout = false
     @State private var exporting = false
     @State private var document: JSONDocument?
     @State private var exportError: String?
@@ -46,23 +45,10 @@ struct SettingsView: View {
                     Button("Uložit") { store.rename(name); store.feedback() }
                         .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                TextField("Username", text: $username)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .textContentType(.username)
-                TextField("E-mail", text: $email)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .keyboardType(.emailAddress)
-                    .textContentType(.emailAddress)
-                Button("Uložit kontakt") {
-                    store.updateProfileContact(username: username, email: email)
-                    store.feedback()
-                }
             } header: {
                 Text("Hráčský profil")
             } footer: {
-                Text("Username a e-mail slouží k hledání mezi profily na tomto telefonu. Bez online účtu a synchronizace.")
+                Text("Přezdívka se ukazuje v zápasech. Username a e-mail patří k účtu na webu.")
             }
             Section {
                 NavigationLink {
@@ -71,7 +57,7 @@ struct SettingsView: View {
                     HStack {
                         Label("Dartiqo účet", systemImage: "person.badge.key")
                         Spacer()
-                        Text(account.user.map { "@\($0.username)" } ?? "Nepřihlášeno")
+                        Text(account.user.map { "@\($0.username)" } ?? "")
                             .font(.caption)
                             .foregroundStyle(account.user != nil ? Theme.mint : .secondary)
                     }
@@ -145,14 +131,13 @@ struct SettingsView: View {
                 LabeledContent("Provoz", value: account.user != nil ? "Online" : "Offline")
             }
             Section {
-                Button("Přepnout hráčský profil") { store.signOut() }
-                Button("Smazat tento profil a jeho hry", role: .destructive) { deletion = true }
+                Button("Odhlásit se", role: .destructive) { confirmLogout = true }
+                Button("Smazat hry tohoto účtu v telefonu", role: .destructive) { deletion = true }
             }
         }.navigationTitle("Nastavení").onAppear {
             name = store.profile?.name ?? ""
-            username = store.profile?.username ?? ""
-            email = store.profile?.email ?? ""
         }
+            .logoutConfirmation(isPresented: $confirmLogout)
             .onChange(of: photoItem) { _, item in
                 guard let item else { return }
                 Task {
@@ -164,7 +149,7 @@ struct SettingsView: View {
             .onChange(of: store.data.appearance) { _, _ in store.save() }
             .onChange(of: store.data.haptics) { _, _ in store.save() }
             .onChange(of: store.data.voice) { _, _ in store.save() }
-            .confirmationDialog("Smazat profil a všechny jeho zápasy?", isPresented: $deletion, titleVisibility: .visible) {
+            .confirmationDialog("Smazat všechny hry a statistiky tohoto účtu v telefonu?", isPresented: $deletion, titleVisibility: .visible) {
                 Button("Smazat natrvalo", role: .destructive) { store.deleteProfile() }
                 Button("Zrušit", role: .cancel) {}
             }

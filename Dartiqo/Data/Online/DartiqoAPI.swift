@@ -45,6 +45,12 @@ enum APIError: LocalizedError {
     }
 }
 
+enum SocialProvider: String {
+    case apple, google
+
+    var title: String { self == .apple ? "Apple" : "Google" }
+}
+
 struct DartiqoAPI {
     var baseURL: URL
     var token: String?
@@ -58,6 +64,13 @@ struct DartiqoAPI {
     func login(identity: String, password: String, device: String) async throws -> (token: String, user: AccountUser) {
         let body = try JSONEncoder().encode(["identity": identity, "password": password, "device": device])
         let response = try await send("api/v1/auth/login", body: body)
+        guard let token = response.token, let user = response.user else { throw APIError.server("Server vrátil neúplnou odpověď.") }
+        return (token, user)
+    }
+
+    func login(with provider: SocialProvider, idToken: String, name: String, device: String) async throws -> (token: String, user: AccountUser) {
+        let body = try JSONEncoder().encode(["idToken": idToken, "name": name, "device": device])
+        let response = try await send("api/v1/auth/social/\(provider.rawValue)", body: body)
         guard let token = response.token, let user = response.user else { throw APIError.server("Server vrátil neúplnou odpověď.") }
         return (token, user)
     }

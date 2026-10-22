@@ -41,11 +41,22 @@ import Combine
         guard let server = ServerConfig.normalized(server), let base = URL(string: server) else { throw APIError.badServer }
         let result = try await DartiqoAPI(baseURL: base, token: nil)
             .login(identity: identity, password: password, device: UIDevice.current.name)
+        signIn(server: server, token: result.token, user: result.user)
+    }
+
+    func login(server: String, provider: SocialProvider, idToken: String, name: String) async throws {
+        guard let server = ServerConfig.normalized(server), let base = URL(string: server) else { throw APIError.badServer }
+        let result = try await DartiqoAPI(baseURL: base, token: nil)
+            .login(with: provider, idToken: idToken, name: name, device: UIDevice.current.name)
+        signIn(server: server, token: result.token, user: result.user)
+    }
+
+    private func signIn(server: String, token: String, user: AccountUser) {
         serverURL = server
         defaults.set(server, forKey: Keys.server)
-        token = result.token
-        TokenStore.save(result.token)
-        store(result.user)
+        self.token = token
+        TokenStore.save(token)
+        store(user)
     }
 
     func logout() async {
