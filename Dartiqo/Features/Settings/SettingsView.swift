@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @EnvironmentObject var store: AppStore
+    @ObservedObject private var account = DartiqoAccount.shared
     @State private var name = ""
     @State private var username = ""
     @State private var email = ""
@@ -62,6 +63,23 @@ struct SettingsView: View {
                 Text("Hráčský profil")
             } footer: {
                 Text("Username a e-mail slouží k hledání mezi profily na tomto telefonu. Bez online účtu a synchronizace.")
+            }
+            Section {
+                NavigationLink {
+                    AccountView()
+                } label: {
+                    HStack {
+                        Label("Dartiqo účet", systemImage: "person.badge.key")
+                        Spacer()
+                        Text(account.user.map { "@\($0.username)" } ?? "Nepřihlášeno")
+                            .font(.caption)
+                            .foregroundStyle(account.user != nil ? Theme.mint : .secondary)
+                    }
+                }
+            } header: {
+                Text("Online")
+            } footer: {
+                Text("Po přihlášení se rozehraný zápas živě ukáže na webu Dartiqo.")
             }
             Section {
                 Picker("Vzhled", selection: $store.data.appearance) { Text("Tmavý").tag("dark"); Text("Světlý").tag("light"); Text("Podle systému").tag("system") }
@@ -124,7 +142,7 @@ struct SettingsView: View {
                 NavigationLink("Pravidla a ovládání") { RulesView() }
                 NavigationLink("Za co dostávám XP") { XPInfoView() }
                 LabeledContent("Verze", value: "1.2.0")
-                LabeledContent("Provoz", value: "Offline")
+                LabeledContent("Provoz", value: account.user != nil ? "Online" : "Offline")
             }
             Section {
                 Button("Přepnout hráčský profil") { store.signOut() }
