@@ -19,6 +19,9 @@ enum TrainingCatalog {
         ]),
         TrainingShelf(id: "doubles", title: "Doubly", detail: "Zavírání a jistota na doublu", symbol: "circle.circle", games: [
             DoubleTraining.definitionID, "bobs-27", "around-clock-doubles", "double-trouble"
+        ]),
+        TrainingShelf(id: "checkout", title: "Checkouty", detail: "Zavírání v limitu šipek", symbol: "flag.checkered", games: [
+            "checkout-descent"
         ])
     ]
     static var showcase: [String] { shelves.flatMap(\.games) }
@@ -154,6 +157,7 @@ enum TrainingCatalog {
         add(78, "final-dart", "Final Dart", "Úkol plní jen třetí šipka návštěvy.", "První dvě se do cíle nepočítají.", .original, 5, .advanced, .finalDart(visits: 8, need: 4), options: rounds)
         add(79, "daily-9", "Dartiqo Daily 9", "Devět cílů podle dne.", "Stejné semínko dne vrátí stejnou devítku.", .daily, 8, .advanced, .daily(tasks: 9))
         add(80, "world-tour", "World Tour", "Osm zastávek a v každé jiný úkol.", "Tři minuty na zastávce končí turné.", .original, 12, .advanced, .world(stops: 8))
+        add(81, "checkout-descent", "Checkout sestup", "Zavírej v limitu šipek a sestupuj ke spodní hranici.", "Zavřeš v limitu, jdeš o číslo níž. Nezavřeš, jdeš o číslo výš. Zavření první návštěvou uloží číslo jako záchyt, nad který tě neúspěch už nevrátí. Hra končí zavřením spodní hranice.", .checkout, 10, .advanced, .checkoutDescent(start: 141, floor: 100, darts: 9, attempts: 50), options: TrainingOptions(level: false, rounds: true, darts: true, target: true, checkouts: true))
         add(65, DoubleTraining.definitionID, "Trénink doublů", "Jeden double, celá série jen na něj.", "Vybereš si double sám, nebo vezmeš doporučený nejslabší ze statistik. Počítá se jen zvolený double, single ani triple stejného čísla ne. Úspěch je dosažená úspěšnost za sérii.", .doubles, 6, .beginner, .segments(pick: .list([16]), mult: 2, darts: 30, accuracy: 0.25), options: segments)
         return items
     }

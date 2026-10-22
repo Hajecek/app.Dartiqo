@@ -2,10 +2,10 @@ import XCTest
 @testable import Dartiqo
 
 final class TrainingEngineTests: XCTestCase {
-    func testCatalogHasEightyPlayableGames() {
-        XCTAssertEqual(TrainingCatalog.all.count, 80)
-        XCTAssertEqual(Set(TrainingCatalog.all.map(\.id)).count, 80)
-        XCTAssertEqual(Set(TrainingCatalog.all.map(\.number)), Set(1...80))
+    func testCatalogHasEightyOnePlayableGames() {
+        XCTAssertEqual(TrainingCatalog.all.count, 81)
+        XCTAssertEqual(Set(TrainingCatalog.all.map(\.id)).count, 81)
+        XCTAssertEqual(Set(TrainingCatalog.all.map(\.number)), Set(1...81))
         for definition in TrainingCatalog.all {
             XCTAssertFalse(definition.title.isEmpty, definition.id)
             XCTAssertFalse(definition.rules.isEmpty, definition.id)
@@ -169,6 +169,36 @@ final class TrainingEngineTests: XCTestCase {
         let before = plan.items[0].definitionID
         TrainingPlans.react(&plan, sessions: failed)
         XCTAssertNotEqual(plan.items[0].definitionID, before)
+    }
+
+    func testCheckoutDescentMovesByResultAndStopsAtLock() {
+        let definition = TrainingCatalog.find("checkout-descent")!
+        var config = TrainingConfig()
+        config.targetScore = 60
+        config.floorScore = 40
+        config.dartCount = 3
+        var session = TrainingEngine.start(definition: definition, config: config, owner: UUID(), seed: 1)
+        func throwing(_ darts: [Dart]) {
+            for dart in darts { TrainingEngine.record(.dart(dart), into: &session, at: session.startedAt) }
+        }
+        throwing([.miss, .miss, .miss])
+        XCTAssertEqual(TrainingEngine.project(session).target, "61")
+
+        config.targetScore = 50
+        config.floorScore = 48
+        config.dartCount = 6
+        session = TrainingEngine.start(definition: definition, config: config, owner: UUID(), seed: 1)
+        throwing([Dart(25, 2)])
+        XCTAssertEqual(TrainingEngine.project(session).target, "49")
+        throwing(Array(repeating: .miss, count: 6))
+        XCTAssertEqual(TrainingEngine.project(session).target, "50", "záchyt nepustí výš než 50")
+        throwing([.miss, .miss, .miss, Dart(25, 2)])
+        XCTAssertEqual(TrainingEngine.project(session).target, "49")
+        throwing([Dart(9), Dart(20, 2)])
+        XCTAssertEqual(TrainingEngine.project(session).target, "48")
+        throwing([Dart(8), Dart(20, 2)])
+        XCTAssertEqual(session.status, .completed)
+        XCTAssertEqual(session.result?.success, true)
     }
 
     private func start(_ definition: TrainingDefinition) -> TrainingSession {

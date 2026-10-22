@@ -159,6 +159,8 @@ enum TrainingKind: Codable, Equatable {
     case checkoutUntil(start: Int, visits: Int, doubleIn: Bool)
     case checkoutRange(low: Int, high: Int, count: Int, need: Int)
     case checkoutGenerated(mode: String, need: Int)
+    /// `attempts == 0` znamená bez limitu pokusů.
+    case checkoutDescent(start: Int, floor: Int, darts: Int, attempts: Int)
     case x01(start: Int, limit: Int, doubleIn: Bool, minAverage: Double?)
     case visitGoal(atLeast: Int?, exact: Int?, count: Int, need: Int)
     case ladder(targets: [Int])
@@ -216,6 +218,7 @@ struct TrainingConfig: Codable, Equatable {
     var lives: Int?
     var segments: [Int]?
     var targetScore: Int?
+    var floorScore: Int?
     var requiredAccuracy: Double?
     var showCheckouts = true
     var players = 1

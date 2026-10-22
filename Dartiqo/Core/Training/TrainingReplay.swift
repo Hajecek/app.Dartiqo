@@ -28,6 +28,8 @@ enum TrainingReplay {
             return run.checkouts(maxVisits: 1, need: need, doubleIn: false)
         case .checkoutGenerated(_, let need):
             return run.checkouts(maxVisits: 1, need: need, doubleIn: false)
+        case .checkoutDescent(let start, let floor, let darts, let attempts):
+            return run.descent(start: start, floor: floor, darts: darts, attempts: attempts)
         case .x01(let start, let limit, let doubleIn, let average):
             return run.leg(start: start, limit: limit, doubleIn: doubleIn, minAverage: average, opponentAt: nil)
         case .visitGoal(let atLeast, let exact, let count, let need):
@@ -432,7 +434,7 @@ private final class TrainingRun {
         return finish(won, won ? "Zavřeno na \(thrown) šipek." : "Na zavření nestačil limit.")
     }
 
-    struct LeaveResult { var won = false; var waiting = false }
+    struct LeaveResult { var won = false; var waiting = false; var visits = 0 }
 
     func playLeave(start: Int, maxVisits: Int, doubleIn: Bool) -> LeaveResult {
         var remaining = start
@@ -483,11 +485,56 @@ private final class TrainingRun {
                 checkoutHits += 1
                 checkoutMade.append(start)
                 scoreText = "0"
-                return LeaveResult(won: true)
+                return LeaveResult(won: true, visits: visits)
             }
             scoreText = "\(remaining)"
         }
-        return LeaveResult(won: remaining == 0)
+        return LeaveResult(won: remaining == 0, visits: visits)
+    }
+
+    func descent(start: Int, floor: Int, darts: Int, attempts: Int) -> TrainingProjection {
+        let visits = max(1, darts / 3)
+        func playable(_ score: Int) -> Bool { darts > 3 || Checkout.canFinish(score) }
+        func move(_ score: Int, by step: Int) -> Int {
+            var next = score + step
+            while next > floor, next < 170, !playable(next) { next += step }
+            return min(170, max(floor, next))
+        }
+        var current = playable(start) ? start : move(start, by: -1)
+        var lock: Int?
+        var lowest: Int?
+        var cleared = 0
+        var attempt = 0
+        while attempts == 0 || attempt < attempts {
+            task = "Zavři \(current) do \(darts) šipek"
+            target = "\(current)"
+            routes = Checkout.alternatives(for: current)
+            hint = routes.first.map { $0.map(\.label).joined(separator: " · ") }
+            var notes = ["Pokus \(attempt + 1)\(attempts > 0 ? "/\(attempts)" : "")", "hranice \(floor)"]
+            if let lock { notes.append("záchyt \(lock)") }
+            detail = notes.joined(separator: " · ")
+            mark(max(0, start - current), of: max(1, start - floor))
+            let outcome = playLeave(start: current, maxVisits: visits, doubleIn: false)
+            if outcome.waiting { return pause() }
+            attempt += 1
+            if outcome.won {
+                cleared += 1
+                lowest = min(lowest ?? current, current)
+                if outcome.visits == 1 { lock = min(lock ?? current, current) }
+                if current <= floor {
+                    record = cleared
+                    scoreText = "\(current)"
+                    return finish(true, "Hranice \(floor) je zavřená. Checkouty \(cleared) z \(attempt).")
+                }
+                current = move(current, by: -1)
+            } else {
+                current = min(move(current, by: 1), lock ?? 170)
+            }
+            scoreText = "\(current)"
+        }
+        record = cleared
+        let reached = lowest.map { "Nejníž zavřeno \($0)." } ?? "Žádné zavření."
+        return finish(false, "\(reached) Checkouty \(cleared) z \(attempt).")
     }
 
     func checkouts(maxVisits: Int, need: Int, doubleIn: Bool) -> TrainingProjection {

@@ -3,7 +3,7 @@ import SwiftUI
 /// Co jde u klasické hry nastavit. Jen volby, které `TrainingKind.tuned` u dané hry opravdu použije.
 struct ClassicTrainingSpec {
     enum Setting: Hashable {
-        case target, darts, rounds, accuracy, level, checkoutHint
+        case target, darts, rounds, accuracy, level, checkoutHint, descent
     }
 
     var settings: [Setting] = []
@@ -36,6 +36,11 @@ struct ClassicTrainingSpec {
             return ClassicTrainingSpec(settings: id == "double-trouble" ? [.level, .checkoutHint] : [.checkoutHint])
         case "around-clock-doubles":
             return ClassicTrainingSpec(settings: [.darts], darts: [60, 90, 120, 150], defaults: config(darts: 120))
+        case "checkout-descent":
+            var defaults = config(darts: 9, rounds: 50)
+            defaults.targetScore = 141
+            defaults.floorScore = 100
+            return ClassicTrainingSpec(settings: [.descent, .darts, .rounds, .checkoutHint], darts: [3, 6, 9, 12, 15], rounds: [20, 50, 100, 0], defaults: defaults)
         default:
             return ClassicTrainingSpec()
         }
@@ -164,20 +169,62 @@ struct ClassicTrainingSetupView: View {
                 ) { config.segments = [$0] }
             }
         case .darts:
-            TrainingSettingCard(title: "Počet šipek") {
+            TrainingSettingCard(title: descent ? "Zavřít do šipek" : "Počet šipek") {
                 RuleTiles(
-                    options: spec.darts.map { (id: $0, title: "\($0)", detail: "\($0 / 3) kol") },
+                    options: spec.darts.map { (id: $0, title: "\($0)", detail: descent ? visitCount($0 / 3) : "\($0 / 3) kol") },
                     selection: config.dartCount ?? spec.darts.first ?? 30,
                     columns: spec.darts.count
                 ) { config.dartCount = $0 }
             }
         case .rounds:
-            TrainingSettingCard(title: "Počet kol") {
+            TrainingSettingCard(title: descent ? "Počet pokusů" : "Počet kol") {
                 RuleTiles(
-                    options: spec.rounds.map { (id: $0, title: "\($0)", detail: "\($0 * 3) šipek") },
+                    options: spec.rounds.map { value -> (id: Int, title: String, detail: String?) in
+                        if descent { return (id: value, title: value == 0 ? "∞" : "\(value)", detail: value == 0 ? "bez limitu" : "pokusů") }
+                        return (id: value, title: "\(value)", detail: "\(value * 3) šipek")
+                    },
                     selection: config.rounds ?? spec.rounds.first ?? 8,
                     columns: spec.rounds.count
                 ) { config.rounds = $0 }
+            }
+        case .descent:
+            TrainingSettingCard(title: "Čísla") {
+                let start = config.targetScore ?? 141
+                let floor = min(start, config.floorScore ?? 100)
+                CountStepper(
+                    title: "Začátek",
+                    value: start,
+                    caption: "Odsud začínáš",
+                    canDecrease: start > 2,
+                    canIncrease: start < 170
+                ) { delta in
+                    let next = min(170, max(2, start + delta))
+                    config.targetScore = next
+                    if floor > next { config.floorScore = next }
+                }
+                RuleTiles(
+                    options: [170, 141, 121, 100].map { (id: $0, title: "\($0)", detail: nil) },
+                    selection: start,
+                    columns: 4
+                ) { value in
+                    config.targetScore = value
+                    if floor > value { config.floorScore = value }
+                }
+                Divider()
+                CountStepper(
+                    title: "Spodní hranice",
+                    value: floor,
+                    caption: "Zavřením hra končí",
+                    canDecrease: floor > 2,
+                    canIncrease: floor < start
+                ) { delta in
+                    config.floorScore = min(start, max(2, floor + delta))
+                }
+                RuleTiles(
+                    options: [40, 61, 81, 100].map { (id: $0, title: "\($0)", detail: nil) },
+                    selection: floor,
+                    columns: 4
+                ) { config.floorScore = min(start, $0) }
             }
         case .accuracy:
             TrainingSettingCard(title: "Cíl úspěšnosti") {
@@ -199,6 +246,16 @@ struct ClassicTrainingSetupView: View {
             TrainingSettingCard(title: "Checkout") {
                 Toggle("Nápověda checkoutu", isOn: $config.showCheckouts)
             }
+        }
+    }
+
+    private var descent: Bool { spec.settings.contains(.descent) }
+
+    private func visitCount(_ count: Int) -> String {
+        switch count {
+        case 1: return "1 návštěva"
+        case 2, 3, 4: return "\(count) návštěvy"
+        default: return "\(count) návštěv"
         }
     }
 }

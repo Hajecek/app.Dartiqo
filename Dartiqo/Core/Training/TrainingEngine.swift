@@ -156,6 +156,11 @@ extension TrainingKind {
             return .checkoutRange(low: low, high: high, count: rounds, need: min(rounds, config.rounds ?? easierNeed(need, level)))
         case .checkoutGenerated(let mode, let need):
             return .checkoutGenerated(mode: mode, need: easierNeed(need, level))
+        case .checkoutDescent(let start, let floor, let darts, let attempts):
+            let top = min(170, max(2, config.targetScore ?? start))
+            let bottom = min(top, max(2, config.floorScore ?? floor))
+            let count = max(3, (config.dartCount ?? darts) / 3 * 3)
+            return .checkoutDescent(start: top, floor: bottom, darts: count, attempts: max(0, config.rounds ?? attempts))
         case .x01(let start, let limit, let doubleIn, let average):
             let fixed = [9, 15, 30, 60].contains(limit)
             let cap = fixed ? limit : (config.dartCount ?? easierLimit(limit, level))

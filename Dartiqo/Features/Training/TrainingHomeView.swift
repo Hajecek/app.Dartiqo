@@ -713,6 +713,20 @@ private struct TrainingLesson {
                 "Nula platí jen doublem. Zbylých 40 zavře D20, zbylých 32 zavře D16.",
                 "Leg je hotový, když skončíš přesně na nule. Sleduje se průměr a počet šipek."
             ])
+        case "checkout-descent":
+            return TrainingLesson(beats: [
+                TrainingDemoBeat(darts: [Dart(20, 3), Dart(19, 3), Dart(12, 2)], caption: "Start 141. Zavřeš v limitu a jdeš na 140."),
+                TrainingDemoBeat(darts: [Dart(20, 3), Dart(20)], caption: "Limit šipek došel bez zavření. Jdeš o číslo výš."),
+                TrainingDemoBeat(darts: [Dart(20, 3), Dart(20, 3), Dart(10, 2)], caption: "Zavření první návštěvou je záchyt. Výš už nespadneš."),
+                TrainingDemoBeat(darts: [Dart(20, 2)], caption: "Zavřením spodní hranice hra končí.")
+            ], steps: [
+                "Vybereš si začáteční číslo, třeba 141, a spodní hranici, kde hra končí.",
+                "Vybereš i počet šipek na jedno číslo. 9 šipek jsou tři návštěvy.",
+                "Když číslo v limitu zavřeš, další pokus je o jedno níž.",
+                "Když ho v limitu nezavřeš, další pokus je o jedno výš, nejvýš 170.",
+                "Zavření hned první návštěvou číslo uloží jako záchyt. Neúspěch tě nad něj už nevrátí.",
+                "Hra končí zavřením spodní hranice, nebo když dojdou pokusy."
+            ])
         case DoubleTraining.definitionID:
             return TrainingLesson(beats: [
                 TrainingDemoBeat(darts: [Dart(16, 2)], caption: "Cíl je jeden double, třeba D16. Zásah se počítá."),
