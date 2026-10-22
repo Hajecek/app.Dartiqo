@@ -31,6 +31,18 @@ struct PlayView: View {
     }
 }
 
+extension GameMode {
+    /// Stejné odstíny jako dlaždice na Domů a v Tréninku.
+    var tileColors: [Color] {
+        switch self {
+        case .x01: return [Color(red: 1.0, green: 0.42, blue: 0.29), Color(red: 0.86, green: 0.20, blue: 0.20)]
+        case .cricket: return [Color(red: 0.18, green: 0.78, blue: 0.48), Color(red: 0.05, green: 0.50, blue: 0.32)]
+        case .aroundClock: return [Color(red: 0.18, green: 0.48, blue: 0.98), Color(red: 0.08, green: 0.22, blue: 0.72)]
+        case .countUp: return [Color(red: 0.58, green: 0.28, blue: 0.96), Color(red: 0.34, green: 0.12, blue: 0.70)]
+        }
+    }
+}
+
 private enum Opening: String, Identifiable {
     case random, pick, bull
     var id: String { rawValue }
@@ -168,15 +180,19 @@ struct SetupView: View {
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 20) {
                     progress
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text(headline)
-                            .font(.system(size: 32, weight: .bold, design: .rounded))
+                            .font(.system(.title, design: .rounded).weight(.bold))
                         Text(subtitle)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if step == 1 || step == 2 || step == 4 {
+                        matchStrip
+                            .transition(.opacity)
                     }
                     Group {
                         if step == 0 { gameStep }
@@ -542,32 +558,52 @@ struct SetupView: View {
         .padding(.bottom, 6)
     }
 
+    /// Kroky jako tečky na lince. Hotové jdou otevřít klepnutím, aktuální ukazuje název.
     private var progress: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            GeometryReader { geo in
-                let fraction = CGFloat(step + 1) / CGFloat(stepCount)
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.primary.opacity(0.10))
-                    Capsule()
-                        .fill(Theme.brand)
-                        .frame(width: max(18, geo.size.width * fraction))
-                }
-            }
-            .frame(height: 6)
-            .accessibilityHidden(true)
-            HStack(spacing: 0) {
-                ForEach(0..<stepCount, id: \.self) { index in
-                    Button { if index < step { setStep(index) } } label: {
-                        Text(stepTitles[index])
-                            .font(.caption.weight(index == step ? .bold : .medium))
-                            .foregroundStyle(index == step ? Theme.accent : (index < step ? .primary : .secondary))
-                            .frame(maxWidth: .infinity)
+        HStack(spacing: 4) {
+            ForEach(0..<stepCount, id: \.self) { index in
+                let done = index < step
+                let current = index == step
+                Button { if done { setStep(index) } } label: {
+                    HStack(spacing: 6) {
+                        ZStack {
+                            Circle()
+                                .fill(current || done ? Theme.brand : Color.primary.opacity(0.08))
+                            if done {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 10, weight: .heavy))
+                            } else {
+                                Text("\(index + 1)")
+                                    .font(.caption2.weight(.heavy))
+                                    .monospacedDigit()
+                            }
+                        }
+                        .frame(width: 22, height: 22)
+                        .foregroundStyle(current || done ? Color.black : Color.secondary)
+                        if current {
+                            Text(stepTitles[index])
+                                .font(.caption.weight(.bold))
+                                .lineLimit(1)
+                                .fixedSize()
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .disabled(index > step)
+                    .padding(.leading, current ? 3 : 0)
+                    .padding(.trailing, current ? 10 : 0)
+                    .padding(.vertical, 3)
+                    .background(current ? Theme.brand.opacity(0.16) : .clear, in: Capsule())
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(!done)
+                if index < stepCount - 1 {
+                    Capsule()
+                        .fill(done ? Theme.brand : Color.primary.opacity(0.12))
+                        .frame(height: 2)
+                        .frame(maxWidth: .infinity)
                 }
             }
         }
+        .animation(motion, value: step)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Krok \(step + 1) ze \(stepCount), \(stepTitles[min(step, stepTitles.count - 1)])")
         .accessibilityAdjustableAction { direction in
@@ -576,16 +612,150 @@ struct SetupView: View {
     }
 
     private var gameStep: some View {
-        VStack(spacing: 12) {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
             ForEach(GameMode.allCases) { mode in
-                ChoiceCard(title: mode.shortTitle, detail: mode.detail, symbol: mode.symbol, selected: draft.config.mode == mode, action: {
-                    withAnimation(motion) {
-                        draft.config.mode = mode
-                        if mode != .x01 { replaceGhostWithBotIfNeeded() }
-                    }
-                }, info: { modeInfo = mode })
+                modeTile(mode)
             }
         }
+        .sensoryFeedback(.selection, trigger: draft.config.mode)
+    }
+
+    private func modeTile(_ mode: GameMode) -> some View {
+        let selected = draft.config.mode == mode
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        return Button {
+            withAnimation(motion) {
+                draft.config.mode = mode
+                if mode != .x01 { replaceGhostWithBotIfNeeded() }
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                Image(systemName: mode.symbol)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 42, height: 42)
+                    .background(.white.opacity(0.18), in: Circle())
+                    .accessibilityHidden(true)
+                Spacer(minLength: 16)
+                Text(mode.shortTitle)
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Text(mode.detail)
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.85))
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, minHeight: 180, alignment: .topLeading)
+            .background {
+                ZStack(alignment: .bottomTrailing) {
+                    LinearGradient(colors: mode.tileColors, startPoint: .topLeading, endPoint: .bottomTrailing)
+                    Image(systemName: mode.symbol)
+                        .font(.system(size: 96, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.12))
+                        .rotationEffect(.degrees(-12))
+                        .offset(x: 26, y: 26)
+                        .accessibilityHidden(true)
+                }
+            }
+            .clipShape(shape)
+            .overlay(shape.strokeBorder(selected ? Theme.brand : .white.opacity(0.12), lineWidth: selected ? 3 : 1))
+            .overlay(alignment: .bottomTrailing) {
+                if selected {
+                    Image(systemName: "checkmark")
+                        .font(.caption.weight(.heavy))
+                        .foregroundStyle(.black)
+                        .frame(width: 26, height: 26)
+                        .background(Theme.brand, in: Circle())
+                        .padding(12)
+                        .transition(.scale.combined(with: .opacity))
+                }
+            }
+            .scaleEffect(selected ? 1 : 0.97)
+            .shadow(color: (mode.tileColors.first ?? .clear).opacity(selected ? 0.4 : 0), radius: 12, y: 6)
+            .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .topTrailing) {
+            Button { modeInfo = mode } label: {
+                Image(systemName: "info.circle.fill")
+                    .font(.title3)
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.white)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .padding(4)
+            .accessibilityLabel("Pravidla \(mode.shortTitle)")
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    /// Co se právě skládá: hra, pravidla a sestava. Klepnutí vrátí na výběr hry.
+    private var matchStrip: some View {
+        let mode = draft.config.mode
+        return Button { setStep(0) } label: {
+            HStack(spacing: 12) {
+                Image(systemName: mode.symbol)
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 42, height: 42)
+                    .background(
+                        LinearGradient(colors: mode.tileColors, startPoint: .topLeading, endPoint: .bottomTrailing),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    )
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(mode.shortTitle)
+                        .font(.subheadline.weight(.bold))
+                    Text(draft.config.summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .contentTransition(.opacity)
+                }
+                Spacer(minLength: 8)
+                seatStack(size: 30)
+            }
+            .padding(10)
+            .padding(.trailing, 4)
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Theme.stroke, lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(mode.shortTitle), \(draft.config.summary)")
+        .accessibilityHint("Změnit hru")
+    }
+
+    /// Překryté avatary sestavy.
+    private func seatStack(size: CGFloat) -> some View {
+        HStack(spacing: -size * 0.3) {
+            ForEach(draft.seats.indices, id: \.self) { index in
+                seatAvatar(index, size: size)
+                    .overlay(Circle().stroke(Theme.card, lineWidth: 2))
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func seatAvatar(_ index: Int, size: CGFloat) -> some View {
+        let seat = draft.seats[index]
+        let bot = seat.isBot && !isMe(index)
+        return Avatar(
+            name: seatName(index),
+            bot: bot,
+            size: size,
+            photo: seatPhoto(index),
+            asset: bot ? BotLevel.get(seat.level).photo : nil
+        )
     }
 
     private func replaceGhostWithBotIfNeeded() {
@@ -1189,6 +1359,7 @@ struct SetupView: View {
 
     private var summaryStep: some View {
         VStack(alignment: .leading, spacing: 18) {
+            matchupHero
             VStack(alignment: .leading, spacing: 10) {
                 Eyebrow(text: "Hrají")
                 VStack(spacing: 0) {
@@ -1222,6 +1393,66 @@ struct SetupView: View {
             }
             .surface()
         }
+    }
+
+    /// Sestava proti sobě na barvě zvolené hry.
+    private var matchupHero: some View {
+        let mode = draft.config.mode
+        let seats = Array(draft.seats.indices)
+        return VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 8) {
+                Image(systemName: mode.symbol)
+                    .font(.subheadline.weight(.bold))
+                Text(mode.shortTitle)
+                    .font(.subheadline.weight(.bold))
+                Spacer(minLength: 8)
+                Text(draft.config.mode == .x01 || draft.config.mode == .cricket ? draft.config.lengthLine : "\(seats.count) \(seats.count == 1 ? "hráč" : seats.count < 5 ? "hráči" : "hráčů")")
+                    .font(.caption.weight(.bold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 4)
+                    .background(.white.opacity(0.2), in: Capsule())
+            }
+            .foregroundStyle(.white)
+            HStack(alignment: .top, spacing: 0) {
+                ForEach(seats, id: \.self) { index in
+                    if index > 0 {
+                        Text(seats.count == 2 ? "vs" : "·")
+                            .font(.system(.headline, design: .rounded).weight(.heavy))
+                            .foregroundStyle(.white.opacity(0.7))
+                            .frame(width: seats.count == 2 ? 36 : 14, height: seats.count > 2 ? 48 : 64)
+                    }
+                    VStack(spacing: 8) {
+                        seatAvatar(index, size: seats.count > 2 ? 48 : 64)
+                            .overlay(Circle().stroke(.white.opacity(0.85), lineWidth: 2))
+                        Text(seatName(index))
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            Text(draft.config.summary)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white.opacity(0.85))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            ZStack(alignment: .bottomTrailing) {
+                LinearGradient(colors: mode.tileColors, startPoint: .topLeading, endPoint: .bottomTrailing)
+                Image(systemName: mode.symbol)
+                    .font(.system(size: 120, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.1))
+                    .rotationEffect(.degrees(-12))
+                    .offset(x: 30, y: 34)
+                    .accessibilityHidden(true)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 
     private struct SummaryRow {
