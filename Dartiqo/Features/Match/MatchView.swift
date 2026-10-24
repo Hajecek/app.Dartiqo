@@ -3285,9 +3285,16 @@ struct MatchView: View {
                     if clockStart != nil { flushClock(keepRunning: true) }
                 }
             }
+            .task {
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(1))
+                    guard let game = store.activeMatch, !game.finished else { continue }
+                    publishLiveClock(game)
+                }
+            }
             .task(id: shouldWatchIdle) { await pauseWhenIdle() }
             .onChange(of: playActivity) { _, _ in lastActivity = Date() }
-            .onChange(of: scenePhase) { _, _ in syncClock() }
+            .onChange(of: scenePhase) { _, phase in syncClock(phase) }
             .onChange(of: paused) { _, isPaused in
                 syncClock()
                 if !isPaused { lastActivity = Date() }
@@ -3317,36 +3324,40 @@ struct MatchView: View {
     private var clockRuns: Bool {
         scenePhase == .active && !paused && store.activeMatch.map { !$0.finished } == true
     }
-    private func syncClock() {
-        if clockRuns {
+    private func syncClock(_ phase: ScenePhase? = nil) {
+        let phase = phase ?? scenePhase
+        let runs = phase == .active && !paused && store.activeMatch?.finished != true
+        if runs {
             if clockStart == nil { clockStart = Date() }
-            publishLiveClock(store.activeMatch)
+            publishLiveClock(store.activeMatch, phase: phase)
         } else if clockStart != nil {
-            flushClock()
+            flushClock(for: phase)
         } else {
-            publishLiveClock(store.activeMatch)
+            publishLiveClock(store.activeMatch, phase: phase)
         }
     }
     /// Připíše uběhlý úsek do zápasu. Průběžně, aby se čas neztratil ani při pádu appky.
-    private func flushClock(keepRunning: Bool = false) {
+    private func flushClock(keepRunning: Bool = false, for phase: ScenePhase? = nil) {
         guard let start = clockStart else { return }
         let now = Date()
         let running = keepRunning && clockRuns
         clockStart = running ? now : nil
         guard var game = store.activeMatch else { return }
         game.addPlayTime(from: start, to: now)
-        publishLiveClock(game)
+        publishLiveClock(game, phase: phase)
         store.activeMatch = game
     }
-    /// Web dostane stejný čas jako tabule: uložené sekundy plus právě běžící úsek.
-    private func publishLiveClock(_ game: Match?) {
+    /// Web dostane stejný čas jako tabule. Pauza na telefonu i odchod z aplikace ten čas zastaví, web ukáže pauzu.
+    private func publishLiveClock(_ game: Match?, phase: ScenePhase? = nil) {
         guard let game else {
             DartiqoAccount.shared.noteLiveClock(paused: false, played: 0, running: false, match: nil, store: store)
             return
         }
-        let running = clockStart != nil && !game.finished && !paused
+        let leftApp = (phase ?? scenePhase) != .active
+        let hold = !game.finished && (paused || leftApp)
+        let running = clockStart != nil && !hold
         DartiqoAccount.shared.noteLiveClock(
-            paused: paused && !game.finished,
+            paused: hold,
             played: frozenBoardSeconds(game),
             running: running,
             match: game,
