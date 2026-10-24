@@ -58,6 +58,17 @@ struct AccountUser: Codable, Equatable {
     }
 }
 
+/// Hráč z hledání na serveru. E-mail se do aplikace neposílá.
+struct DirectoryPerson: Codable, Identifiable, Equatable {
+    var id: Int
+    var username: String
+    var first: String
+    var last: String
+    var photo: String?
+
+    var fullName: String { "\(first) \(last)".trimmingCharacters(in: .whitespaces) }
+}
+
 enum APIError: LocalizedError {
     case badServer
     case unauthorized(String)
@@ -88,6 +99,7 @@ struct DartiqoAPI {
         var user: AccountUser?
         var message: String?
         var ids: [String]?
+        var people: [DirectoryPerson]?
     }
 
     func login(identity: String, password: String, device: String) async throws -> (token: String, user: AccountUser) {
@@ -158,8 +170,40 @@ struct DartiqoAPI {
         _ = try await send("api/v1/live-matches/\(id.uuidString.lowercased())", body: body)
     }
 
-    private func send(_ path: String, method: String = "POST", body: Data? = nil) async throws -> Response {
-        var request = URLRequest(url: baseURL.appending(path: path))
+    /// Registrovaní hráči podle jména, username, nebo přesného e-mailu.
+    func searchPeople(query: String) async throws -> [DirectoryPerson] {
+        try await send("api/v1/people", method: "GET", query: [URLQueryItem(name: "q", value: query)]).people ?? []
+    }
+
+    func downloadImage(_ path: String?) async -> Data? {
+        guard let path, !path.isEmpty else { return nil }
+        let absolute: URL?
+        if path.hasPrefix("http://") || path.hasPrefix("https://") {
+            absolute = URL(string: path)
+        } else {
+            let root = baseURL.absoluteString.hasSuffix("/") ? baseURL.absoluteString : baseURL.absoluteString + "/"
+            let relative = path.hasPrefix("/") ? String(path.dropFirst()) : path
+            absolute = URL(string: relative, relativeTo: URL(string: root))?.absoluteURL
+        }
+        guard let absolute else { return nil }
+        var request = URLRequest(url: absolute)
+        request.timeoutInterval = 12
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty else { return nil }
+            return data
+        } catch {
+            return nil
+        }
+    }
+
+    private func send(_ path: String, method: String = "POST", body: Data? = nil, query: [URLQueryItem] = []) async throws -> Response {
+        guard var components = URLComponents(url: baseURL.appending(path: path), resolvingAgainstBaseURL: false) else {
+            throw APIError.badServer
+        }
+        if !query.isEmpty { components.queryItems = query }
+        guard let url = components.url else { throw APIError.badServer }
+        var request = URLRequest(url: url)
         request.httpMethod = method
         request.timeoutInterval = 10
         request.setValue("application/json", forHTTPHeaderField: "Accept")

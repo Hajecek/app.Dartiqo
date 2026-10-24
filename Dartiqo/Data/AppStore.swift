@@ -29,6 +29,8 @@ struct Friend: Codable, Identifiable, Equatable {
     var email: String?
     /// Propojení s profilem na stejném telefonu (stejné UUID v zápasech / H2H).
     var linkedProfileID: UUID?
+    /// Webový účet, když kamarád vznikl vyhledáním v Dartiqo.
+    var accountID: Int? = nil
 }
 /// Výsledek hledání profilu v Dartiqo na tomto zařízení.
 struct DartiqoPersonHit: Identifiable, Equatable {
@@ -37,6 +39,8 @@ struct DartiqoPersonHit: Identifiable, Equatable {
     var username: String?
     var email: String?
     var photoJPEG: Data?
+    /// Účet na serveru. Lokální profil na telefonu ho nemá.
+    var accountID: Int?
 }
 struct StoredData: Codable {
     var version = 1
@@ -184,7 +188,8 @@ enum AppSection: Hashable {
         username: String? = nil,
         email: String? = nil,
         photo: UIImage? = nil,
-        linkedProfileID: UUID? = nil
+        linkedProfileID: UUID? = nil,
+        accountID: Int? = nil
     ) -> Friend? {
         guard let owner = profile?.id else { return nil }
         let clean = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24))
@@ -193,18 +198,29 @@ enum AppSection: Hashable {
         let mail = Self.normalizeEmail(email)
         if let linked = linkedProfileID,
            let existing = friends.first(where: { $0.id == linked || $0.linkedProfileID == linked }) {
-            return attachPhotoIfMissing(existing.id, photo: photo)
+            return completeFriend(existing.id, username: handle, email: mail, photo: photo, accountID: accountID)
         }
-        if let existing = friends.first(where: {
+        if let accountID,
+           let existing = friends.first(where: { $0.accountID == accountID }) {
+            return completeFriend(existing.id, username: handle, email: mail, photo: photo, accountID: accountID)
+        }
+        if let handle,
+           let existing = friends.first(where: { $0.username?.caseInsensitiveCompare(handle) == .orderedSame }) {
+            return completeFriend(existing.id, username: handle, email: mail, photo: photo, accountID: accountID)
+        }
+        if accountID == nil, let existing = friends.first(where: {
             $0.name.compare(clean, options: [.caseInsensitive, .diacriticInsensitive]) == .orderedSame
-        }) { return attachPhotoIfMissing(existing.id, photo: photo) }
+        }) {
+            return completeFriend(existing.id, username: handle, email: mail, photo: photo, accountID: nil)
+        }
         var friend = Friend(
             id: linkedProfileID ?? UUID(),
             owner: owner,
             name: clean,
             username: handle,
             email: mail,
-            linkedProfileID: linkedProfileID
+            linkedProfileID: linkedProfileID,
+            accountID: accountID
         )
         if let photo { friend.photoJPEG = Self.jpegThumb(photo) }
         if data.friends == nil { data.friends = [] }
@@ -212,12 +228,28 @@ enum AppSection: Hashable {
         save()
         return friend
     }
-    /// Doplní portrét jen tam, kde ještě žádný není. Ručně zvolená fotka zůstane.
-    private func attachPhotoIfMissing(_ id: UUID, photo: UIImage?) -> Friend? {
+    /// Doplní username, účet a portrét, jen když tam ještě nejsou. Ručně vyplněné údaje zůstanou.
+    private func completeFriend(_ id: UUID, username: String?, email: String?, photo: UIImage?, accountID: Int?) -> Friend? {
         guard var all = data.friends,
               let index = all.firstIndex(where: { $0.id == id }) else { return nil }
+        var changed = false
+        if all[index].username == nil, let username {
+            all[index].username = username
+            changed = true
+        }
+        if all[index].email == nil, let email {
+            all[index].email = email
+            changed = true
+        }
+        if all[index].accountID == nil, let accountID {
+            all[index].accountID = accountID
+            changed = true
+        }
         if all[index].photoJPEG == nil, let photo, let jpeg = Self.jpegThumb(photo) {
             all[index].photoJPEG = jpeg
+            changed = true
+        }
+        if changed {
             data.friends = all
             save()
         }

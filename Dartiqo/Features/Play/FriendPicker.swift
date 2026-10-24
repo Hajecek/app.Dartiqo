@@ -38,7 +38,9 @@ struct FriendPickerSheet: View {
                                 name: hit.name,
                                 username: hit.username,
                                 email: hit.email,
-                                linkedProfileID: hit.id
+                                photo: hit.photoJPEG.flatMap(UIImage.init(data:)),
+                                linkedProfileID: hit.accountID == nil ? hit.id : nil,
+                                accountID: hit.accountID
                             ) {
                                 toggle(PickedFriend(id: friend.id, name: friend.name), forceOn: true)
                             }
@@ -50,7 +52,7 @@ struct FriendPickerSheet: View {
                         Label("Importovat z kontaktů", systemImage: "person.crop.circle.badge.plus")
                     }
                 } footer: {
-                    Text("Vytvoř lokální profil, nebo najdi jiný profil na tomto telefonu podle username či e-mailu.")
+                    Text("Vytvoř lokální profil, najdi registrovaného hráče podle jména, username nebo e-mailu, nebo ho importuj z kontaktů.")
                 }
 
                 if !store.housemates.isEmpty {
@@ -454,24 +456,36 @@ struct FriendEditView: View {
     }
 }
 
-/// Hledání profilů v Dartiqo na tomto zařízení podle username nebo e-mailu.
+/// Hledání registrovaných hráčů a profilů na tomto telefonu.
 struct FriendFindView: View {
     @EnvironmentObject private var store: AppStore
+    @ObservedObject private var account = DartiqoAccount.shared
     @Environment(\.dismiss) private var dismiss
     var taken: Set<UUID>
     var onPick: (DartiqoPersonHit) -> Void
 
     @State private var query = ""
+    @State private var remote: [DirectoryPerson] = []
+    @State private var searching = false
+    @State private var searchError: String?
+    @State private var addingID: Int?
+    @State private var searchGeneration = 0
+    @State private var portraits: [Int: Data] = [:]
+    @State private var portraitPaths: [Int: String] = [:]
     @FocusState private var focused: Bool
 
-    private var hits: [DartiqoPersonHit] {
+    private var localHits: [DartiqoPersonHit] {
         store.findDartiqoPeople(query: query)
+    }
+
+    private var ready: Bool {
+        query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2
     }
 
     var body: some View {
         List {
             Section {
-                TextField("Username nebo e-mail", text: $query)
+                TextField("Jméno, username nebo e-mail", text: $query)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.emailAddress)
@@ -479,42 +493,68 @@ struct FriendFindView: View {
                     .focused($focused)
                     .submitLabel(.search)
             } footer: {
-                Text("Hledá mezi ostatními profily na tomto telefonu. Username a e-mail si každý nastaví v Nastavení.")
+                Text("Hledá registrované hráče podle jména, username, nebo přesné e-mailové adresy. Přidáním se uloží mezi kamarády.")
             }
 
-            Section("Výsledky") {
-                if query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2 {
-                    Text("Zadej aspoň 2 znaky.")
-                        .foregroundStyle(.secondary)
-                } else if hits.isEmpty {
-                    Text("Nikdo neodpovídá. Zkontroluj username nebo e-mail, případně vytvoř lokální profil.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(hits) { hit in
+            if ready && !localHits.isEmpty {
+                Section("Na tomto telefonu") {
+                    ForEach(localHits) { hit in
                         let busy = taken.contains(hit.id)
                         Button {
                             guard !busy else { return }
                             onPick(hit)
                             dismiss()
                         } label: {
-                            HStack(spacing: 12) {
-                                Avatar(name: hit.name, size: 44, photo: hit.photoJPEG)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(hit.name).font(.body.weight(.semibold)).foregroundStyle(.primary)
-                                    if let username = hit.username, !username.isEmpty {
-                                        Text("@\(username)").font(.caption).foregroundStyle(Theme.action)
-                                    }
-                                    if let email = hit.email, !email.isEmpty {
-                                        Text(email).font(.caption).foregroundStyle(.secondary)
-                                    }
-                                }
-                                Spacer()
-                                Text(busy ? "Už hraje" : "Přidat")
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(busy ? Color.secondary : Theme.action)
-                            }
+                            personLabel(
+                                name: hit.name,
+                                username: hit.username,
+                                photo: hit.photoJPEG,
+                                detail: hit.email,
+                                action: busy ? "Už hraje" : "Přidat",
+                                enabled: !busy
+                            )
                         }
                         .disabled(busy)
+                    }
+                }
+            }
+
+            Section("Účty Dartiqo") {
+                if !ready {
+                    Text("Zadej aspoň 2 znaky.")
+                        .foregroundStyle(.secondary)
+                } else if searching && remote.isEmpty && searchError == nil {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                        Text("Hledám hráče…")
+                            .foregroundStyle(.secondary)
+                    }
+                } else if let searchError, remote.isEmpty {
+                    Text(searchError)
+                        .foregroundStyle(.secondary)
+                } else if remote.isEmpty {
+                    Text(localHits.isEmpty
+                         ? "Žádný účet tomu neodpovídá. Zkontroluj jméno, nebo vytvoř lokální profil."
+                         : "V účtech Dartiqo nikdo další.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(remote) { person in
+                        let saved = savedFriend(person)
+                        let busy = saved.map { taken.contains($0.id) } ?? false
+                        Button {
+                            guard !busy, addingID == nil else { return }
+                            Task { await add(person) }
+                        } label: {
+                            personLabel(
+                                name: person.fullName.isEmpty ? person.username : person.fullName,
+                                username: person.username,
+                                photo: portrait(for: person) ?? saved?.photoJPEG,
+                                detail: nil,
+                                action: addingID == person.id ? "Ukládám…" : (busy ? "Už hraje" : (saved == nil ? "Přidat" : "Vybrat")),
+                                enabled: !busy && addingID == nil
+                            )
+                        }
+                        .disabled(busy || addingID != nil)
                     }
                 }
             }
@@ -522,11 +562,139 @@ struct FriendFindView: View {
         .navigationTitle("Najít v Dartiqo")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { focused = true }
+        .onChange(of: query) { _, _ in scheduleSearch() }
+    }
+
+    private func personLabel(name: String, username: String?, photo: Data?, detail: String?, action: String, enabled: Bool) -> some View {
+        HStack(spacing: 12) {
+            Avatar(name: name, size: 44, photo: photo)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name).font(.body.weight(.semibold)).foregroundStyle(.primary)
+                if let username, !username.isEmpty {
+                    Text("@\(username)").font(.caption).foregroundStyle(Theme.action)
+                }
+                if let detail, !detail.isEmpty {
+                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            Text(action)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(enabled ? Theme.action : Color.secondary)
+        }
+    }
+
+    private func savedFriend(_ person: DirectoryPerson) -> Friend? {
+        store.friends.first {
+            $0.accountID == person.id || $0.username?.caseInsensitiveCompare(person.username) == .orderedSame
+        }
+    }
+
+    private func scheduleSearch() {
+        searchGeneration += 1
+        let generation = searchGeneration
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        remote = []
+        searchError = nil
+        guard needle.count >= 2 else {
+            searching = false
+            return
+        }
+        searching = true
+        Task {
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard generation == searchGeneration else { return }
+            await runSearch(needle, generation: generation)
+        }
+    }
+
+    private func runSearch(_ needle: String, generation: Int) async {
+        guard let api = account.api else {
+            searching = false
+            searchError = "Pro hledání účtů se přihlas k Dartiqo."
+            return
+        }
+        do {
+            let people = try await api.searchPeople(query: needle)
+            guard generation == searchGeneration else { return }
+            remote = people
+            searching = false
+            await loadPortraits(people)
+        } catch {
+            guard generation == searchGeneration else { return }
+            searching = false
+            searchError = "Hledání se nepovedlo. Zkus to znovu."
+        }
+    }
+
+    private func portrait(for person: DirectoryPerson) -> Data? {
+        guard portraitPaths[person.id] == person.photo else { return nil }
+        return portraits[person.id]
+    }
+
+    private func loadPortraits(_ people: [DirectoryPerson]) async {
+        let server = account.serverURL
+        let jobs = people.compactMap { person -> (Int, String)? in
+            guard let path = person.photo, portraitPaths[person.id] != path else { return nil }
+            return (person.id, path)
+        }
+        guard !jobs.isEmpty else { return }
+        let generation = searchGeneration
+        await withTaskGroup(of: (Int, String, Data)?.self) { group in
+            for (id, path) in jobs {
+                group.addTask {
+                    guard let data = await fetchedAvatar(path: path, server: server) else { return nil }
+                    return (id, path, data)
+                }
+            }
+            for await item in group {
+                guard generation == searchGeneration, let (id, path, data) = item else { continue }
+                portraits[id] = data
+                portraitPaths[id] = path
+            }
+        }
+    }
+
+    private func add(_ person: DirectoryPerson) async {
+        addingID = person.id
+        defer { addingID = nil }
+        var photo = portrait(for: person)
+        if photo == nil {
+            photo = await account.api?.downloadImage(person.photo)
+        }
+        let name = person.fullName.isEmpty ? person.username : person.fullName
+        onPick(DartiqoPersonHit(
+            id: savedFriend(person)?.id ?? UUID(),
+            name: name,
+            username: person.username,
+            photoJPEG: photo,
+            accountID: person.id
+        ))
+        dismiss()
     }
 }
 
 private extension Friend {
     var asPicked: PickedFriend { PickedFriend(id: id, name: name) }
+}
+
+/// Stáhne portrét mimo hlavní izolaci, ať se fotky ve výsledcích načtou najednou.
+private nonisolated func fetchedAvatar(path: String, server: String) async -> Data? {
+    let absolute: URL?
+    if path.hasPrefix("http://") || path.hasPrefix("https://") {
+        absolute = URL(string: path)
+    } else {
+        let root = server.hasSuffix("/") ? server : server + "/"
+        let relative = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        absolute = URL(string: relative, relativeTo: URL(string: root))?.absoluteURL
+    }
+    guard let absolute else { return nil }
+    var request = URLRequest(url: absolute)
+    request.timeoutInterval = 12
+    guard let (data, response) = try? await URLSession.shared.data(for: request),
+          (response as? HTTPURLResponse)?.statusCode == 200,
+          !data.isEmpty else { return nil }
+    return data
 }
 
 private struct ImportedContact {
