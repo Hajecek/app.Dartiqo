@@ -19,9 +19,18 @@ struct SettingsView: View {
             Section {
                 HStack(spacing: 18) {
                     PhotosPicker(selection: $photoItem, matching: .images) {
-                        Avatar(name: store.profile?.name ?? "", size: 70, photo: store.profile?.photoJPEG)
+                        ZStack(alignment: .bottomTrailing) {
+                            Avatar(name: store.profile?.name ?? "", size: 70, photo: store.profile?.photoJPEG)
+                            Image(systemName: "pencil")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(Theme.onAccent)
+                                .frame(width: 26, height: 26)
+                                .background(Theme.accentFill, in: Circle())
+                                .overlay(Circle().strokeBorder(Theme.card, lineWidth: 2))
+                        }
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("Změnit profilovou fotku")
                     VStack(alignment: .leading, spacing: 6) {
                         Text(store.profile?.name ?? "Hráč").font(.title2.bold())
                         if let handle = store.profile?.username, !handle.isEmpty {
@@ -34,9 +43,6 @@ struct SettingsView: View {
                     }
                 }
                 .padding(.vertical, 12)
-                PhotosPicker(selection: $photoItem, matching: .images) {
-                    Label("Zvolit profilovou fotku", systemImage: "photo")
-                }
                 if store.profile?.photoJPEG != nil {
                     Button("Odebrat fotku", role: .destructive) { store.setPhoto(nil) }
                 }

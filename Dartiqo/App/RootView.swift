@@ -4,8 +4,35 @@ import Combine
 struct RootView: View {
     @EnvironmentObject private var store: AppStore
     @ObservedObject private var account = DartiqoAccount.shared
+    @State private var launching = true
+    @State private var minimumElapsed = false
 
     var body: some View {
+        ZStack {
+            content
+            if launching {
+                LaunchView()
+                    .transition(.opacity.combined(with: .scale(scale: 1.08)))
+                    .zIndex(1)
+            }
+        }
+        .task {
+            try? await Task.sleep(for: .milliseconds(1200))
+            minimumElapsed = true
+        }
+        .onChange(of: minimumElapsed && contentReady, initial: true) { _, done in
+            guard done, launching else { return }
+            withAnimation(.easeInOut(duration: 0.4)) { launching = false }
+        }
+    }
+
+    /// Po přihlášení se profil k účtu teprve váže, launch screen počká, než je hotovo.
+    private var contentReady: Bool {
+        guard !store.needsRecovery, let user = account.user else { return true }
+        return store.profile?.accountID == user.id
+    }
+
+    @ViewBuilder private var content: some View {
         Group {
             if store.needsRecovery { StorageRecoveryView() }
             else if let user = account.user {

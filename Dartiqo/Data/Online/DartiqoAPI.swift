@@ -71,10 +71,59 @@ struct DirectoryPerson: Codable, Identifiable, Equatable {
     var fullName: String { "\(first) \(last)".trimmingCharacters(in: .whitespaces) }
 }
 
+struct FriendRecord: Codable, Equatable {
+    struct Career: Codable, Equatable {
+        var played: Int
+        var wins: Int
+        var losses: Int
+        var draws: Int
+        var average: Double?
+
+        var winRate: Int? {
+            played == 0 ? nil : Int((Double(wins) / Double(played) * 100).rounded())
+        }
+    }
+
+    struct Mutual: Codable, Equatable {
+        var wins: Int
+        var losses: Int
+        var draws: Int
+
+        var played: Int { wins + losses + draws }
+    }
+
+    struct Game: Codable, Equatable, Identifiable {
+        var id: String
+        var when: String
+        var mode: String
+        var title: String
+        var score: String
+        var result: String
+        var label: String
+        var mine: Bool
+        var myAverage: Double?
+        var theirAverage: Double?
+    }
+
+    var career: Career
+    var mutual: Mutual
+    var myAverage: Double?
+    var theirAverage: Double?
+    var standing: String
+    var games: [Game]
+}
+
+struct FriendSummary: Codable, Equatable {
+    var career: FriendRecord.Career
+    var mutual: FriendRecord.Mutual
+}
+
 struct FriendLink: Codable, Identifiable, Equatable {
     var id: Int
     var status: String
     var user: DirectoryPerson
+    /// Bilance a průměr. Starší odpověď klíč nemá a žádosti ho nenesou.
+    var summary: FriendSummary?
 }
 
 struct FriendBook: Equatable {
@@ -121,6 +170,7 @@ struct DartiqoAPI {
         var outgoing: [FriendLink]?
         var friendship: FriendLink?
         var relation: String?
+        var record: FriendRecord?
     }
 
     func login(identity: String, password: String, device: String) async throws -> (token: String, user: AccountUser) {
@@ -189,6 +239,13 @@ struct DartiqoAPI {
 
     func pushLiveMatch(id: UUID, body: Data) async throws {
         _ = try await send("api/v1/live-matches/\(id.uuidString.lowercased())", body: body)
+    }
+
+    func friendRecord(_ id: Int) async throws -> FriendRecord {
+        guard let record = try await send("api/v1/friends/\(id)", method: "GET").record else {
+            throw APIError.server("Server vrátil neúplnou odpověď.")
+        }
+        return record
     }
 
     func friendBook() async throws -> FriendBook {

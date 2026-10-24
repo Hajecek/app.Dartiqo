@@ -4,6 +4,7 @@ import SwiftUI
 /// Přihlášení k webovému účtu Dartiqo. Bez účtu se do aplikace nevstoupí.
 struct LoginView: View {
     @ObservedObject private var account = DartiqoAccount.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var identity = ""
     @State private var password = ""
     @State private var showPassword = false
@@ -11,89 +12,150 @@ struct LoginView: View {
     @State private var showServer = false
     @State private var busy = false
     @State private var error: String?
+    @State private var appeared = false
+    @State private var boardAngle = 0.0
     @FocusState private var focus: Field?
 
-    private enum Field { case identity, password, server }
+    private enum Field { case identity, password }
+
+    /// Stejná žlutá jako pozadí loga, aby logo na plakátu splynulo.
+    private let poster = Color("LaunchBackground")
 
     private var canLogin: Bool {
         !busy && !identity.trimmingCharacters(in: .whitespaces).isEmpty && !password.isEmpty
     }
 
+    /// Při psaní se plakát smrskne, aby formulář zůstal nad klávesnicí.
+    private var compact: Bool { focus != nil }
+
     var body: some View {
         GeometryReader { geo in
             ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    brand
-                    Spacer(minLength: 40)
-                    VStack(alignment: .leading, spacing: 22) {
-                        heading
-                        form
-                        socialButtons
-                        footer
-                    }
+                VStack(spacing: 0) {
+                    hero(minHeight: compact ? 0 : max(300, geo.size.height * 0.46))
+                    Spacer(minLength: 0)
+                    panel
+                        .offset(y: appeared || reduceMotion ? 0 : 80)
+                        .opacity(appeared ? 1 : 0)
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 12)
-                .padding(.bottom, 20)
-                .frame(maxWidth: 520)
-                .frame(maxWidth: .infinity, minHeight: geo.size.height, alignment: .top)
+                .frame(minHeight: geo.size.height)
+                .background(poster)
             }
             .scrollDismissesKeyboard(.interactively)
             .scrollBounceBehavior(.basedOnSize)
         }
-        .background { background }
-        .environment(\.colorScheme, .dark)
-        .onAppear { server = account.serverURL }
-    }
-
-    // MARK: - Části obrazovky
-
-    private var background: some View {
-        ZStack(alignment: .top) {
-            Color.black
-            Image("LoginBackground")
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: .infinity)
-                .mask(LinearGradient(stops: [.init(color: .black, location: 0.45), .init(color: .clear, location: 0.85)], startPoint: .top, endPoint: .bottom))
-            LinearGradient(colors: [.black.opacity(0.55), .clear], startPoint: .top, endPoint: .center)
+        .background {
+            VStack(spacing: 0) { poster; Color.black }
+                .ignoresSafeArea()
         }
-        .ignoresSafeArea()
-        .accessibilityHidden(true)
+        .animation(.snappy(duration: 0.35), value: compact)
+        .sheet(isPresented: $showServer) {
+            ServerSheet(server: $server, defaultServer: account.serverURL)
+        }
+        .onAppear {
+            if server.isEmpty { server = account.serverURL }
+            withAnimation(.spring(duration: 0.7, bounce: 0.25).delay(0.05)) { appeared = true }
+            guard !reduceMotion else { return }
+            withAnimation(.linear(duration: 120).repeatForever(autoreverses: false)) { boardAngle = 360 }
+        }
     }
 
-    private var brand: some View {
-        HStack(spacing: 12) {
+    // MARK: - Plakát
+
+    private func hero(minHeight: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            topBar
+            if !compact {
+                Spacer(minLength: 28)
+                headline
+                    .offset(y: appeared || reduceMotion ? 0 : 24)
+                    .opacity(appeared ? 1 : 0)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 8)
+        .padding(.bottom, compact ? 20 : 40)
+        .frame(maxWidth: 560, minHeight: minHeight, alignment: .topLeading)
+        .frame(maxWidth: .infinity)
+        .background(alignment: .topTrailing) {
+            BoardLines(color: .black.opacity(0.11))
+                .frame(width: 440, height: 440)
+                .rotationEffect(.degrees(boardAngle))
+                .offset(x: 170, y: compact ? -260 : -30)
+                .opacity(compact ? 0 : 1)
+        }
+        .clipped()
+    }
+
+    private var topBar: some View {
+        HStack(spacing: 10) {
             Image("Logo")
                 .resizable()
-                .scaledToFit()
                 .frame(width: 44, height: 44)
-                .clipShape(Circle())
-                .overlay(Circle().stroke(.white.opacity(0.2), lineWidth: 1))
-                .shadow(color: Theme.brand.opacity(0.35), radius: 16)
+                .accessibilityHidden(true)
             Text("Dartiqo")
-                .font(AppFont.title(24, weight: .heavy))
+                .font(AppFont.title(22, weight: .black))
+                .foregroundStyle(.black)
+                .padding(.leading, -8)
+            Spacer()
+            Button { showServer = true } label: {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(poster)
+                    .frame(width: 40, height: 40)
+                    .background(.black, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Nastavení serveru")
         }
-        .foregroundStyle(.white)
-        .accessibilityElement(children: .combine)
     }
 
-    private var heading: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Hra začíná\nu tebe.")
-                .font(AppFont.display(40, weight: .heavy))
-                .foregroundStyle(.white)
+    private var headline: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Každá\nšipka\nse počítá.")
+                .font(AppFont.display(56, weight: .black))
+                .foregroundStyle(.black)
+                .lineSpacing(-6)
+                .minimumScaleFactor(0.7)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("Přihlas se stejným účtem jako na webu a rozehraný zápas uvidíš živě i na počítači.")
-                .font(AppFont.body(16))
-                .foregroundStyle(.white.opacity(0.65))
+            Text("Statistiky, přátelé a živé zápasy.\nJeden účet pro aplikaci i web.")
+                .font(AppFont.body(15, weight: .semibold))
+                .foregroundStyle(.black.opacity(0.62))
+                .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    // MARK: - Panel s formulářem
+
+    private var panel: some View {
+        VStack(alignment: .leading, spacing: 26) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Přihlášení")
+                    .font(AppFont.title(30, weight: .black))
+                Text("Vítej zpátky u terče.")
+                    .font(AppFont.body(15))
+                    .foregroundStyle(.white.opacity(0.5))
+            }
+            form
+            divider
+            socialButtons
+            footer
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 24)
+        .padding(.top, 30)
+        .padding(.bottom, 16)
+        .frame(maxWidth: 560)
+        .frame(maxWidth: .infinity)
+        .background(Color.black, in: UnevenRoundedRectangle(topLeadingRadius: 36, topTrailingRadius: 36, style: .continuous))
+        .environment(\.colorScheme, .dark)
     }
 
     private var form: some View {
-        VStack(spacing: 12) {
-            AuthField(icon: "person.fill", focused: focus == .identity) {
-                TextField("E-mail nebo uživatelské jméno", text: $identity)
+        VStack(alignment: .leading, spacing: 22) {
+            LineField(title: "E-mail nebo přezdívka", focused: focus == .identity, accent: poster) {
+                TextField("", text: $identity, prompt: Text("jmeno@email.cz").foregroundStyle(.white.opacity(0.25)))
                     .textContentType(.username)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -102,59 +164,104 @@ struct LoginView: View {
                     .submitLabel(.next)
                     .onSubmit { focus = .password }
             }
-            AuthField(icon: "lock.fill", focused: focus == .password) {
-                Group {
-                    if showPassword {
-                        TextField("Heslo", text: $password)
-                    } else {
-                        SecureField("Heslo", text: $password)
+            .onTapGesture { focus = .identity }
+
+            LineField(title: "Heslo", focused: focus == .password, accent: poster) {
+                HStack(spacing: 8) {
+                    Group {
+                        if showPassword {
+                            TextField("", text: $password, prompt: Text("••••••••").foregroundStyle(.white.opacity(0.25)))
+                        } else {
+                            SecureField("", text: $password, prompt: Text("••••••••").foregroundStyle(.white.opacity(0.25)))
+                        }
                     }
+                    .textContentType(.password)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .focused($focus, equals: .password)
+                    .submitLabel(.go)
+                    .onSubmit { if canLogin { Task { await login() } } }
+                    Button { showPassword.toggle() } label: {
+                        Text(showPassword ? "Skrýt" : "Ukázat")
+                            .font(AppFont.caption(13, weight: .bold))
+                            .foregroundStyle(.white.opacity(0.5))
+                            .frame(height: 32)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(showPassword ? "Skrýt heslo" : "Zobrazit heslo")
                 }
-                .textContentType(.password)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .focused($focus, equals: .password)
-                .submitLabel(.go)
-                .onSubmit { if canLogin { Task { await login() } } }
-                Button { showPassword.toggle() } label: {
-                    Image(systemName: showPassword ? "eye.slash" : "eye")
-                        .foregroundStyle(.white.opacity(0.5))
-                }
-                .accessibilityLabel(showPassword ? "Skrýt heslo" : "Zobrazit heslo")
             }
+            .onTapGesture { focus = .password }
+
             if let error {
-                Label(error, systemImage: "exclamationmark.triangle.fill")
-                    .font(.footnote)
-                    .foregroundStyle(Color(red: 1, green: 0.45, blue: 0.45))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .transition(.opacity)
-            }
-            Button {
-                focus = nil
-                Task { await login() }
-            } label: {
-                HStack(spacing: 10) {
-                    if busy { ProgressView().tint(.black) }
-                    Text(busy ? "Přihlašuji…" : "Přihlásit se")
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "exclamationmark.circle.fill")
+                    Text(error)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
                 }
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(Color(red: 1, green: 0.5, blue: 0.47))
+                .padding(14)
+                .background(Color(red: 1, green: 0.3, blue: 0.25).opacity(0.13), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
-            .buttonStyle(PrimaryButton())
-            .disabled(!canLogin)
-            .opacity(canLogin || busy ? 1 : 0.5)
-            .shadow(color: Theme.brand.opacity(canLogin ? 0.3 : 0), radius: 18, y: 6)
+
+            loginButton
+                .padding(.top, 4)
         }
         .animation(.snappy, value: error)
     }
 
-    private var socialButtons: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 12) {
-                Rectangle().fill(.white.opacity(0.15)).frame(height: 1)
-                Text("nebo")
-                    .font(.footnote)
-                    .foregroundStyle(.white.opacity(0.5))
-                Rectangle().fill(.white.opacity(0.15)).frame(height: 1)
+    private var loginButton: some View {
+        Button {
+            focus = nil
+            Task { await login() }
+        } label: {
+            HStack {
+                Text(busy ? "Přihlašuji…" : "Přihlásit se")
+                    .font(AppFont.body(18, weight: .bold))
+                Spacer()
+                ZStack {
+                    Circle().fill(.black)
+                    if busy {
+                        ProgressView().tint(poster)
+                    } else {
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 17, weight: .black))
+                            .foregroundStyle(poster)
+                    }
+                }
+                .frame(width: 44, height: 44)
             }
+            .foregroundStyle(.black)
+            .padding(.leading, 24)
+            .padding(.trailing, 6)
+            .frame(height: 56)
+            .background(poster, in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(PressScale())
+        .disabled(!canLogin)
+        .opacity(canLogin || busy ? 1 : 0.4)
+        .animation(.snappy, value: canLogin)
+    }
+
+    private var divider: some View {
+        HStack(spacing: 14) {
+            Rectangle().fill(.white.opacity(0.14)).frame(height: 1)
+            Text("NEBO")
+                .font(AppFont.caption(11, weight: .bold))
+                .tracking(2)
+                .foregroundStyle(.white.opacity(0.4))
+                .fixedSize()
+            Rectangle().fill(.white.opacity(0.14)).frame(height: 1)
+        }
+    }
+
+    private var socialButtons: some View {
+        VStack(spacing: 10) {
             SignInWithAppleButton(.continue) { request in
                 request.requestedScopes = [.fullName, .email]
             } onCompletion: { result in
@@ -162,8 +269,9 @@ struct LoginView: View {
             }
             .signInWithAppleButtonStyle(.white)
             .frame(height: 52)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .clipShape(Capsule())
             .disabled(busy)
+
             Button {
                 error = "Přihlášení přes Google připravujeme. Zatím použij e-mail a heslo."
             } label: {
@@ -172,57 +280,33 @@ struct LoginView: View {
                     Text("Pokračovat přes Google")
                         .font(.system(size: 19, weight: .medium))
                 }
-                .foregroundStyle(.black)
+                .foregroundStyle(.white)
                 .frame(maxWidth: .infinity)
                 .frame(height: 52)
-                .background(.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(Capsule().stroke(.white.opacity(0.22), lineWidth: 1))
+                .contentShape(Capsule())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PressScale())
             .disabled(busy)
         }
     }
 
+    @ViewBuilder
     private var footer: some View {
-        VStack(spacing: 14) {
-            if let register = URL(string: account.serverURL + "/register") {
-                Link(destination: register) {
-                    (Text("Nemáš účet? ").foregroundStyle(.white.opacity(0.55)) + Text("Zaregistruj se na webu").foregroundStyle(Theme.brand).bold())
-                        .font(.footnote)
+        if let register = URL(string: account.serverURL + "/register") {
+            Link(destination: register) {
+                HStack(spacing: 4) {
+                    Text("Nemáš účet?").foregroundStyle(.white.opacity(0.5))
+                    Text("Zaregistruj se").foregroundStyle(poster).bold()
+                    Image(systemName: "arrow.up.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(poster)
                 }
-            }
-            VStack(alignment: .leading, spacing: 10) {
-                Button {
-                    withAnimation(.snappy) { showServer.toggle() }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "server.rack")
-                        Text(server.isEmpty ? account.serverURL : server)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Image(systemName: "chevron.down")
-                            .rotationEffect(.degrees(showServer ? 180 : 0))
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.white.opacity(0.4))
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Adresa serveru")
-                if showServer {
-                    AuthField(icon: "server.rack", focused: focus == .server) {
-                        TextField("Adresa serveru", text: $server)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .keyboardType(.URL)
-                            .focused($focus, equals: .server)
-                    }
-                    Text("Simulátor: http://localhost/dartiqo. iPhone ve stejné Wi-Fi jako Mac s XAMPPem: IP adresa Macu, třeba http://192.168.1.20/dartiqo.")
-                        .font(.caption)
-                        .foregroundStyle(.white.opacity(0.5))
-                }
+                .font(.subheadline)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
             }
         }
-        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Akce
@@ -264,28 +348,89 @@ struct LoginView: View {
     }
 }
 
-/// Pole na tmavém skle s ikonou. Zvýrazní se, když je aktivní.
-private struct AuthField<Content: View>: View {
-    var icon: String
+/// Pole bez rámečku: popisek, hodnota a čára, která se při psaní vyplní akcentem.
+private struct LineField<Content: View>: View {
+    var title: String
     var focused: Bool
+    var accent: Color
     @ViewBuilder var content: Content
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: icon)
-                .font(.subheadline)
-                .foregroundStyle(focused ? Theme.brand : .white.opacity(0.45))
-                .frame(width: 20)
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title.uppercased())
+                .font(AppFont.caption(11, weight: .bold))
+                .tracking(1.5)
+                .foregroundStyle(focused ? accent : .white.opacity(0.45))
             content
+                .font(AppFont.body(19, weight: .medium))
+                .foregroundStyle(.white)
+                .tint(accent)
+            ZStack(alignment: .leading) {
+                Rectangle().fill(.white.opacity(0.18)).frame(height: 1)
+                Rectangle().fill(accent).frame(height: 2)
+                    .scaleEffect(x: focused ? 1 : 0, anchor: .leading)
+            }
         }
-        .padding(.horizontal, 16)
-        .frame(height: 54)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(focused ? Theme.brand.opacity(0.8) : .white.opacity(0.12), lineWidth: 1)
-        )
-        .animation(.snappy, value: focused)
+        .contentShape(Rectangle())
+        .animation(.snappy(duration: 0.3), value: focused)
+    }
+}
+
+private struct PressScale: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.snappy(duration: 0.15), value: configuration.isPressed)
+    }
+}
+
+/// Adresa serveru. Výchozí hodnotu bere z účtu, upravená platí pro další přihlášení.
+private struct ServerSheet: View {
+    @Binding var server: String
+    var defaultServer: String
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 18) {
+                LineField(title: "Adresa serveru", focused: focused, accent: Theme.brand) {
+                    TextField("", text: $server, prompt: Text(defaultServer).foregroundStyle(.white.opacity(0.25)))
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                        .focused($focused)
+                        .submitLabel(.done)
+                        .onSubmit { dismiss() }
+                }
+                .onTapGesture { focused = true }
+                Label {
+                    Text("Simulátor: http://localhost/dartiqo. iPhone ve stejné Wi-Fi jako Mac s XAMPPem: IP adresa Macu, třeba http://192.168.1.20/dartiqo.")
+                } icon: {
+                    Image(systemName: "info.circle")
+                }
+                .font(.footnote)
+                .foregroundStyle(.white.opacity(0.55))
+                if server != defaultServer {
+                    Button("Obnovit výchozí") { server = defaultServer }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Theme.brand)
+                }
+                Spacer()
+            }
+            .padding(24)
+            .navigationTitle("Server")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Hotovo") { dismiss() }
+                        .tint(Theme.brand)
+                }
+            }
+        }
+        .presentationDetents([.medium])
+        .presentationBackground(Color(white: 0.06))
+        .environment(\.colorScheme, .dark)
     }
 }
 
