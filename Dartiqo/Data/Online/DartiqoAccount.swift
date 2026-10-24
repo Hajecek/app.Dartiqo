@@ -222,8 +222,19 @@ import Combine
         await matches.run(store)
     }
 
-    func syncLive(_ match: Match?) {
-        live.update(match)
+    func syncLive(_ match: Match?, store: AppStore) {
+        let photos = match.map { livePhotos($0, store: store) } ?? []
+        live.update(match, photos: photos, ownerID: store.profile?.id)
+    }
+
+    /// Stejné portréty jako na hřišti. Bot zůstane bez fotky, ghost bere portrét profilu.
+    private func livePhotos(_ match: Match, store: AppStore) -> [Data?] {
+        match.players.indices.map { index in
+            let player = match.players[index]
+            if player.botLevel != nil { return nil }
+            if match.isGhost(index) { return store.profile?.photoJPEG }
+            return store.photo(for: player.id)
+        }
     }
 
     func handleUnauthorized() {

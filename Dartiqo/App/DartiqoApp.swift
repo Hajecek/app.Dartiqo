@@ -45,20 +45,20 @@ import SwiftUI
                 }
                 // $data hlásí novou hodnotu ještě před zápisem, proto se zápas čte z ní, ne ze store
                 .onReceive(store.$data) { data in
-                    account.syncLive(data.selectedProfile.flatMap { data.activeMatches[$0.uuidString] })
+                    account.syncLive(data.selectedProfile.flatMap { data.activeMatches[$0.uuidString] }, store: store)
                 }
-                .onChange(of: account.user) { _, _ in account.syncLive(store.activeMatch) }
+                .onChange(of: account.user) { _, _ in account.syncLive(store.activeMatch, store: store) }
                 // Ne .task(id:): zrušení by přerušilo rozběhnuté odesílání
                 .onChange(of: "\(account.user?.id ?? 0)|\(store.matchSyncKey)", initial: true) { _, _ in
                     Task { await account.syncMatches(store) }
                 }
-                .onChange(of: account.liveSharing) { _, _ in account.syncLive(store.activeMatch) }
+                .onChange(of: account.liveSharing) { _, _ in account.syncLive(store.activeMatch, store: store) }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active {
                         if let type = PushRegistrar.pendingRoute {
                             handlePush(type, open: true)
                         }
-                        account.syncLive(store.activeMatch)
+                        account.syncLive(store.activeMatch, store: store)
                         account.startWatching(store: store)
                         store.noteReturned()
                         Task {

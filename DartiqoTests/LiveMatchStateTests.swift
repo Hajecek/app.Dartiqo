@@ -42,5 +42,22 @@ final class LiveMatchStateTests: XCTestCase {
         XCTAssertEqual(players.first?["score"] as? String, "426")
         let visits = try XCTUnwrap(json["visits"] as? [[String: Any]])
         XCTAssertEqual(visits.first?["darts"] as? [String], ["BULL", "25", "MISS"])
+        XCTAssertNil(json["legWinner"])
+        XCTAssertEqual(json["bullOff"] as? Bool, false)
+    }
+
+    @MainActor
+    func testClosedLegCarriesWinnerForTheWebCeremony() throws {
+        var match = Match(config: GameConfig(startingScore: 2, legsToWin: 2), players: [Player(name: "Já"), Player(name: "Ty")])
+        try match.submit([Dart(1, 2)])
+
+        let state = LiveMatchState(match: match)
+        XCTAssertEqual(state.status, "live")
+        XCTAssertEqual(state.legWinner, 0)
+        XCTAssertEqual(state.players[0].legs, 1)
+        XCTAssertEqual(state.players[0].score, "0")
+        XCTAssertEqual(state.legSlots, 2)
+        XCTAssertFalse(state.bullOff)
+        XCTAssertEqual(state.visits.last?.checkout, true)
     }
 }

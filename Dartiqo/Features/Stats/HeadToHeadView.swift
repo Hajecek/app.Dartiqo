@@ -228,11 +228,11 @@ struct HeadToHeadPregameView: View {
             .scaleEffect(appeared || reduceMotion ? 1 : 0.94)
             .opacity(appeared || reduceMotion ? 1 : 0)
         }
-        .foregroundStyle(.white)
+        .foregroundStyle(isDebut ? .black : .white)
         .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(isDebut ? .light : .dark)
         .onAppear(perform: startAutoContinue)
         .onDisappear { autoToken = UUID() }
         .accessibilityElement(children: .combine)
@@ -247,80 +247,58 @@ struct HeadToHeadPregameView: View {
         return "Head-to-Head proti \(series.opponentName). \(series.standingTitle) \(series.recordLine)."
     }
 
-    /// Prázdný terč: mezi hráči ještě nepadla žádná šipka. Žádné skóre ani historie.
+    private let debutPaper = Color(red: 0.97, green: 0.96, blue: 0.94)
+
+    /// Čistě typografický list: jména pod sebou a „Poprvé.“ Žádné karty, skóre ani historie.
     private var debutLayout: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 16)
-            VStack(spacing: 8) {
-                Text("PRVNÍ VZÁJEMNÝ ZÁPAS")
-                    .font(.caption.weight(.heavy))
-                    .tracking(1.8)
-                    .foregroundStyle(Theme.brand)
-                Text("Poprvé proti sobě")
-                    .font(.system(size: 36, weight: .heavy, design: .rounded))
-                    .multilineTextAlignment(.center)
-                    .minimumScaleFactor(0.6)
-                    .lineLimit(2)
-            }
-            .padding(.horizontal, 24)
-            .offset(y: appeared || reduceMotion ? 0 : -16)
-            Spacer(minLength: 20)
-            debutBoard
-            Spacer(minLength: 20)
-            debutPlayers
-                .padding(.horizontal, 20)
-                .offset(y: appeared || reduceMotion ? 0 : 24)
-            Text("Zatím mezi vámi nepadla ani jedna šipka.\nTenhle zápas založí vaši bilanci.")
-                .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.6))
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 32)
-                .padding(.top, 16)
-            Spacer(minLength: 16)
-        }
-    }
-
-    private var debutBoard: some View {
-        TouchDartboard(marks: [], interactive: false, showMarkNumbers: false) { _ in }
-            .allowsHitTesting(false)
-            .aspectRatio(1, contentMode: .fit)
-            .padding(10)
-            .background(BoardFace.plate, in: Circle())
-            .overlay(Circle().strokeBorder(Theme.brand.opacity(0.6), lineWidth: 2))
-            .shadow(color: Theme.brand.opacity(0.28), radius: 40)
-            .environment(\.colorScheme, .dark)
-            .frame(maxWidth: 290, maxHeight: 290)
-            .padding(.horizontal, 44)
-            .rotationEffect(.degrees(appeared || reduceMotion ? 0 : -110))
-            .scaleEffect(appeared || reduceMotion ? 1 : 0.7)
-            .accessibilityHidden(true)
-    }
-
-    private var debutPlayers: some View {
-        HStack(spacing: 10) {
-            debutPlayer(kicker: "Ty", name: myName, photo: myPhoto, bot: false, asset: nil, badge: nil, leading: true)
-            Text("VS")
-                .font(.system(size: 14, weight: .heavy, design: .rounded))
-                .foregroundStyle(.black)
-                .frame(width: 40, height: 40)
-                .background(Theme.brand, in: Circle())
-            debutPlayer(
+        VStack(alignment: .leading, spacing: 0) {
+            Text("HEAD-TO-HEAD · ZÁPAS Č. 1")
+                .font(.caption.weight(.heavy))
+                .tracking(1.6)
+                .foregroundStyle(.black.opacity(0.45))
+                .debutReveal(appeared || reduceMotion, step: 0)
+            Spacer(minLength: 24)
+            debutName(myName, kicker: "Ty", photo: myPhoto, bot: false, asset: nil, badge: nil)
+                .debutReveal(appeared || reduceMotion, step: 1)
+            Text("proti")
+                .font(.system(size: 30, weight: .regular, design: .serif))
+                .italic()
+                .foregroundStyle(.black.opacity(0.45))
+                .padding(.leading, 58)
+                .padding(.vertical, 6)
+                .debutReveal(appeared || reduceMotion, step: 2)
+            debutName(
+                series.opponentName,
                 kicker: opponentKicker,
-                name: series.opponentName,
                 photo: theirPhoto,
                 bot: opponentIsBot,
                 asset: opponentAsset,
-                badge: opponentBadge,
-                leading: false
+                badge: opponentBadge
             )
+            .debutReveal(appeared || reduceMotion, step: 3)
+            Spacer(minLength: 32)
+            Text("POPRVÉ.")
+                .font(.system(size: 76, weight: .black, design: .rounded))
+                .minimumScaleFactor(0.5)
+                .lineLimit(1)
+                .background(alignment: .bottom) {
+                    Theme.brand
+                        .frame(height: 30)
+                        .padding(.horizontal, -6)
+                        .offset(y: -8)
+                }
+                .debutReveal(appeared || reduceMotion, step: 4)
+            Text("Žádná historie, žádná bilance. Kdo vyhraje, napíše první řádek.")
+                .font(.body.weight(.medium))
+                .foregroundStyle(.black.opacity(0.6))
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 10)
+                .debutReveal(appeared || reduceMotion, step: 5)
+            Spacer(minLength: 16)
         }
-        .padding(14)
-        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .strokeBorder(.white.opacity(0.08), lineWidth: 1)
-        )
+        .padding(.horizontal, 28)
+        .padding(.top, 28)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var opponentKicker: String {
@@ -333,48 +311,43 @@ struct HeadToHeadPregameView: View {
         series.opponentBotLevel.map { "Lv. \($0)" }
     }
 
-    private func debutPlayer(kicker: String, name: String, photo: Data?, bot: Bool, asset: String?, badge: String?, leading: Bool) -> some View {
-        let avatar = Avatar(name: name, bot: bot, size: 46, photo: photo, asset: asset)
-            .overlay(Circle().strokeBorder(.white.opacity(0.85), lineWidth: 1.5))
-        let label = VStack(alignment: leading ? .leading : .trailing, spacing: 2) {
-            HStack(spacing: 5) {
-                Text(kicker.uppercased())
-                    .font(.caption2.weight(.heavy))
-                    .tracking(1.1)
-                    .foregroundStyle(.white.opacity(0.5))
-                if let badge {
-                    Text(badge)
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.black)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Theme.brand, in: Capsule())
+    private func debutName(_ name: String, kicker: String, photo: Data?, bot: Bool, asset: String?, badge: String?) -> some View {
+        HStack(alignment: .center, spacing: 14) {
+            Avatar(name: name, bot: bot, size: 44, photo: photo, asset: asset)
+                .overlay(Circle().strokeBorder(.black, lineWidth: 1.5))
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 6) {
+                    Text(kicker.uppercased())
+                        .font(.caption2.weight(.heavy))
+                        .tracking(1.2)
+                        .foregroundStyle(.black.opacity(0.45))
+                    if let badge {
+                        Text(badge)
+                            .font(.caption2.weight(.bold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Theme.brand, in: Capsule())
+                    }
                 }
-            }
-            Text(name)
-                .font(.headline)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-        }
-        return HStack(spacing: 10) {
-            if leading {
-                avatar
-                label
-            } else {
-                label
-                avatar
+                Text(name.uppercased())
+                    .font(.system(size: 46, weight: .heavy, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.4)
             }
         }
-        .frame(maxWidth: .infinity, alignment: leading ? .leading : .trailing)
     }
 
     private var debutBackground: some View {
-        ZStack {
-            Color.black
-            RadialGradient(colors: [Theme.brand.opacity(0.22), .clear], center: .center, startRadius: 0, endRadius: 380)
-        }
-        .ignoresSafeArea()
-        .accessibilityHidden(true)
+        debutPaper
+            .overlay(alignment: .bottomTrailing) {
+                Text("1")
+                    .font(.system(size: 460, weight: .black, design: .rounded))
+                    .foregroundStyle(.black.opacity(0.035))
+                    .offset(x: 70, y: 90)
+            }
+            .clipped()
+            .ignoresSafeArea()
+            .accessibilityHidden(true)
     }
 
     private var rivalryLayout: some View {
@@ -501,6 +474,15 @@ struct HeadToHeadPregameView: View {
         autoToken = UUID()
         didContinue = true
         onCancel?()
+    }
+}
+
+private extension View {
+    /// Postupné naskakování řádků debut obrazovky.
+    func debutReveal(_ visible: Bool, step: Int) -> some View {
+        opacity(visible ? 1 : 0)
+            .offset(x: visible ? 0 : -28)
+            .animation(.spring(response: 0.5, dampingFraction: 0.85).delay(Double(step) * 0.12), value: visible)
     }
 }
 

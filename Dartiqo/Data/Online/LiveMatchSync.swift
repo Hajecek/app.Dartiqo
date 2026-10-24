@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 /// Co web potřebuje k živému zobrazení. Skóre počítá telefon, web ho jen kreslí.
 struct LiveMatchState: Encodable, Equatable {
@@ -16,6 +17,8 @@ struct LiveMatchState: Encodable, Equatable {
         var setupLeave: String
         var out: String
         var marks: [String: Int]
+        /// Malý JPEG jako data URL. Bot ho nemá.
+        var photo: String?
     }
 
     struct VisitLine: Encodable, Equatable {
@@ -39,12 +42,20 @@ struct LiveMatchState: Encodable, Equatable {
     var setsToWin: Int
     var active: Int
     var winner: Int?
+    /// Kdo bere právě dohraný leg. Než začne další, web podle toho ukáže ceremonii.
+    var legWinner: Int?
+    var bullOff: Bool
+    /// Kolik teček má ceremonie nakreslit. Best of je celé pole, ne jen počet k výhře.
+    var legSlots: Int
+    var setSlots: Int
+    /// Tříšipkový průměr majitele telefonu v právě dohraném legu.
+    var legAverage: Double?
     var numbers: [Int]
     var players: [PlayerLine]
     var currentDarts: [String]
     var visits: [VisitLine]
 
-    init(match: Match) {
+    init(match: Match, photos: [String?] = [], ownerID: UUID? = nil) {
         let live = match.liveProjection
         let config = match.config
         let pending = match.currentDarts.count
@@ -58,6 +69,16 @@ struct LiveMatchState: Encodable, Equatable {
         setsToWin = config.setsToWin
         active = live.active
         winner = match.winner
+        legWinner = match.legWinner
+        bullOff = match.legWinner != nil && match.bullOffLegs?[match.leg] == match.legWinner
+        legSlots = config.shownLegs
+        setSlots = config.playsSets ? config.shownSets : 0
+        legAverage = nil
+        if let ownerID, match.legWinner != nil, config.mode == .x01,
+           let index = match.players.firstIndex(where: { $0.id == ownerID }),
+           match.thrownDarts(for: index, leg: match.leg) > 0 {
+            legAverage = (match.average(for: index, leg: match.leg) * 10).rounded() / 10
+        }
         numbers = config.mode == .cricket ? config.settings.activeCricketNumbers : []
         players = match.players.indices.map { index in
             let state = live.states[index]
@@ -74,6 +95,7 @@ struct LiveMatchState: Encodable, Equatable {
                     setupLeave = hint.leaveLabel
                 }
             }
+            let photo = photos.indices.contains(index) ? photos[index] : nil
             return PlayerLine(
                 name: match.players[index].name,
                 bot: match.players[index].botLevel != nil || match.isGhost(index),
@@ -87,7 +109,8 @@ struct LiveMatchState: Encodable, Equatable {
                 setup: setup,
                 setupLeave: setupLeave,
                 out: config.mode == .x01 ? config.outRule(for: index).rawValue : "",
-                marks: config.mode == .cricket ? Dictionary(uniqueKeysWithValues: state.marks.map { (String($0.key), $0.value) }) : [:]
+                marks: config.mode == .cricket ? Dictionary(uniqueKeysWithValues: state.marks.map { (String($0.key), $0.value) }) : [:],
+                photo: photo?.isEmpty == false ? photo : nil
             )
         }
         currentDarts = match.currentDarts.map(\.label)
@@ -156,6 +179,7 @@ struct LiveMatchState: Encodable, Equatable {
     private var lastSeq: [UUID: Int] = [:]
     private var queue: [Job] = []
     private var sending = false
+    private var thumbs: [String: String] = [:]
     private let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -166,7 +190,7 @@ struct LiveMatchState: Encodable, Equatable {
         self.account = account
     }
 
-    func update(_ match: Match?) {
+    func update(_ match: Match?, photos: [Data?] = [], ownerID: UUID? = nil) {
         guard account.isSignedIn else {
             sentID = nil
             sentState = nil
@@ -186,7 +210,11 @@ struct LiveMatchState: Encodable, Equatable {
             sentState = nil
             return
         }
-        let state = LiveMatchState(match: match)
+        let urls = match.players.indices.map { index -> String? in
+            let data = photos.indices.contains(index) ? photos[index] : nil
+            return thumb(match.players[index].id, data)
+        }
+        let state = LiveMatchState(match: match, photos: urls, ownerID: ownerID)
         guard match.id != sentID || state != sentState else { return }
         sentID = match.id
         sentState = state
@@ -227,5 +255,19 @@ struct LiveMatchState: Encodable, Equatable {
                 }
             }
         }
+    }
+
+    /// Portrét pro web. Malý JPEG, ať se stav vejde i s historií hodů.
+    private func thumb(_ id: UUID, _ data: Data?) -> String? {
+        guard let data, !data.isEmpty else { return nil }
+        let stamp = "\(id.uuidString)|\(data.count)|\(data.prefix(24).hashValue)"
+        if let hit = thumbs[stamp] { return hit }
+        guard let image = UIImage(data: data) else { return nil }
+        let small = image.preparingThumbnail(of: CGSize(width: 96, height: 96)) ?? image
+        guard let jpeg = small.jpegData(compressionQuality: 0.72), jpeg.count <= 14_000 else { return nil }
+        let url = "data:image/jpeg;base64,\(jpeg.base64EncodedString())"
+        if thumbs.count > 24 { thumbs.removeAll() }
+        thumbs[stamp] = url
+        return url
     }
 }
