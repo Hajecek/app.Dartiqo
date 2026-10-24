@@ -12,16 +12,31 @@ import SwiftUI
                 .scrollIndicators(.hidden)
                 .tint(Theme.action)
                 .preferredColorScheme(store.data.appearance == "system" ? nil : store.data.appearance == "dark" ? .dark : .light)
-                .task { await account.refresh() }
+                .task {
+                    await account.refresh(into: store)
+                    account.startWatching(store: store)
+                }
                 // $data hlásí novou hodnotu ještě před zápisem, proto se zápas čte z ní, ne ze store
                 .onReceive(store.$data) { data in
                     account.syncLive(data.selectedProfile.flatMap { data.activeMatches[$0.uuidString] })
                 }
                 .onChange(of: account.user) { _, _ in account.syncLive(store.activeMatch) }
+                // Ne .task(id:): zrušení by přerušilo rozběhnuté odesílání
+                .onChange(of: "\(account.user?.id ?? 0)|\(store.matchSyncKey)", initial: true) { _, _ in
+                    Task { await account.syncMatches(store) }
+                }
                 .onChange(of: account.liveSharing) { _, _ in account.syncLive(store.activeMatch) }
                 .onChange(of: scenePhase) { _, phase in
-                    if phase == .active { account.syncLive(store.activeMatch) }
+                    if phase == .active {
+                        account.syncLive(store.activeMatch)
+                        account.startWatching(store: store)
+                        Task {
+                            await account.refresh(into: store)
+                            await account.syncMatches(store)
+                        }
+                    }
                     if phase == .background {
+                        account.stopWatching()
                         store.flushSave()
                         if store.data.biometricLock && store.profile != nil { store.locked = true }
                     }

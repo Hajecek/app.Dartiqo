@@ -21,6 +21,8 @@ final class LiveMatchStateTests: XCTestCase {
         XCTAssertEqual(state.players[1].checkout, "")
         XCTAssertEqual(state.visits.map(\.score), [180, 26])
         XCTAssertEqual(state.visits[0].darts, ["T20", "T20", "T20"])
+        XCTAssertEqual(state.visits.map(\.leg), [1, 1])
+        XCTAssertEqual(state.visits.map(\.set), [1, 1])
     }
 
     @MainActor

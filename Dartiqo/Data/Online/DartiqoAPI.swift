@@ -26,8 +26,36 @@ struct AccountUser: Codable, Equatable {
     var email: String
     var first: String
     var last: String
+    /// Relativní cesta na serveru, např. /uploads/avatars/….jpg?v=3
+    var photo: String?
+    var profileRevision: Int
 
     var fullName: String { "\(first) \(last)".trimmingCharacters(in: .whitespaces) }
+
+    enum CodingKeys: String, CodingKey {
+        case id, username, email, first, last, photo, profileRevision
+    }
+
+    init(id: Int, username: String, email: String, first: String, last: String, photo: String? = nil, profileRevision: Int = 1) {
+        self.id = id
+        self.username = username
+        self.email = email
+        self.first = first
+        self.last = last
+        self.photo = photo
+        self.profileRevision = profileRevision
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        username = try c.decode(String.self, forKey: .username)
+        email = try c.decode(String.self, forKey: .email)
+        first = try c.decode(String.self, forKey: .first)
+        last = try c.decode(String.self, forKey: .last)
+        photo = try c.decodeIfPresent(String.self, forKey: .photo)
+        profileRevision = try c.decodeIfPresent(Int.self, forKey: .profileRevision) ?? 1
+    }
 }
 
 enum APIError: LocalizedError {
@@ -59,6 +87,7 @@ struct DartiqoAPI {
         var token: String?
         var user: AccountUser?
         var message: String?
+        var ids: [String]?
     }
 
     func login(identity: String, password: String, device: String) async throws -> (token: String, user: AccountUser) {
@@ -80,8 +109,49 @@ struct DartiqoAPI {
         return user
     }
 
+    enum ProfilePhotoUpdate {
+        case unchanged
+        case clear
+        case dataURL(String)
+    }
+
+    /// Uloží profil na web. Fotku posílej jen když se opravdu mění.
+    func updateProfile(
+        first: String? = nil,
+        last: String? = nil,
+        username: String? = nil,
+        email: String? = nil,
+        photo: ProfilePhotoUpdate = .unchanged
+    ) async throws -> AccountUser {
+        var body: [String: Any] = [:]
+        if let first { body["first"] = first }
+        if let last { body["last"] = last }
+        if let username { body["username"] = username }
+        if let email { body["email"] = email }
+        switch photo {
+        case .unchanged: break
+        case .clear: body["photo"] = NSNull()
+        case .dataURL(let value): body["photo"] = value
+        }
+        let data = try JSONSerialization.data(withJSONObject: body)
+        guard let user = try await send("api/v1/me", body: data).user else { throw APIError.server("Server vrátil neúplnou odpověď.") }
+        return user
+    }
+
     func logout() async {
         _ = try? await send("api/v1/auth/logout", body: Data("{}".utf8))
+    }
+
+    func matchIDs() async throws -> [String] {
+        try await send("api/v1/matches", method: "GET").ids ?? []
+    }
+
+    func uploadMatch(id: UUID, body: Data) async throws {
+        _ = try await send("api/v1/matches/\(id.uuidString.lowercased())", body: body)
+    }
+
+    func deleteMatch(id: UUID) async throws {
+        _ = try await send("api/v1/matches/\(id.uuidString.lowercased())/delete", body: Data("{}".utf8))
     }
 
     func pushLiveMatch(id: UUID, body: Data) async throws {

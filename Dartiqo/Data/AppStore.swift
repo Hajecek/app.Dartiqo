@@ -70,6 +70,12 @@ struct StoredData: Codable {
     var matchDisplay: MatchDisplay?
     /// Komentátor podle profilu. `nil` a `system` = výchozí hlas, `custom` = namluvené hlášky.
     var commentators: [String: String]?
+    /// Zrušené zápasy, které ještě čekají na odeslání na web. V historii nejsou.
+    var pendingAbandoned: [Match]?
+    /// Zápasy smazané z historie, které se ještě musí smazat i na webu.
+    var pendingMatchDeletes: [UUID]?
+    /// Dohrané zápasy, které už jsou na webu. Když pak na webu chybí, hráč je tam smazal.
+    var uploadedMatches: [UUID]?
 }
 struct JSONDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
@@ -616,11 +622,18 @@ enum AppSection: Hashable {
         let clean = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24))
         guard !clean.isEmpty, let index = data.profiles.firstIndex(where: { $0.id == data.selectedProfile }) else { return }
         data.profiles[index].name = clean; save()
+        if data.profiles[index].accountID != nil {
+            DartiqoAccount.shared.pushLocalProfile(name: clean, photoJPEG: nil, clearPhoto: false, store: self)
+        }
     }
     func setPhoto(_ image: UIImage?) {
         guard let index = data.profiles.firstIndex(where: { $0.id == data.selectedProfile }) else { return }
-        data.profiles[index].photoJPEG = image.flatMap(Self.jpegThumb)
+        let jpeg = image.flatMap(Self.jpegThumb)
+        data.profiles[index].photoJPEG = jpeg
         save()
+        if data.profiles[index].accountID != nil {
+            DartiqoAccount.shared.pushLocalProfile(name: nil, photoJPEG: jpeg, clearPhoto: image == nil, store: self)
+        }
     }
     func signOut() { data.selectedProfile = nil; save() }
 
@@ -628,6 +641,7 @@ enum AppSection: Hashable {
     func bindAccount(_ user: AccountUser) {
         if let existing = data.profiles.first(where: { $0.accountID == user.id }) {
             data.selectedProfile = existing.id
+            applyAccount(user, photoJPEG: nil, replacePhoto: false)
         } else {
             let name = String((user.first.isEmpty ? user.username : user.first).prefix(24))
             var profile = Profile(name: name)
@@ -636,8 +650,27 @@ enum AppSection: Hashable {
             profile.accountID = user.id
             data.profiles.append(profile)
             data.selectedProfile = profile.id
+            flushSave()
         }
         locked = false
+        Task { await DartiqoAccount.shared.refresh(into: self) }
+    }
+
+    /// Propsání údajů z webu (jméno, username, e-mail, případně fotka).
+    func applyAccount(_ user: AccountUser, photoJPEG: Data?, replacePhoto: Bool) {
+        guard let index = data.profiles.firstIndex(where: { $0.accountID == user.id }) else { return }
+        let display = String((user.first.isEmpty ? user.username : user.first).prefix(24))
+        if !display.isEmpty { data.profiles[index].name = display }
+        data.profiles[index].username = user.username
+        data.profiles[index].email = user.email
+        if replacePhoto {
+            data.profiles[index].photoJPEG = photoJPEG
+        } else if data.profiles[index].photoJPEG == nil, let photoJPEG {
+            data.profiles[index].photoJPEG = photoJPEG
+        }
+        if data.selectedProfile != data.profiles[index].id {
+            data.selectedProfile = data.profiles[index].id
+        }
         flushSave()
     }
 
@@ -673,6 +706,9 @@ enum AppSection: Hashable {
         guard data.matches.contains(where: { $0.id == id }) else { return }
         data.matches.removeAll { $0.id == id }
         data.matchXPAwards?.removeAll { $0.matchID == id }
+        if profile?.accountID != nil {
+            data.pendingMatchDeletes = (data.pendingMatchDeletes ?? []) + [id]
+        }
         // Bilance dokončení zůstává. Smazání z historie ji nesmí vylepšit.
         flushSave()
     }
@@ -698,7 +734,52 @@ enum AppSection: Hashable {
             }
         } else if let owner = profile?.id, match.players.contains(where: { $0.id == owner && $0.botLevel == nil }) {
             noteMatchCompletion(owner, match: match.id, outcome: .abandoned)
+            if profile?.accountID != nil, !match.visits.isEmpty {
+                var abandoned = match
+                abandoned.undoStack = []
+                data.pendingAbandoned = (data.pendingAbandoned ?? []) + [abandoned]
+            }
         }
+    }
+
+    func abandonedMatchSynced(_ id: UUID) {
+        data.pendingAbandoned?.removeAll { $0.id == id }
+        save()
+    }
+
+    func matchDeleteSynced(_ id: UUID) {
+        data.pendingMatchDeletes?.removeAll { $0 == id }
+        data.uploadedMatches?.removeAll { $0 == id }
+        save()
+    }
+
+    /// Verze před sledováním nahraných zápasů posílala dohrané zápasy hned po hře,
+    /// takže všechny dosavadní dohrané zápasy už na webu byly.
+    func trackUploadsOnce() {
+        guard data.uploadedMatches == nil else { return }
+        data.uploadedMatches = matches.filter(\.finished).map(\.id)
+        save()
+    }
+
+    func matchesUploaded(_ ids: [UUID]) {
+        let fresh = ids.filter { !(data.uploadedMatches ?? []).contains($0) }
+        guard !fresh.isEmpty else { return }
+        data.uploadedMatches = (data.uploadedMatches ?? []) + fresh
+        save()
+    }
+
+    /// Zápasy smazané na webu zmizí i z telefonu. Na web se už nic neposílá.
+    func removeMatchesDeletedOnWeb(_ ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        data.matches.removeAll { ids.contains($0.id) }
+        data.matchXPAwards?.removeAll { ids.contains($0.matchID) }
+        data.uploadedMatches?.removeAll { ids.contains($0) }
+        flushSave()
+    }
+
+    /// Mění se, když je na web co poslat. Podle toho aplikace spouští synchronizaci zápasů.
+    var matchSyncKey: String {
+        "\(profile?.accountID ?? 0)|\(data.matches.count)|\(data.pendingAbandoned?.count ?? 0)|\(data.pendingMatchDeletes?.count ?? 0)"
     }
 
     private func humanProfiles(in match: Match, known: Set<UUID>) -> [UUID] {
@@ -867,6 +948,7 @@ enum AppSection: Hashable {
         let removedMatchIDs = Set(data.matches.filter { $0.players.contains { $0.id == id } }.map(\.id))
         data.matches.removeAll { removedMatchIDs.contains($0.id) }
         data.activeMatches[id.uuidString] = nil
+        data.pendingAbandoned?.removeAll { $0.players.contains { $0.id == id } }
         data.presets?.removeAll { $0.owner == id }; data.lastSetups?[id.uuidString] = nil
         data.profiles.removeAll { $0.id == id }; data.selectedProfile = nil
         data.trainingSessions?.removeAll { $0.owner == id }

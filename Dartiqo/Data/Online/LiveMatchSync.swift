@@ -17,6 +17,8 @@ struct LiveMatchState: Encodable, Equatable {
 
     struct VisitLine: Encodable, Equatable {
         var player: Int
+        var leg: Int
+        var set: Int
         var darts: [String]
         var score: Int
         var bust: Bool
@@ -75,9 +77,45 @@ struct LiveMatchState: Encodable, Equatable {
             )
         }
         currentDarts = match.currentDarts.map(\.label)
+        let setByLeg = Self.setByLeg(in: match)
         visits = match.visits.suffix(12).map {
-            VisitLine(player: $0.player, darts: $0.darts.map(\.label), score: $0.credited, bust: $0.bust, checkout: $0.checkout)
+            VisitLine(
+                player: $0.player,
+                leg: $0.leg,
+                set: setByLeg[$0.leg] ?? 1,
+                darts: $0.darts.map(\.label),
+                score: $0.credited,
+                bust: $0.bust,
+                checkout: $0.checkout
+            )
         }
+    }
+
+    /// Číslo setu u každého legu. Stejná logika jako historie hodů v aplikaci.
+    private static func setByLeg(in match: Match) -> [Int: Int] {
+        guard match.config.playsSets else {
+            return Dictionary(uniqueKeysWithValues: Set(match.visits.map(\.leg) + [match.leg]).map { ($0, 1) })
+        }
+        let target = match.config.legsToWin
+        var set = 1
+        var setLegs = Array(repeating: 0, count: match.players.count)
+        var map: [Int: Int] = [:]
+        var numbers = Set(match.visits.map(\.leg))
+        numbers.insert(match.leg)
+        numbers.formUnion(match.bullOffLegs?.keys.map { $0 } ?? [])
+        for leg in numbers.sorted() {
+            map[leg] = set
+            let winner = match.bullOffLegs?[leg]
+                ?? match.visits.last(where: { $0.leg == leg && $0.checkout })?.player
+                ?? (leg == match.leg && match.finished ? match.winner : nil)
+            guard let winner else { continue }
+            setLegs[winner] += 1
+            if setLegs[winner] >= target {
+                set += 1
+                setLegs = Array(repeating: 0, count: match.players.count)
+            }
+        }
+        return map
     }
 
     private static func figure(_ state: PlayerState, mode: GameMode) -> String {
