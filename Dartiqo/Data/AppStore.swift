@@ -52,6 +52,8 @@ struct StoredData: Codable {
     var voice = false
     var appearance = "dark"
     var biometricLock = false
+    /// Po kolika sekundách na pozadí se má aplikace zeptat na biometrii. `nil` znamená minutu, `0` hned.
+    var lockGraceSeconds: Int?
     var presets: [GamePreset]?
     var lastSetups: [String: SetupDraft]?
     /// Camera-to-board mapping for autoscore. Optional so older saves still decode.
@@ -92,9 +94,49 @@ enum AppSection: Hashable {
     case home, play, training, games, profile
 }
 
+/// Kdy se má po návratu z pozadí ukázat zámek s biometrií.
+enum InactivityLock {
+    static let defaultGrace: TimeInterval = 60
+
+    static func grace(seconds: Int?) -> TimeInterval {
+        TimeInterval(seconds ?? Int(defaultGrace))
+    }
+
+    /// Zámek po návratu na popředí. Už zamčená aplikace zůstane zamčená.
+    static func shouldPrompt(
+        enabled: Bool,
+        hasProfile: Bool,
+        locked: Bool,
+        inactiveAt: Date?,
+        now: Date,
+        sceneIsActive: Bool,
+        grace: TimeInterval
+    ) -> Bool {
+        if locked { return true }
+        guard enabled, hasProfile, sceneIsActive, let inactiveAt else { return false }
+        return now.timeIntervalSince(inactiveAt) >= grace
+    }
+
+    /// Studený start. Bez uloženého času nevíme, jak dlouho byla aplikace pryč, proto zamkneme.
+    /// Když čas máme a zvolená doba ještě neuběhla, hráč pokračuje rovnou.
+    static func shouldLockOnLaunch(
+        enabled: Bool,
+        hasProfile: Bool,
+        backgroundedAt: Date?,
+        now: Date,
+        grace: TimeInterval
+    ) -> Bool {
+        guard enabled, hasProfile else { return false }
+        guard let backgroundedAt else { return true }
+        return now.timeIntervalSince(backgroundedAt) >= grace
+    }
+}
+
 @MainActor final class AppStore: ObservableObject {
     @Published var data = StoredData()
     @Published var locked = false
+    /// Okamžik, kdy aplikace odešla na pozadí. Po návratu se podle něj rozhodne o zámku.
+    @Published private(set) var inactiveAt: Date?
     @Published var storageError: String?
     @Published var authError: String?
     @Published var section: AppSection = .home
@@ -139,7 +181,14 @@ enum AppSection: Hashable {
             backfillMatchXP()
             backfillMatchCompletion()
         }
-        locked = data.biometricLock && profile != nil
+        locked = InactivityLock.shouldLockOnLaunch(
+            enabled: data.biometricLock,
+            hasProfile: profile != nil,
+            backgroundedAt: storedBackgroundedAt(),
+            now: Date(),
+            grace: InactivityLock.grace(seconds: data.lockGraceSeconds)
+        )
+        forgetBackgrounded()
         prepareHaptics()
     }
 #if DEBUG
@@ -996,6 +1045,38 @@ enum AppSection: Hashable {
         }
     }
     private var authInFlight = false
+    private static let backgroundedAtKey = "dartiqo.backgroundedAt"
+
+    var lockGrace: TimeInterval { InactivityLock.grace(seconds: data.lockGraceSeconds) }
+
+    /// Aplikace odešla na pozadí. Krátký návrat ještě zámek nespustí.
+    func noteLeftForeground() {
+        guard data.biometricLock, profile != nil, !locked, inactiveAt == nil else { return }
+        rememberBackgrounded(Date())
+    }
+
+    /// Návrat na popředí. Zámek se ozve, až uběhne zvolená doba.
+    func noteReturned(now: Date = Date()) {
+        guard let awayStarted = inactiveAt else { return }
+        if data.biometricLock, profile != nil, !locked, now.timeIntervalSince(awayStarted) >= lockGrace {
+            locked = true
+        }
+        forgetBackgrounded()
+    }
+
+    func setLockGrace(_ seconds: Int) {
+        guard [0, 30, 60, 300].contains(seconds) else { return }
+        data.lockGraceSeconds = seconds
+        save()
+    }
+
+    func disableBiometricLock() {
+        data.biometricLock = false
+        locked = false
+        authError = nil
+        forgetBackgrounded()
+        save()
+    }
 
     func authenticate(enabling: Bool = false) async {
         guard enabling || locked else { return }
@@ -1008,12 +1089,33 @@ enum AppSection: Hashable {
             if success {
                 authError = nil
                 locked = false
-                if enabling { data.biometricLock = true; save() }
+                if enabling {
+                    data.biometricLock = true
+                    save()
+                    // Právě ověřený hráč. Další start v rámci doby na pozadí se neptá znovu.
+                    UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.backgroundedAtKey)
+                }
             }
         } catch let error as LAError where error.code == .userCancel || error.code == .appCancel || error.code == .systemCancel {
         } catch {
             authError = error.localizedDescription
         }
+    }
+
+    private func rememberBackgrounded(_ date: Date) {
+        inactiveAt = date
+        UserDefaults.standard.set(date.timeIntervalSince1970, forKey: Self.backgroundedAtKey)
+    }
+
+    private func forgetBackgrounded() {
+        if inactiveAt != nil { inactiveAt = nil }
+        UserDefaults.standard.removeObject(forKey: Self.backgroundedAtKey)
+    }
+
+    private func storedBackgroundedAt() -> Date? {
+        let stamp = UserDefaults.standard.double(forKey: Self.backgroundedAtKey)
+        guard stamp > 0 else { return nil }
+        return Date(timeIntervalSince1970: stamp)
     }
     func deleteProfile() {
         guard let id = profile?.id else { return }

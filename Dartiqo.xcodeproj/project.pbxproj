@@ -6,6 +6,10 @@
 	objectVersion = 110;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		07D28FE03075ACC10088185C /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = 07D28FE13075ACC10088185C /* FirebaseMessaging */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		07D28FBC3075ACC10088185B /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -51,6 +55,7 @@
 		07D28FAB3075ACC00088185B /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
+				07D28FE03075ACC10088185C /* FirebaseMessaging in Frameworks */,
 			);
 		};
 		07D28FB83075ACC10088185B /* Frameworks */ = {
@@ -103,6 +108,9 @@
 				07D28FB03075ACC00088185B /* Dartiqo */,
 			);
 			name = Dartiqo;
+			packageProductDependencies = (
+				07D28FE13075ACC10088185C /* FirebaseMessaging */,
+			);
 			productName = Dartiqo;
 			productReference = 07D28FAE3075ACC00088185B /* Dartiqo.app */;
 			productType = "com.apple.product-type.application";
@@ -182,6 +190,9 @@
 			);
 			mainGroup = 07D28FA53075ACC00088185B;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				07D28FE23075ACC10088185C /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 07D28FAF3075ACC00088185B /* Products */;
 			projectDirPath = "";
@@ -368,13 +379,16 @@
 		07D28FCE3075ACC10088185B /* Debug configuration for PBXNativeTarget "Dartiqo" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = development;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Dartiqo.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = W6R3HZD7R4;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Dartiqo-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Dartiqo;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.sports";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Dartiqo potřebuje kameru ke kalibraci terče a automatickému zápisu skóre.";
@@ -385,7 +399,6 @@
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Dartiqo převádí tvoji řeč na šipky nebo součet kola.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_FILE = "Dartiqo-Info.plist";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -408,13 +421,16 @@
 		07D28FCF3075ACC10088185B /* Release configuration for PBXNativeTarget "Dartiqo" */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				APS_ENVIRONMENT = production;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Dartiqo.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = W6R3HZD7R4;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Dartiqo-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = Dartiqo;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.sports";
 				INFOPLIST_KEY_NSCameraUsageDescription = "Dartiqo potřebuje kameru ke kalibraci terče a automatickému zápisu skóre.";
@@ -425,7 +441,6 @@
 				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Dartiqo převádí tvoji řeč na šipky nebo součet kola.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_FILE = "Dartiqo-Info.plist";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -565,6 +580,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		07D28FE23075ACC10088185C /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 12.10.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		07D28FE13075ACC10088185C /* FirebaseMessaging */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 07D28FE23075ACC10088185C /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseMessaging;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 07D28FA63075ACC00088185B /* Project object */;
 	validationLevel = 1;

@@ -14,6 +14,11 @@ struct SettingsView: View {
     @State private var exportError: String?
     @State private var photoItem: PhotosPickerItem?
 
+    private var lockGraceSelection: Int {
+        let value = store.data.lockGraceSeconds ?? Int(InactivityLock.defaultGrace)
+        return [0, 30, 60, 300].contains(value) ? value : Int(InactivityLock.defaultGrace)
+    }
+
     var body: some View {
         Form {
             Section {
@@ -123,9 +128,17 @@ struct SettingsView: View {
                 }
             } header: { Text("Autoscore") } footer: { Text("Kamera najde terč podle barev segmentů a uloží mapu. V zápase zvol zápis Kamera. Když hod opravíš klepnutím, mapa se z opravy doučí. Nová kalibrace začíná učení od nuly.") }
             Section {
-                Toggle("Chránit profil odemknutím zařízení", isOn: Binding(get: { store.data.biometricLock }, set: { value in if value { Task { await store.authenticate(enabling: true) } } else { store.data.biometricLock = false; store.save() } })).tint(Theme.mint)
+                Toggle("Ověřit mě při návratu do aplikace", isOn: Binding(get: { store.data.biometricLock }, set: { value in if value { Task { await store.authenticate(enabling: true) } } else { store.disableBiometricLock() } })).tint(Theme.mint)
+                if store.data.biometricLock {
+                    Picker("Po době na pozadí", selection: Binding(get: { lockGraceSelection }, set: { store.setLockGrace($0) })) {
+                        Text("Hned").tag(0)
+                        Text("30 sekund").tag(30)
+                        Text("1 minuta").tag(60)
+                        Text("5 minut").tag(300)
+                    }
+                }
                 if let error = store.authError { Text(error).font(.caption).foregroundStyle(.secondary) }
-            } header: { Text("Soukromí") } footer: { Text("Použije Face ID, Touch ID nebo kód zařízení. Zámek chrání vstup do celé aplikace a aktivuje se po přechodu na pozadí.") }
+            } header: { Text("Soukromí") } footer: { Text("Po zvolené době na pozadí se objeví zámek. Odemkne ho Face ID, Touch ID nebo kód zařízení. Krátké přepnutí hru nepřeruší.") }
             Section {
                 Button { do { document = try store.export(); exporting = true } catch { exportError = error.localizedDescription } } label: { Label("Exportovat všechna data (JSON)", systemImage: "square.and.arrow.up") }
                 Text("Export obsahuje všechny místní profily, historii a rozehrané zápasy. Obnovení dat probíhá ze zálohy zařízení; import JSON není součástí této verze.").font(.caption).foregroundStyle(.secondary)

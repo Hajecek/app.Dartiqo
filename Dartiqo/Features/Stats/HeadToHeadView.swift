@@ -247,73 +247,80 @@ struct HeadToHeadPregameView: View {
         return "Head-to-Head proti \(series.opponentName). \(series.standingTitle) \(series.recordLine)."
     }
 
-    /// Čistý list: žlutá plocha nahoře, černý seznam hráčů dole. Žádné skóre ani souboj portrétů.
+    /// Prázdný terč: mezi hráči ještě nepadla žádná šipka. Žádné skóre ani historie.
     private var debutLayout: some View {
         VStack(spacing: 0) {
-            debutHero
-            debutSheet
-        }
-        .offset(y: appeared || reduceMotion ? 0 : 28)
-    }
-
-    private var debutHero: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("ČISTÝ LIST")
-                .font(.caption.weight(.heavy))
-                .tracking(1.8)
-            Text("První\nzápas")
-                .font(.system(size: 64, weight: .heavy, design: .rounded))
-                .minimumScaleFactor(0.45)
-                .lineLimit(2)
-            Text("S \(series.opponentName) ještě nemáte ani jeden společný výsledek.")
-                .font(.body.weight(.medium))
+            Spacer(minLength: 16)
+            VStack(spacing: 8) {
+                Text("PRVNÍ VZÁJEMNÝ ZÁPAS")
+                    .font(.caption.weight(.heavy))
+                    .tracking(1.8)
+                    .foregroundStyle(Theme.brand)
+                Text("Poprvé proti sobě")
+                    .font(.system(size: 36, weight: .heavy, design: .rounded))
+                    .multilineTextAlignment(.center)
+                    .minimumScaleFactor(0.6)
+                    .lineLimit(2)
+            }
+            .padding(.horizontal, 24)
+            .offset(y: appeared || reduceMotion ? 0 : -16)
+            Spacer(minLength: 20)
+            debutBoard
+            Spacer(minLength: 20)
+            debutPlayers
+                .padding(.horizontal, 20)
+                .offset(y: appeared || reduceMotion ? 0 : 24)
+            Text("Zatím mezi vámi nepadla ani jedna šipka.\nTenhle zápas založí vaši bilanci.")
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.6))
+                .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 32)
+                .padding(.top, 16)
+            Spacer(minLength: 16)
         }
-        .foregroundStyle(.black)
-        .frame(maxWidth: .infinity, alignment: .bottomLeading)
-        .padding(.horizontal, 28)
-        .padding(.top, 36)
-        .padding(.bottom, 28)
     }
 
-    private var debutSheet: some View {
-        VStack(spacing: 0) {
-            debutRow(
-                kicker: "Ty",
-                name: myName,
-                photo: myPhoto,
-                bot: false,
-                asset: nil,
-                badge: nil
-            )
-            Rectangle()
-                .fill(Theme.brand.opacity(0.45))
-                .frame(height: 1)
-                .padding(.leading, 78)
-            debutRow(
+    private var debutBoard: some View {
+        TouchDartboard(marks: [], interactive: false, showMarkNumbers: false) { _ in }
+            .allowsHitTesting(false)
+            .aspectRatio(1, contentMode: .fit)
+            .padding(10)
+            .background(BoardFace.plate, in: Circle())
+            .overlay(Circle().strokeBorder(Theme.brand.opacity(0.6), lineWidth: 2))
+            .shadow(color: Theme.brand.opacity(0.28), radius: 40)
+            .environment(\.colorScheme, .dark)
+            .frame(maxWidth: 290, maxHeight: 290)
+            .padding(.horizontal, 44)
+            .rotationEffect(.degrees(appeared || reduceMotion ? 0 : -110))
+            .scaleEffect(appeared || reduceMotion ? 1 : 0.7)
+            .accessibilityHidden(true)
+    }
+
+    private var debutPlayers: some View {
+        HStack(spacing: 10) {
+            debutPlayer(kicker: "Ty", name: myName, photo: myPhoto, bot: false, asset: nil, badge: nil, leading: true)
+            Text("VS")
+                .font(.system(size: 14, weight: .heavy, design: .rounded))
+                .foregroundStyle(.black)
+                .frame(width: 40, height: 40)
+                .background(Theme.brand, in: Circle())
+            debutPlayer(
                 kicker: opponentKicker,
                 name: series.opponentName,
                 photo: theirPhoto,
                 bot: opponentIsBot,
                 asset: opponentAsset,
-                badge: opponentBadge
+                badge: opponentBadge,
+                leading: false
             )
-            Spacer(minLength: 8)
         }
-        .padding(.horizontal, 22)
-        .padding(.top, 8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background {
-            UnevenRoundedRectangle(
-                topLeadingRadius: 32,
-                bottomLeadingRadius: 0,
-                bottomTrailingRadius: 0,
-                topTrailingRadius: 32,
-                style: .continuous
-            )
-            .fill(Color.black)
-            .ignoresSafeArea(edges: .bottom)
-        }
+        .padding(14)
+        .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .strokeBorder(.white.opacity(0.08), lineWidth: 1)
+        )
     }
 
     private var opponentKicker: String {
@@ -326,43 +333,48 @@ struct HeadToHeadPregameView: View {
         series.opponentBotLevel.map { "Lv. \($0)" }
     }
 
-    private func debutRow(kicker: String, name: String, photo: Data?, bot: Bool, asset: String?, badge: String?) -> some View {
-        HStack(spacing: 14) {
-            Avatar(name: name, bot: bot, size: 58, photo: photo, asset: asset)
-                .overlay(Circle().strokeBorder(Theme.brand, lineWidth: 2))
-            VStack(alignment: .leading, spacing: 2) {
+    private func debutPlayer(kicker: String, name: String, photo: Data?, bot: Bool, asset: String?, badge: String?, leading: Bool) -> some View {
+        let avatar = Avatar(name: name, bot: bot, size: 46, photo: photo, asset: asset)
+            .overlay(Circle().strokeBorder(.white.opacity(0.85), lineWidth: 1.5))
+        let label = VStack(alignment: leading ? .leading : .trailing, spacing: 2) {
+            HStack(spacing: 5) {
                 Text(kicker.uppercased())
                     .font(.caption2.weight(.heavy))
                     .tracking(1.1)
-                    .foregroundStyle(Theme.brand)
-                Text(name)
-                    .font(.title3.weight(.bold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                    .foregroundStyle(.white.opacity(0.5))
+                if let badge {
+                    Text(badge)
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Theme.brand, in: Capsule())
+                }
             }
-            Spacer(minLength: 8)
-            if let badge {
-                Text(badge)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.black)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Theme.brand, in: Capsule())
+            Text(name)
+                .font(.headline)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        return HStack(spacing: 10) {
+            if leading {
+                avatar
+                label
+            } else {
+                label
+                avatar
             }
         }
-        .padding(.vertical, 16)
+        .frame(maxWidth: .infinity, alignment: leading ? .leading : .trailing)
     }
 
     private var debutBackground: some View {
-        ZStack(alignment: .topTrailing) {
-            Theme.brand
-            Text("0")
-                .font(.system(size: 220, weight: .black, design: .rounded))
-                .foregroundStyle(.black.opacity(0.08))
-                .offset(x: 40, y: 12)
-                .accessibilityHidden(true)
+        ZStack {
+            Color.black
+            RadialGradient(colors: [Theme.brand.opacity(0.22), .clear], center: .center, startRadius: 0, endRadius: 380)
         }
         .ignoresSafeArea()
+        .accessibilityHidden(true)
     }
 
     private var rivalryLayout: some View {

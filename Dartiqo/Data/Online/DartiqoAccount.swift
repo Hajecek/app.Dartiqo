@@ -28,6 +28,7 @@ import Combine
     private var appliedRevision = 0
     private var watchTask: Task<Void, Never>?
     private var pushTask: Task<Void, Never>?
+    private var uploadedPushToken: String?
 
     private init() {
         serverURL = defaults.string(forKey: Keys.server).flatMap(ServerConfig.normalized) ?? ServerConfig.defaultURL
@@ -89,6 +90,22 @@ import Combine
         let api = api
         clear()
         await api?.logout()
+    }
+
+    /// Pošle FCM token na server. Stejný token se neposílá znovu, dokud se nezmění nebo se uživatel odhlásí.
+    func uploadPushToken(_ token: String) async {
+        guard isSignedIn, !token.isEmpty, token != uploadedPushToken, let api else { return }
+        #if DEBUG
+        let environment = "development"
+        #else
+        let environment = "production"
+        #endif
+        do {
+            try await api.registerPush(token: token, environment: environment)
+            uploadedPushToken = token
+        } catch APIError.unauthorized {
+            clear()
+        } catch {}
     }
 
     /// Ověří token a stáhne profil včetně fotky z webu.
@@ -222,6 +239,7 @@ import Combine
         token = nil
         user = nil
         appliedRevision = 0
+        uploadedPushToken = nil
         TokenStore.save(nil)
         defaults.removeObject(forKey: Keys.user)
     }

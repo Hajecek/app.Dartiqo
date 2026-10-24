@@ -1,6 +1,7 @@
 import SwiftUI
 
 @main struct DartiqoApp: App {
+    @UIApplicationDelegateAdaptor(PushRegistrar.self) private var pushRegistrar
     @StateObject private var store = AppStore()
     @ObservedObject private var account = DartiqoAccount.shared
     @Environment(\.scenePhase) private var scenePhase
@@ -15,6 +16,20 @@ import SwiftUI
                 .task {
                     await account.refresh(into: store)
                     account.startWatching(store: store)
+                    if account.isSignedIn { await pushRegistrar.registerForPushes() }
+                }
+                .onChange(of: account.user?.id) { _, _ in
+                    guard account.isSignedIn else { return }
+                    Task {
+                        await pushRegistrar.registerForPushes()
+                        if let token = pushRegistrar.currentToken() {
+                            await account.uploadPushToken(token)
+                        }
+                    }
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .dartiqoPushToken)) { note in
+                    guard let token = note.object as? String else { return }
+                    Task { await account.uploadPushToken(token) }
                 }
                 // $data hlásí novou hodnotu ještě před zápisem, proto se zápas čte z ní, ne ze store
                 .onReceive(store.$data) { data in
@@ -30,6 +45,7 @@ import SwiftUI
                     if phase == .active {
                         account.syncLive(store.activeMatch)
                         account.startWatching(store: store)
+                        store.noteReturned()
                         Task {
                             await account.refresh(into: store)
                             await account.syncMatches(store)
@@ -37,8 +53,8 @@ import SwiftUI
                     }
                     if phase == .background {
                         account.stopWatching()
+                        store.noteLeftForeground()
                         store.flushSave()
-                        if store.data.biometricLock && store.profile != nil { store.locked = true }
                     }
                 }
                 .alert("Ukládání", isPresented: Binding(get: { store.storageError != nil }, set: { if !$0 { store.storageError = nil } })) {

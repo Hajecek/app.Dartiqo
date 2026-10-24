@@ -1217,18 +1217,42 @@ struct MatchView: View {
             Text(chip.title)
                 .font(AppFont.caption(chip.compact ? 11 : 12, weight: .heavy))
                 .opacity(chip.prominent ? 0.9 : 0.6)
-            Text(chip.value)
-                .font(AppFont.body(chip.compact ? 14 : 15, weight: .bold))
-                .monospacedDigit()
-                .contentTransition(.numericText(value: chip.number))
-                .minimumScaleFactor(0.7)
-                .lineLimit(1)
+            liveNumber(chip.value, number: chip.number, font: AppFont.body(chip.compact ? 14 : 15, weight: .bold))
         }
         .padding(.horizontal, chip.compact ? 7 : 10)
         .padding(.vertical, chip.compact ? 3 : 4)
         .background(MatchColors.ink.opacity(chip.prominent ? 0.22 : 0.12), in: Capsule())
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(chip.accessibility)
+    }
+
+    /// Číslo v živém zápase. Průměr mezi šipkami dojede po desetinách, ostatní čísla přetočí číslice.
+    @ViewBuilder
+    private func liveNumber(_ text: String, number: Double, font: Font) -> some View {
+        let shown = Double(text)
+        if reduceMotion || shown == nil {
+            Text(text)
+                .font(font)
+                .monospacedDigit()
+                .contentTransition(.opacity)
+                .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: text)
+                .minimumScaleFactor(0.7)
+                .lineLimit(1)
+        } else if text.contains("."), let shown {
+            RollingMatchNumber(value: shown)
+                .animation(.snappy(duration: 0.45), value: shown)
+                .font(font)
+                .minimumScaleFactor(0.7)
+                .lineLimit(1)
+        } else {
+            Text(text)
+                .font(font)
+                .monospacedDigit()
+                .contentTransition(.numericText(value: number))
+                .animation(.snappy(duration: 0.28), value: text)
+                .minimumScaleFactor(0.7)
+                .lineLimit(1)
+        }
     }
 
     private func liveStatsNeedRoom(_ game: Match) -> Bool {
@@ -1309,9 +1333,7 @@ struct MatchView: View {
             Text(title)
                 .font(AppFont.caption(11, weight: .heavy))
                 .foregroundStyle(.white.opacity(0.45))
-            Text(value)
-                .font(AppFont.body(14, weight: .bold))
-                .monospacedDigit()
+            liveNumber(value, number: Double(value) ?? 0, font: AppFont.body(14, weight: .bold))
                 .foregroundStyle(.white)
         }
         .padding(.horizontal, 8)
@@ -2162,12 +2184,12 @@ struct MatchView: View {
                     .opacity(0.65)
                 Text("·")
                     .opacity(0.35)
-                Text("\(score.statTitle) \(score.statValue)")
-                    .font(AppFont.caption(12, weight: .bold))
-                    .monospacedDigit()
-                    .opacity(0.85)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                HStack(spacing: 4) {
+                    Text(score.statTitle)
+                    liveNumber(score.statValue, number: score.statNumber, font: AppFont.caption(12, weight: .bold))
+                }
+                .font(AppFont.caption(12, weight: .bold))
+                .opacity(0.85)
             }
         }
         .foregroundStyle(.white)
@@ -3408,9 +3430,11 @@ struct MatchView: View {
     private func ghostRaceStrip(human: Double, ghost: Double) -> some View {
         let ahead = human > ghost && human > 0
         return HStack(spacing: 8) {
-            Text(String(format: "Ty %.1f", human))
-                .font(AppFont.caption(12, weight: .bold))
-                .monospacedDigit()
+            HStack(spacing: 4) {
+                Text("Ty")
+                liveNumber(String(format: "%.1f", human), number: human, font: AppFont.caption(12, weight: .bold))
+            }
+            .font(AppFont.caption(12, weight: .bold))
             Text("·")
                 .foregroundStyle(.white.opacity(0.45))
             Text(String(format: "Ghost %.1f", ghost))
@@ -4496,6 +4520,21 @@ private struct ResultDetailCard: ViewModifier {
 private extension View {
     func detailCard() -> some View {
         modifier(ResultDetailCard())
+    }
+}
+
+/// Průměr na jedno desetinné místo. Mezi dvěma šipkami číslo samo dojede.
+private struct RollingMatchNumber: View, Animatable {
+    var value: Double
+
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+
+    var body: some View {
+        Text(String(format: "%.1f", value))
+            .monospacedDigit()
     }
 }
 

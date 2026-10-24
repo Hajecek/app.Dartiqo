@@ -225,6 +225,12 @@ struct DartiqoAPI {
         _ = try? await send("api/v1/auth/logout", body: Data("{}".utf8))
     }
 
+    /// Uloží FCM token k aktuálnímu přihlášení. `environment` je development, nebo production.
+    func registerPush(token: String, environment: String) async throws {
+        let body = try JSONEncoder().encode(["token": token, "environment": environment])
+        _ = try await send("api/v1/devices/push", body: body)
+    }
+
     func matchIDs() async throws -> [String] {
         try await send("api/v1/matches", method: "GET").ids ?? []
     }

@@ -4,12 +4,16 @@ import Combine
 struct RootView: View {
     @EnvironmentObject private var store: AppStore
     @ObservedObject private var account = DartiqoAccount.shared
+    @Environment(\.scenePhase) private var scenePhase
     @State private var launching = true
     @State private var minimumElapsed = false
 
     var body: some View {
         ZStack {
             content
+                .overlay {
+                    if hidesContentInBackground { PrivacyCover() }
+                }
             if launching {
                 LaunchView()
                     .transition(.opacity.combined(with: .scale(scale: 1.08)))
@@ -36,16 +40,34 @@ struct RootView: View {
 
     private var guestBound: Bool { store.profile != nil && store.profile?.accountID == nil }
 
+    /// Zámek po startu i po návratu, když už uběhla zvolená doba na pozadí.
+    private var needsBiometricGate: Bool {
+        InactivityLock.shouldPrompt(
+            enabled: store.data.biometricLock,
+            hasProfile: store.profile != nil,
+            locked: store.locked,
+            inactiveAt: store.inactiveAt,
+            now: Date(),
+            sceneIsActive: scenePhase == .active,
+            grace: store.lockGrace
+        )
+    }
+
+    /// V přepínači aplikací nemá být vidět skóre, dokud je zámek zapnutý.
+    private var hidesContentInBackground: Bool {
+        scenePhase == .background && store.data.biometricLock && store.profile != nil && !needsBiometricGate && !store.needsRecovery
+    }
+
     @ViewBuilder private var content: some View {
         Group {
             if store.needsRecovery { StorageRecoveryView() }
+            else if needsBiometricGate { LockView(promptsAutomatically: !launching) }
             else if let user = account.user {
                 if store.profile?.accountID != user.id {
                     ProgressView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .task { store.bindAccount(user) }
                 }
-                else if store.locked { LockView() }
                 else { MainTabView() }
             }
             else if account.isGuest {
@@ -54,7 +76,6 @@ struct RootView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .task { store.bindGuest() }
                 }
-                else if store.locked { LockView() }
                 else { MainTabView() }
             }
             else { LoginView() }
