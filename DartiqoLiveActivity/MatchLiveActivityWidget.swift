@@ -85,24 +85,14 @@ private struct IslandCenter: View {
     var context: MatchContext
 
     var body: some View {
-        let state = context.state
-        VStack(spacing: 1) {
-            if context.attributes.isDuel {
-                Text("\(state.line(0).legs) – \(state.line(1).legs)")
-                    .font(.system(size: 17, weight: .heavy, design: .rounded))
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
-                Text(context.attributes.playsSets ? "SETY \(state.line(0).sets)–\(state.line(1).sets)" : "LEG \(state.leg)")
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .foregroundStyle(.secondary)
-            } else {
-                Text(context.attributes.headline)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+        if context.attributes.isDuel {
+            MatchScoreboard(context: context, compact: true)
+        } else {
+            Text(context.attributes.headline)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
-        .accessibilityElement(children: .combine)
     }
 }
 
