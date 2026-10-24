@@ -10,9 +10,12 @@ import Combine
         static let server = "dartiqo.server"
         static let user = "dartiqo.user"
         static let liveSharing = "dartiqo.liveSharing"
+        static let guest = "dartiqo.guest"
     }
 
     @Published private(set) var user: AccountUser?
+    /// Hraje se bez účtu na místním profilu. Nic se neodesílá na web.
+    @Published private(set) var isGuest = false
     @Published private(set) var serverURL: String
     @Published var liveSharing: Bool {
         didSet { defaults.set(liveSharing, forKey: Keys.liveSharing) }
@@ -34,9 +37,21 @@ import Combine
             user = try? JSONDecoder().decode(AccountUser.self, from: data)
             appliedRevision = user?.profileRevision ?? 0
         }
+        isGuest = user == nil && defaults.bool(forKey: Keys.guest)
     }
 
     var isSignedIn: Bool { token != nil && user != nil }
+
+    func continueAsGuest() {
+        isGuest = true
+        defaults.set(true, forKey: Keys.guest)
+    }
+
+    /// Vrátí hosta na přihlašovací obrazovku. Místní profil i jeho hry zůstanou v telefonu.
+    func leaveGuest() {
+        isGuest = false
+        defaults.removeObject(forKey: Keys.guest)
+    }
 
     var api: DartiqoAPI? {
         guard let token, let base = URL(string: serverURL) else { return nil }
@@ -64,6 +79,7 @@ import Combine
         TokenStore.save(token)
         persistUser(user)
         appliedRevision = 0
+        leaveGuest()
     }
 
     func logout() async {

@@ -713,6 +713,19 @@ enum AppSection: Hashable {
         Task { await DartiqoAccount.shared.refresh(into: self) }
     }
 
+    /// Místní profil hosta bez webového účtu. Při prvním vstupu bez přihlášení ho založí.
+    func bindGuest() {
+        if let existing = data.profiles.first(where: { $0.accountID == nil }) {
+            data.selectedProfile = existing.id
+        } else {
+            let profile = Profile(name: "Host")
+            data.profiles.append(profile)
+            data.selectedProfile = profile.id
+        }
+        locked = false
+        flushSave()
+    }
+
     /// Propsání údajů z webu (jméno, username, e-mail, případně fotka).
     func applyAccount(_ user: AccountUser, photoJPEG: Data?, replacePhoto: Bool) {
         guard let index = data.profiles.firstIndex(where: { $0.accountID == user.id }) else { return }

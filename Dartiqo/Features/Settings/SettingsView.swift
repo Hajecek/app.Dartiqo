@@ -63,7 +63,7 @@ struct SettingsView: View {
                     HStack {
                         Label("Dartiqo účet", systemImage: "person.badge.key")
                         Spacer()
-                        Text(account.user.map { "@\($0.username)" } ?? "")
+                        Text(account.user.map { "@\($0.username)" } ?? (account.isGuest ? "Bez účtu" : ""))
                             .font(.caption)
                             .foregroundStyle(account.user != nil ? Theme.mint : .secondary)
                     }
@@ -137,7 +137,11 @@ struct SettingsView: View {
                 LabeledContent("Provoz", value: account.user != nil ? "Online" : "Offline")
             }
             Section {
-                Button("Odhlásit se", role: .destructive) { confirmLogout = true }
+                if account.isGuest {
+                    Button("Přihlásit se k účtu") { store.signOut(); account.leaveGuest() }
+                } else {
+                    Button("Odhlásit se", role: .destructive) { confirmLogout = true }
+                }
                 Button("Smazat hry tohoto účtu v telefonu", role: .destructive) { deletion = true }
             }
         }.navigationTitle("Nastavení").onAppear {

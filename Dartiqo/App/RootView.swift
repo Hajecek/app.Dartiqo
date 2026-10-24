@@ -28,9 +28,13 @@ struct RootView: View {
 
     /// Po přihlášení se profil k účtu teprve váže, launch screen počká, než je hotovo.
     private var contentReady: Bool {
-        guard !store.needsRecovery, let user = account.user else { return true }
-        return store.profile?.accountID == user.id
+        guard !store.needsRecovery else { return true }
+        if let user = account.user { return store.profile?.accountID == user.id }
+        if account.isGuest { return guestBound }
+        return true
     }
+
+    private var guestBound: Bool { store.profile != nil && store.profile?.accountID == nil }
 
     @ViewBuilder private var content: some View {
         Group {
@@ -40,6 +44,15 @@ struct RootView: View {
                     ProgressView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .task { store.bindAccount(user) }
+                }
+                else if store.locked { LockView() }
+                else { MainTabView() }
+            }
+            else if account.isGuest {
+                if !guestBound {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .task { store.bindGuest() }
                 }
                 else if store.locked { LockView() }
                 else { MainTabView() }

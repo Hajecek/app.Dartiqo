@@ -18,13 +18,23 @@ struct AccountView: View {
                     Text("Přihlášený účet")
                 }
             }
-            Section {
-                Toggle("Živý přenos na web", isOn: $account.liveSharing).tint(Theme.mint)
-            } footer: {
-                Text("Rozehraný zápas se po každé šipce ukáže na webu. V Přehledu vyskočí banner Živě z mobilu a zápas pak sleduješ na celé obrazovce počítače.")
-            }
-            Section {
-                Button("Odhlásit se", role: .destructive) { confirmLogout = true }
+            if account.isGuest {
+                Section {
+                    Button("Přihlásit se k účtu") { store.signOut(); account.leaveGuest() }
+                } header: {
+                    Text("Hraješ bez účtu")
+                } footer: {
+                    Text("Hry a statistiky zůstávají jen v tomto telefonu. S účtem je uvidíš i na webu, můžeš hrát s přáteli a sledovat zápas živě na počítači. Hry hosta se k účtu nepřenesou.")
+                }
+            } else {
+                Section {
+                    Toggle("Živý přenos na web", isOn: $account.liveSharing).tint(Theme.mint)
+                } footer: {
+                    Text("Rozehraný zápas se po každé šipce ukáže na webu. V Přehledu vyskočí banner Živě z mobilu a zápas pak sleduješ na celé obrazovce počítače.")
+                }
+                Section {
+                    Button("Odhlásit se", role: .destructive) { confirmLogout = true }
+                }
             }
         }
         .navigationTitle("Dartiqo účet")
