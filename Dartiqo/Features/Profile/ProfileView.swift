@@ -109,6 +109,9 @@ struct ProfileView: View {
         }
         .sensoryFeedback(.selection, trigger: mode)
         .sensoryFeedback(.selection, trigger: period)
+        .navigationDestination(isPresented: $store.openFriends) {
+            FriendsView()
+        }
     }
 
     // MARK: Karta hráče

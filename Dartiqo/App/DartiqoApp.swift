@@ -31,6 +31,18 @@ import SwiftUI
                     guard let token = note.object as? String else { return }
                     Task { await account.uploadPushToken(token) }
                 }
+                .onReceive(NotificationCenter.default.publisher(for: .dartiqoPushReceived)) { note in
+                    handlePush(note.userInfo?["type"] as? String, open: false)
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .dartiqoPushOpened)) { note in
+                    handlePush(note.userInfo?["type"] as? String, open: true)
+                }
+                .onAppear {
+                    if let type = PushRegistrar.pendingRoute {
+                        PushRegistrar.pendingRoute = nil
+                        handlePush(type, open: true)
+                    }
+                }
                 // $data hlásí novou hodnotu ještě před zápisem, proto se zápas čte z ní, ne ze store
                 .onReceive(store.$data) { data in
                     account.syncLive(data.selectedProfile.flatMap { data.activeMatches[$0.uuidString] })
@@ -43,6 +55,9 @@ import SwiftUI
                 .onChange(of: account.liveSharing) { _, _ in account.syncLive(store.activeMatch) }
                 .onChange(of: scenePhase) { _, phase in
                     if phase == .active {
+                        if let type = PushRegistrar.pendingRoute {
+                            handlePush(type, open: true)
+                        }
                         account.syncLive(store.activeMatch)
                         account.startWatching(store: store)
                         store.noteReturned()
@@ -61,5 +76,15 @@ import SwiftUI
                     Button("Rozumím") { store.storageError = nil }
                 } message: { Text(store.storageError ?? "") }
         }
+    }
+
+    private func handlePush(_ type: String?, open: Bool) {
+        if open { PushRegistrar.pendingRoute = nil }
+        guard type == "friend.request" || type == "friend.accepted" else { return }
+        if open {
+            store.section = .profile
+            store.openFriends = true
+        }
+        Task { await store.refreshAccountFriends() }
     }
 }

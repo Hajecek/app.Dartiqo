@@ -142,6 +142,8 @@ enum InactivityLock {
     @Published var section: AppSection = .home
     /// Počet příchozích žádostí o přátelství. Stránka kamarádů ho drží aktuální.
     @Published var incomingFriendRequests = 0
+    /// Klepnutí na push o kamarádech otevře jejich stránku.
+    @Published var openFriends = false
     /// Průvodce z karty Hrát lokálně zakryje spodní lištu rozehraného zápasu.
     @Published var localSetupCoversBar = false
     /// Nová hodnota zavře zápas i průvodce a vrátí čistou domovskou obrazovku.
