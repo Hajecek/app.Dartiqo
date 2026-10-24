@@ -804,10 +804,12 @@ enum AppSection: Hashable {
             }
         } else if let owner = profile?.id, match.players.contains(where: { $0.id == owner && $0.botLevel == nil }) {
             noteMatchCompletion(owner, match: match.id, outcome: .abandoned)
-            if profile?.accountID != nil, !match.visits.isEmpty {
-                var abandoned = match
-                abandoned.undoStack = []
-                data.pendingAbandoned = (data.pendingAbandoned ?? []) + [abandoned]
+            // Nedohraný zápas se neukládá. Když už na webu je, smaže se.
+            if profile?.accountID != nil {
+                var deletes = data.pendingMatchDeletes ?? []
+                if !deletes.contains(match.id) { deletes.append(match.id) }
+                data.pendingMatchDeletes = deletes
+                data.pendingAbandoned?.removeAll { $0.id == match.id }
             }
         }
     }

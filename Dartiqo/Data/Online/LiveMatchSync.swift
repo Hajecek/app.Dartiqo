@@ -12,6 +12,9 @@ struct LiveMatchState: Encodable, Equatable {
         var darts: Int
         var last: Int?
         var checkout: String
+        var setup: String
+        var setupLeave: String
+        var out: String
         var marks: [String: Int]
     }
 
@@ -59,9 +62,17 @@ struct LiveMatchState: Encodable, Equatable {
         players = match.players.indices.map { index in
             let state = live.states[index]
             var checkout = ""
-            if config.mode == .x01, index == live.active, !match.finished,
-               let route = Checkout.route(for: state.remaining, rule: config.outRule(for: index), darts: 3 - pending) {
-                checkout = route.map(\.label).joined(separator: " ")
+            var setup = ""
+            var setupLeave = ""
+            let left = 3 - pending
+            if config.mode == .x01, index == live.active, !match.finished, left > 0 {
+                let rule = config.outRule(for: index)
+                if let route = Checkout.route(for: state.remaining, rule: rule, darts: left) {
+                    checkout = route.map(\.label).joined(separator: " ")
+                } else if let hint = Checkout.setup(for: state.remaining, rule: rule, darts: left) {
+                    setup = hint.darts.map(\.label).joined(separator: " ")
+                    setupLeave = hint.leaveLabel
+                }
             }
             return PlayerLine(
                 name: match.players[index].name,
@@ -73,12 +84,16 @@ struct LiveMatchState: Encodable, Equatable {
                 darts: match.thrownDarts(for: index),
                 last: match.lastTurnScore(for: index),
                 checkout: checkout,
+                setup: setup,
+                setupLeave: setupLeave,
+                out: config.mode == .x01 ? config.outRule(for: index).rawValue : "",
                 marks: config.mode == .cricket ? Dictionary(uniqueKeysWithValues: state.marks.map { (String($0.key), $0.value) }) : [:]
             )
         }
         currentDarts = match.currentDarts.map(\.label)
         let setByLeg = Self.setByLeg(in: match)
-        visits = match.visits.suffix(12).map {
+        // Web kreslí všechny legy, proto jde celá historie. Strop drží požadavek v limitu serveru.
+        visits = match.visits.suffix(1500).map {
             VisitLine(
                 player: $0.player,
                 leg: $0.leg,
@@ -202,10 +217,12 @@ struct LiveMatchState: Encodable, Equatable {
                 queue.removeAll()
                 return
             } catch {
-                // Výpadek sítě: zkusit znovu, pokud mezitím nepřišel novější stav
+                // Výpadek sítě: u živého zápasu zkoušet dál, novější stav starý požadavek nahradí
                 job.attempts += 1
-                if job.attempts < 3, !queue.contains(where: { $0.id == job.id }) {
-                    try? await Task.sleep(for: .seconds(3))
+                let live = job.state.status == "live"
+                if (live || job.attempts < 4), !queue.contains(where: { $0.id == job.id }) {
+                    let delay = min(live ? 8.0 : 3.0, pow(1.5, Double(min(job.attempts, 8))))
+                    try? await Task.sleep(for: .seconds(delay))
                     if !queue.contains(where: { $0.id == job.id }) { queue.append(job) }
                 }
             }

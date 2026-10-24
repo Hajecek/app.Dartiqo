@@ -208,17 +208,19 @@ private extension Array {
             let pendingDeletes = Set(store.data.pendingMatchDeletes ?? [])
             store.removeMatchesDeletedOnWeb(Set(store.matches.filter { uploaded.contains($0.id) && !isKnown($0) && !pendingDeletes.contains($0.id) }.map(\.id)))
             store.matchesUploaded(store.matches.filter { $0.finished && isKnown($0) }.map(\.id))
+            for match in store.data.pendingAbandoned ?? [] {
+                try await api.deleteMatch(id: match.id)
+                store.abandonedMatchSynced(match.id)
+            }
             let finished = store.matches.filter { $0.finished && !isKnown($0) }
-            let abandoned = (store.data.pendingAbandoned ?? []).filter { match in match.players.contains { $0.id == profile.id } }
-            for match in finished + abandoned {
+            for match in finished {
                 do {
                     let body = try encoder.encode(MatchUpload(match: match, owner: profile.id, friends: store.friends, profiles: store.data.profiles))
                     try await api.uploadMatch(id: match.id, body: body)
-                    if match.finished { store.matchesUploaded([match.id]) }
+                    store.matchesUploaded([match.id])
                 } catch APIError.server, is EncodingError {
                     // Zápas, který server odmítl nebo nejde zakódovat, by frontu blokoval napořád.
                 }
-                if !match.finished { store.abandonedMatchSynced(match.id) }
             }
         } catch APIError.unauthorized {
             account.handleUnauthorized()
