@@ -131,6 +131,10 @@ struct MainTabView: View {
         .onChange(of: store.activeMatch == nil) { _, gone in
             if gone { resumeMatch = false }
         }
+        .onOpenURL { url in
+            guard url == MatchActivityAttributes.openURL, store.activeMatch != nil else { return }
+            resumeMatch = true
+        }
     }
 }
 

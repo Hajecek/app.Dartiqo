@@ -231,6 +231,7 @@ import Combine
     func syncLive(_ match: Match?, store: AppStore) {
         let photos = match.map { livePhotos($0, store: store) } ?? []
         let clock = liveClockSnapshot(match)
+        MatchLiveActivity.shared.update(match, paused: clock.paused, played: clock.played, running: clock.running)
         live.update(match, photos: photos, ownerID: store.profile?.id, paused: clock.paused, played: clock.played, running: clock.running)
     }
 

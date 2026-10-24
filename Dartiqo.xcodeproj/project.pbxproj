@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		07D28FE03075ACC10088185C /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = 07D28FE13075ACC10088185C /* FirebaseMessaging */; };
+		07D2900E3075ACC10088185E /* DartiqoLiveActivityExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 07D290023075ACC10088185E /* DartiqoLiveActivityExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -25,12 +26,34 @@
 			remoteGlobalIDString = 07D28FAD3075ACC00088185B;
 			remoteInfo = Dartiqo;
 		};
+		07D2900B3075ACC10088185E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 07D28FA63075ACC00088185B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 07D290013075ACC10088185E;
+			remoteInfo = DartiqoLiveActivityExtension;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		07D2900D3075ACC10088185E /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				07D2900E3075ACC10088185E /* DartiqoLiveActivityExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		07D28FAE3075ACC00088185B /* Dartiqo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Dartiqo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		07D28FBB3075ACC10088185B /* DartiqoTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DartiqoTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		07D28FC53075ACC10088185B /* DartiqoUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DartiqoUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		07D290023075ACC10088185E /* DartiqoLiveActivityExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = DartiqoLiveActivityExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -47,6 +70,16 @@
 		07D28FC83075ACC10088185B /* DartiqoUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = DartiqoUITests;
+			sourceTree = "<group>";
+		};
+		07D290063075ACC10088185E /* DartiqoLiveActivity */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = DartiqoLiveActivity;
+			sourceTree = "<group>";
+		};
+		07D290073075ACC10088185E /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -68,6 +101,11 @@
 			files = (
 			);
 		};
+		07D290043075ACC10088185E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -75,6 +113,8 @@
 			isa = PBXGroup;
 			children = (
 				07D28FB03075ACC00088185B /* Dartiqo */,
+				07D290063075ACC10088185E /* DartiqoLiveActivity */,
+				07D290073075ACC10088185E /* Shared */,
 				07D28FBE3075ACC10088185B /* DartiqoTests */,
 				07D28FC83075ACC10088185B /* DartiqoUITests */,
 				07D28FAF3075ACC00088185B /* Products */,
@@ -87,6 +127,7 @@
 				07D28FAE3075ACC00088185B /* Dartiqo.app */,
 				07D28FBB3075ACC10088185B /* DartiqoTests.xctest */,
 				07D28FC53075ACC10088185B /* DartiqoUITests.xctest */,
+				07D290023075ACC10088185E /* DartiqoLiveActivityExtension.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -101,11 +142,16 @@
 				07D28FAA3075ACC00088185B /* Sources */,
 				07D28FAB3075ACC00088185B /* Frameworks */,
 				07D28FAC3075ACC00088185B /* Resources */,
+				07D2900D3075ACC10088185E /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
+			dependencies = (
+				07D2900C3075ACC10088185E /* PBXTargetDependency */,
+			);
 			fileSystemSynchronizedGroups = (
 				07D28FB03075ACC00088185B /* Dartiqo */,
+				07D290073075ACC10088185E /* Shared */,
 			);
 			name = Dartiqo;
 			packageProductDependencies = (
@@ -157,6 +203,27 @@
 			productReference = 07D28FC53075ACC10088185B /* DartiqoUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		07D290013075ACC10088185E /* DartiqoLiveActivityExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 07D290083075ACC10088185E /* Build configuration list for PBXNativeTarget "DartiqoLiveActivityExtension" */;
+			buildPhases = (
+				07D290033075ACC10088185E /* Sources */,
+				07D290043075ACC10088185E /* Frameworks */,
+				07D290053075ACC10088185E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				07D290063075ACC10088185E /* DartiqoLiveActivity */,
+				07D290073075ACC10088185E /* Shared */,
+			);
+			name = DartiqoLiveActivityExtension;
+			productName = DartiqoLiveActivityExtension;
+			productReference = 07D290023075ACC10088185E /* DartiqoLiveActivityExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -177,6 +244,9 @@
 					07D28FC43075ACC10088185B = {
 						CreatedOnToolsVersion = 27.0;
 						TestTargetID = 07D28FAD3075ACC00088185B;
+					};
+					07D290013075ACC10088185E = {
+						CreatedOnToolsVersion = 27.0;
 					};
 				};
 			};
@@ -201,6 +271,7 @@
 				07D28FAD3075ACC00088185B /* Dartiqo */,
 				07D28FBA3075ACC10088185B /* DartiqoTests */,
 				07D28FC43075ACC10088185B /* DartiqoUITests */,
+				07D290013075ACC10088185E /* DartiqoLiveActivityExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -217,6 +288,11 @@
 			);
 		};
 		07D28FC33075ACC10088185B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		07D290053075ACC10088185E /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			files = (
 			);
@@ -239,6 +315,11 @@
 			files = (
 			);
 		};
+		07D290033075ACC10088185E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -251,6 +332,11 @@
 			isa = PBXTargetDependency;
 			target = 07D28FAD3075ACC00088185B /* Dartiqo */;
 			targetProxy = 07D28FC63075ACC10088185B /* PBXContainerItemProxy */;
+		};
+		07D2900C3075ACC10088185E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 07D290013075ACC10088185E /* DartiqoLiveActivityExtension */;
+			targetProxy = 07D2900B3075ACC10088185E /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -544,6 +630,64 @@
 			};
 			name = Release;
 		};
+		07D290093075ACC10088185E /* Debug configuration for PBXNativeTarget "DartiqoLiveActivityExtension" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = W6R3HZD7R4;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "DartiqoLiveActivity-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Dartiqo;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hajecek.dartiqo.LiveActivity;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		07D2900A3075ACC10088185E /* Release configuration for PBXNativeTarget "DartiqoLiveActivityExtension" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = W6R3HZD7R4;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "DartiqoLiveActivity-Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = Dartiqo;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = com.hajecek.dartiqo.LiveActivity;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -576,6 +720,14 @@
 			buildConfigurations = (
 				07D28FD43075ACC10088185B /* Debug configuration for PBXNativeTarget "DartiqoUITests" */,
 				07D28FD53075ACC10088185B /* Release configuration for PBXNativeTarget "DartiqoUITests" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		07D290083075ACC10088185E /* Build configuration list for PBXNativeTarget "DartiqoLiveActivityExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				07D290093075ACC10088185E /* Debug configuration for PBXNativeTarget "DartiqoLiveActivityExtension" */,
+				07D2900A3075ACC10088185E /* Release configuration for PBXNativeTarget "DartiqoLiveActivityExtension" */,
 			);
 			defaultConfigurationName = Release;
 		};
