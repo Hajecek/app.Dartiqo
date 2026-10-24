@@ -29,6 +29,12 @@ import Combine
     private var watchTask: Task<Void, Never>?
     private var pushTask: Task<Void, Never>?
     private var uploadedPushToken: String?
+    /// Poslední známý čas zápasu. Mezi šipkami web dopočítává od tohoto snímku.
+    private var liveClockMatch: UUID?
+    private var liveClockPaused = false
+    private var liveClockPlayed: TimeInterval = 0
+    private var liveClockRunning = false
+    private var liveClockNotedAt = Date()
 
     private init() {
         serverURL = defaults.string(forKey: Keys.server).flatMap(ServerConfig.normalized) ?? ServerConfig.defaultURL
@@ -224,7 +230,31 @@ import Combine
 
     func syncLive(_ match: Match?, store: AppStore) {
         let photos = match.map { livePhotos($0, store: store) } ?? []
-        live.update(match, photos: photos, ownerID: store.profile?.id)
+        let clock = liveClockSnapshot(match)
+        live.update(match, photos: photos, ownerID: store.profile?.id, paused: clock.paused, played: clock.played, running: clock.running)
+    }
+
+    /// Zápas právě oznámil, jestli čas běží. Volá se při startu, pauze, pozadí i průběžném uložení.
+    func noteLiveClock(paused: Bool, played: TimeInterval, running: Bool, match: Match?, store: AppStore) {
+        liveClockMatch = match?.id
+        liveClockPaused = paused
+        liveClockPlayed = max(0, played.isFinite ? played : 0)
+        liveClockRunning = running && !paused
+        liveClockNotedAt = Date()
+        syncLive(match, store: store)
+    }
+
+    private func liveClockSnapshot(_ match: Match?) -> (paused: Bool, played: Int, running: Bool) {
+        guard let match else { return (false, 0, false) }
+        let banked = Int((match.playSeconds ?? 0).rounded())
+        guard match.id == liveClockMatch else { return (false, max(0, banked), false) }
+        var seconds = liveClockPlayed
+        if liveClockRunning {
+            seconds += Date().timeIntervalSince(liveClockNotedAt)
+        }
+        let played = Int(max(0, seconds).rounded())
+        if match.finished { return (false, played, false) }
+        return (liveClockPaused, played, liveClockRunning)
     }
 
     /// Stejné portréty jako na hřišti. Bot zůstane bez fotky, ghost bere portrét profilu.

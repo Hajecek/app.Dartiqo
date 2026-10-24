@@ -50,12 +50,18 @@ struct LiveMatchState: Encodable, Equatable {
     var setSlots: Int
     /// Tříšipkový průměr majitele telefonu v právě dohraném legu.
     var legAverage: Double?
+    /// Pauza na telefonu. Web podle toho zastaví čas a ukáže obrazovku pauzy.
+    var paused: Bool
+    /// Skutečně odehrané sekundy. Pauza ani appka na pozadí se nepočítají.
+    var played: Int
+    /// Čas právě běží, web ho dopočítává mezi aktualizacemi.
+    var running: Bool
     var numbers: [Int]
     var players: [PlayerLine]
     var currentDarts: [String]
     var visits: [VisitLine]
 
-    init(match: Match, photos: [String?] = [], ownerID: UUID? = nil) {
+    init(match: Match, photos: [String?] = [], ownerID: UUID? = nil, paused: Bool = false, played: Int = 0, running: Bool = false) {
         let live = match.liveProjection
         let config = match.config
         let pending = match.currentDarts.count
@@ -74,6 +80,9 @@ struct LiveMatchState: Encodable, Equatable {
         legSlots = config.shownLegs
         setSlots = config.playsSets ? config.shownSets : 0
         legAverage = nil
+        self.paused = paused && !match.finished
+        self.played = max(0, played)
+        self.running = running && !paused && !match.finished
         if let ownerID, match.legWinner != nil, config.mode == .x01,
            let index = match.players.firstIndex(where: { $0.id == ownerID }),
            match.thrownDarts(for: index, leg: match.leg) > 0 {
@@ -190,7 +199,7 @@ struct LiveMatchState: Encodable, Equatable {
         self.account = account
     }
 
-    func update(_ match: Match?, photos: [Data?] = [], ownerID: UUID? = nil) {
+    func update(_ match: Match?, photos: [Data?] = [], ownerID: UUID? = nil, paused: Bool = false, played: Int = 0, running: Bool = false) {
         guard account.isSignedIn else {
             sentID = nil
             sentState = nil
@@ -214,7 +223,7 @@ struct LiveMatchState: Encodable, Equatable {
             let data = photos.indices.contains(index) ? photos[index] : nil
             return thumb(match.players[index].id, data)
         }
-        let state = LiveMatchState(match: match, photos: urls, ownerID: ownerID)
+        let state = LiveMatchState(match: match, photos: urls, ownerID: ownerID, paused: paused, played: played, running: running)
         guard match.id != sentID || state != sentState else { return }
         sentID = match.id
         sentState = state

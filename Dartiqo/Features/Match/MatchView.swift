@@ -3320,19 +3320,38 @@ struct MatchView: View {
     private func syncClock() {
         if clockRuns {
             if clockStart == nil { clockStart = Date() }
-        } else {
+            publishLiveClock(store.activeMatch)
+        } else if clockStart != nil {
             flushClock()
+        } else {
+            publishLiveClock(store.activeMatch)
         }
     }
     /// Připíše uběhlý úsek do zápasu. Průběžně, aby se čas neztratil ani při pádu appky.
     private func flushClock(keepRunning: Bool = false) {
         guard let start = clockStart else { return }
         let now = Date()
-        if var game = store.activeMatch {
-            game.addPlayTime(from: start, to: now)
-            store.activeMatch = game
+        let running = keepRunning && clockRuns
+        clockStart = running ? now : nil
+        guard var game = store.activeMatch else { return }
+        game.addPlayTime(from: start, to: now)
+        publishLiveClock(game)
+        store.activeMatch = game
+    }
+    /// Web dostane stejný čas jako tabule: uložené sekundy plus právě běžící úsek.
+    private func publishLiveClock(_ game: Match?) {
+        guard let game else {
+            DartiqoAccount.shared.noteLiveClock(paused: false, played: 0, running: false, match: nil, store: store)
+            return
         }
-        clockStart = keepRunning && clockRuns ? now : nil
+        let running = clockStart != nil && !game.finished && !paused
+        DartiqoAccount.shared.noteLiveClock(
+            paused: paused && !game.finished,
+            played: frozenBoardSeconds(game),
+            running: running,
+            match: game,
+            store: store
+        )
     }
     private func awardBullOff(_ winner: Int) {
         guard var game = store.activeMatch, game.needsBullOff else { decidingLeg = false; return }

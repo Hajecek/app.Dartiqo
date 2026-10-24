@@ -44,6 +44,25 @@ final class LiveMatchStateTests: XCTestCase {
         XCTAssertEqual(visits.first?["darts"] as? [String], ["BULL", "25", "MISS"])
         XCTAssertNil(json["legWinner"])
         XCTAssertEqual(json["bullOff"] as? Bool, false)
+        XCTAssertEqual(json["paused"] as? Bool, false)
+        XCTAssertEqual(json["played"] as? Int, 0)
+        XCTAssertEqual(json["running"] as? Bool, false)
+    }
+
+    @MainActor
+    func testPauseFreezesTheClockForTheWeb() throws {
+        var match = Match(config: GameConfig(), players: [Player(name: "Já"), Player(name: "Ty")])
+        match.playSeconds = 125
+
+        let paused = LiveMatchState(match: match, paused: true, played: 125, running: true)
+        XCTAssertTrue(paused.paused)
+        XCTAssertEqual(paused.played, 125)
+        XCTAssertFalse(paused.running)
+
+        let live = LiveMatchState(match: match, paused: false, played: 40, running: true)
+        XCTAssertFalse(live.paused)
+        XCTAssertEqual(live.played, 40)
+        XCTAssertTrue(live.running)
     }
 
     @MainActor
