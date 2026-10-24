@@ -31,6 +31,7 @@ struct ProfileView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 playerCard(stats)
+                FriendsProfileEntry()
                 HeadToHeadProfileEntry()
                 playTime
                 if stats.isEmpty {

@@ -65,8 +65,24 @@ struct DirectoryPerson: Codable, Identifiable, Equatable {
     var first: String
     var last: String
     var photo: String?
+    /// none, outgoing, incoming, accepted nebo declined. Starší odpověď klíč nemá.
+    var relation: String?
 
     var fullName: String { "\(first) \(last)".trimmingCharacters(in: .whitespaces) }
+}
+
+struct FriendLink: Codable, Identifiable, Equatable {
+    var id: Int
+    var status: String
+    var user: DirectoryPerson
+}
+
+struct FriendBook: Equatable {
+    var friends: [FriendLink]
+    var incoming: [FriendLink]
+    var outgoing: [FriendLink]
+
+    static let empty = FriendBook(friends: [], incoming: [], outgoing: [])
 }
 
 enum APIError: LocalizedError {
@@ -100,6 +116,11 @@ struct DartiqoAPI {
         var message: String?
         var ids: [String]?
         var people: [DirectoryPerson]?
+        var friends: [FriendLink]?
+        var incoming: [FriendLink]?
+        var outgoing: [FriendLink]?
+        var friendship: FriendLink?
+        var relation: String?
     }
 
     func login(identity: String, password: String, device: String) async throws -> (token: String, user: AccountUser) {
@@ -168,6 +189,38 @@ struct DartiqoAPI {
 
     func pushLiveMatch(id: UUID, body: Data) async throws {
         _ = try await send("api/v1/live-matches/\(id.uuidString.lowercased())", body: body)
+    }
+
+    func friendBook() async throws -> FriendBook {
+        let response = try await send("api/v1/friends", method: "GET")
+        return FriendBook(friends: response.friends ?? [], incoming: response.incoming ?? [], outgoing: response.outgoing ?? [])
+    }
+
+    /// Pošle žádost. Když už žádost přišla od něj, rovnou ji přijme.
+    func requestFriend(userId: Int) async throws -> (link: FriendLink, relation: String) {
+        let body = try JSONSerialization.data(withJSONObject: ["userId": userId])
+        let response = try await send("api/v1/friends", body: body)
+        guard let link = response.friendship else { throw APIError.server("Server vrátil neúplnou odpověď.") }
+        return (link, response.relation ?? link.status)
+    }
+
+    func acceptFriend(_ id: Int) async throws -> FriendLink {
+        guard let link = try await send("api/v1/friends/\(id)/accept", body: Data("{}".utf8)).friendship else {
+            throw APIError.server("Server vrátil neúplnou odpověď.")
+        }
+        return link
+    }
+
+    func declineFriend(_ id: Int) async throws {
+        _ = try await send("api/v1/friends/\(id)/decline", body: Data("{}".utf8))
+    }
+
+    func cancelFriend(_ id: Int) async throws {
+        _ = try await send("api/v1/friends/\(id)/cancel", body: Data("{}".utf8))
+    }
+
+    func removeFriend(_ id: Int) async throws {
+        _ = try await send("api/v1/friends/\(id)/delete", body: Data("{}".utf8))
     }
 
     /// Registrovaní hráči podle jména, username, nebo přesného e-mailu.

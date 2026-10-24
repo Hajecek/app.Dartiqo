@@ -98,6 +98,8 @@ enum AppSection: Hashable {
     @Published var storageError: String?
     @Published var authError: String?
     @Published var section: AppSection = .home
+    /// Počet příchozích žádostí o přátelství. Stránka kamarádů ho drží aktuální.
+    @Published var incomingFriendRequests = 0
     /// Průvodce z karty Hrát lokálně zakryje spodní lištu rozehraného zápasu.
     @Published var localSetupCoversBar = false
     /// Nová hodnota zavře zápas i průvodce a vrátí čistou domovskou obrazovku.
@@ -274,6 +276,29 @@ enum AppSection: Hashable {
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
     func deleteFriend(_ id: UUID) { data.friends?.removeAll { $0.id == id }; save() }
+    /// Přijaté přátelství z webu uloží mezi kamarády. Odebrané účty z lokálního seznamu zmizí.
+    @discardableResult func refreshAccountFriends() async -> FriendBook? {
+        guard let api = DartiqoAccount.shared.api else { return nil }
+        let book: FriendBook
+        do { book = try await api.friendBook() } catch { return nil }
+        let accepted = Set(book.friends.map(\.user.id))
+        for friend in friends {
+            guard friend.linkedProfileID == nil, let accountID = friend.accountID, !accepted.contains(accountID) else { continue }
+            deleteFriend(friend.id)
+        }
+        for link in book.friends {
+            let data = await api.downloadImage(link.user.photo)
+            let name = link.user.fullName.isEmpty ? link.user.username : link.user.fullName
+            createFriend(
+                name: name,
+                username: link.user.username,
+                photo: data.flatMap(UIImage.init(data:)),
+                accountID: link.user.id
+            )
+        }
+        incomingFriendRequests = book.incoming.count
+        return book
+    }
     /// Upraví lokální profil kamaráda. Fotku mění jen když přijde nový snímek.
     @discardableResult func updateFriend(
         _ id: UUID,

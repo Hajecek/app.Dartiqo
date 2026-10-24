@@ -1,7 +1,7 @@
 import SwiftUI
 import AVKit
 
-/// Stejný průvodce jako nový zápas: výběr kartou, zpět šipkou a lišta Domů / Pokračovat.
+/// Průvodce tréninkem: výběr hry, případně pravidla a souhrn.
 struct TrainingHomeView: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

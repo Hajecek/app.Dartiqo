@@ -52,7 +52,7 @@ struct FriendPickerSheet: View {
                         Label("Importovat z kontaktů", systemImage: "person.crop.circle.badge.plus")
                     }
                 } footer: {
-                    Text("Vytvoř lokální profil, najdi registrovaného hráče podle jména, username nebo e-mailu, nebo ho importuj z kontaktů.")
+                    Text("Lokální profil je hned v sestavě. Účet Dartiqo se stane kamarádem, až druhý hráč žádost přijme.")
                 }
 
                 if !store.housemates.isEmpty {
@@ -135,6 +135,7 @@ struct FriendPickerSheet: View {
                 }
                 .ignoresSafeArea()
             }
+            .task { await store.refreshAccountFriends() }
             .sensoryFeedback(.selection, trigger: selected)
             .confirmationDialog(
                 "Smazat kamaráda?",
@@ -472,6 +473,7 @@ struct FriendFindView: View {
     @State private var searchGeneration = 0
     @State private var portraits: [Int: Data] = [:]
     @State private var portraitPaths: [Int: String] = [:]
+    @State private var relations: [Int: String] = [:]
     @FocusState private var focused: Bool
 
     private var localHits: [DartiqoPersonHit] {
@@ -493,7 +495,7 @@ struct FriendFindView: View {
                     .focused($focused)
                     .submitLabel(.search)
             } footer: {
-                Text("Hledá registrované hráče podle jména, username, nebo přesné e-mailové adresy. Přidáním se uloží mezi kamarády.")
+                Text("Hledá registrované hráče. Žádost musí druhý přijmout, teprve pak je kamarád a můžeš ho dát do zápasu.")
             }
 
             if ready && !localHits.isEmpty {
@@ -538,11 +540,17 @@ struct FriendFindView: View {
                          : "V účtech Dartiqo nikdo další.")
                         .foregroundStyle(.secondary)
                 } else {
+                    if let searchError {
+                        Text(searchError)
+                            .foregroundStyle(.secondary)
+                    }
                     ForEach(remote) { person in
                         let saved = savedFriend(person)
-                        let busy = saved.map { taken.contains($0.id) } ?? false
+                        let state = relation(of: person)
+                        let busy = state == "accepted" && (saved.map { taken.contains($0.id) } ?? false)
+                        let waiting = state == "outgoing"
                         Button {
-                            guard !busy, addingID == nil else { return }
+                            guard !busy, !waiting, addingID == nil else { return }
                             Task { await add(person) }
                         } label: {
                             personLabel(
@@ -550,11 +558,11 @@ struct FriendFindView: View {
                                 username: person.username,
                                 photo: portrait(for: person) ?? saved?.photoJPEG,
                                 detail: nil,
-                                action: addingID == person.id ? "Ukládám…" : (busy ? "Už hraje" : (saved == nil ? "Přidat" : "Vybrat")),
-                                enabled: !busy && addingID == nil
+                                action: requestLabel(state, busy: busy, person: person),
+                                enabled: !busy && !waiting && addingID == nil
                             )
                         }
-                        .disabled(busy || addingID != nil)
+                        .disabled(busy || waiting || addingID != nil)
                     }
                 }
             }
@@ -595,6 +603,7 @@ struct FriendFindView: View {
         let generation = searchGeneration
         let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
         remote = []
+        relations = [:]
         searchError = nil
         guard needle.count >= 2 else {
             searching = false
@@ -655,9 +664,47 @@ struct FriendFindView: View {
         }
     }
 
+    private func relation(of person: DirectoryPerson) -> String {
+        relations[person.id] ?? person.relation ?? "none"
+    }
+
+    private func requestLabel(_ state: String, busy: Bool, person: DirectoryPerson) -> String {
+        if addingID == person.id { return "Posílám…" }
+        if busy { return "Už hraje" }
+        switch state {
+        case "accepted": return "Přidat"
+        case "outgoing": return "Odesláno"
+        case "incoming": return "Přijmout"
+        default: return "Žádost"
+        }
+    }
+
     private func add(_ person: DirectoryPerson) async {
+        let state = relation(of: person)
+        if state == "accepted" {
+            await pick(person)
+            return
+        }
         addingID = person.id
         defer { addingID = nil }
+        guard let api = account.api else {
+            searchError = "Pro žádost se přihlas k Dartiqo."
+            return
+        }
+        do {
+            let result = try await api.requestFriend(userId: person.id)
+            let next = result.relation == "accepted" || result.link.status == "accepted" ? "accepted" : "outgoing"
+            relations[person.id] = next
+            if next == "accepted" {
+                await store.refreshAccountFriends()
+                await pick(person)
+            }
+        } catch {
+            searchError = error.localizedDescription
+        }
+    }
+
+    private func pick(_ person: DirectoryPerson) async {
         var photo = portrait(for: person)
         if photo == nil {
             photo = await account.api?.downloadImage(person.photo)
