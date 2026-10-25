@@ -38,14 +38,12 @@
 /* Begin PBXCopyFilesBuildPhase section */
 		07D2900D3075ACC10088185E /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
 			dstPath = "";
-			dstSubfolderSpec = 13;
+			dstSubfolder = PlugIns;
 			files = (
 				07D2900E3075ACC10088185E /* DartiqoLiveActivityExtension.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
-			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
 
@@ -212,8 +210,6 @@
 				07D290053075ACC10088185E /* Resources */,
 			);
 			buildRules = (
-			);
-			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
 				07D290063075ACC10088185E /* DartiqoLiveActivity */,

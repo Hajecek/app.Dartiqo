@@ -5,6 +5,7 @@ import UIKit
 struct HomeView: View {
     @EnvironmentObject private var store: AppStore
     @State private var preview: LockedPreview?
+    @State private var showOnline = false
     @State private var showDaily = false
     @State private var showStreak = false
     @State private var openLocalSetup = false
@@ -44,6 +45,10 @@ struct HomeView: View {
             }
         }
         .toolbarColorScheme(.dark, for: .navigationBar)
+        .fullScreenCover(isPresented: $showOnline) {
+            OnlineHomeView()
+                .environmentObject(store)
+        }
         .sheet(item: $preview) { item in
             FeaturePreview(preview: item)
         }
@@ -238,17 +243,16 @@ struct HomeView: View {
                 }
             }
             HStack(spacing: 12) {
-                Button { preview = .online } label: {
+                Button { showOnline = true } label: {
                     LobbyCard(
                         title: "Hrát online",
-                        detail: "Uzamčeno · zápas s hráčem na dálku",
+                        detail: "Lobby, kód nebo pozvánka kamaráda",
                         symbol: "globe",
                         colors: [Color(red: 0.18, green: 0.48, blue: 0.98), Color(red: 0.08, green: 0.22, blue: 0.72)],
-                        height: 190,
-                        locked: true
+                        height: 190
                     )
                 }
-                .accessibilityHint("Otevře, co v online hře přibude")
+                .accessibilityHint("Založí lobby, nebo tě pustí do zápasu kódem")
                 Button { preview = .tournaments } label: {
                     LobbyCard(
                         title: "Turnaje",
@@ -699,19 +703,6 @@ private struct LockedPreview: Identifiable {
     let headline: String
     let summary: String
     let items: [(symbol: String, title: String, detail: String)]
-
-    static let online = LockedPreview(
-        id: "online",
-        title: "Hrát online",
-        headline: "Online hra je zatím uzamčená",
-        summary: "Online zápas spojí dva hráče na dálku ve stejném kole. Zatím si ho můžeš jen prohlédnout.",
-        items: [
-            ("person.2.fill", "Soupeři", "Najdeš hráče se stejnou úrovní a zahraješ si X01 na dálku."),
-            ("link", "Pozvánka", "Pošleš odkaz kamarádovi a zápas začne bez hledání soupeře."),
-            ("chart.bar.fill", "Žebříček", "Online průměr a pořadí mezi hráči Dartiqo."),
-            ("bolt.fill", "Živý zápas", "Skóre se počítá u obou hráčů ve stejném kole.")
-        ]
-    )
 
     static let tournaments = LockedPreview(
         id: "tournaments",

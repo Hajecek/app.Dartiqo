@@ -1,5 +1,13 @@
 import SwiftUI
 
+/// Průvodce zakládá nebo upravuje online lobby místo lokálního zápasu.
+struct OnlineSetupMode {
+    var editing = false
+    var isPublic = true
+    var hasPassword = false
+    var finish: (SetupDraft, OnlineLobbySettings) async -> Void
+}
+
 struct PlayView: View {
     @EnvironmentObject var store: AppStore
     var body: some View {
@@ -129,6 +137,14 @@ struct SetupView: View {
     @State private var gameChosen: Bool
     /// Krok, kterým obrazovka začala. Zpět z něj vede systémová navigace.
     private let entryStep: SetupStep
+    /// Online zápas nezačne na telefonu. Po pravidlech se založí nebo upraví lobby.
+    private let online: OnlineSetupMode?
+    @Binding private var onlineNotice: String?
+    @State private var lobbyPassword = ""
+    @State private var onlinePublic = true
+    @State private var onlineSending = false
+    private var isOnline: Bool { online != nil }
+    private var isEditingLobby: Bool { online?.editing == true }
     private var startsWithGame: Bool { entryStep == .game }
     private let presetScores = [101, 301, 501, 701, 1001]
     private var options: Binding<MatchOptions> { Binding(get: { draft.config.settings }, set: { draft.config.options = $0 }) }
@@ -138,14 +154,21 @@ struct SetupView: View {
         onHome: (() -> Void)? = nil,
         coversLiveBar: Bool = false,
         startAtOpening: Bool = false,
-        pickGame: Bool = true
+        pickGame: Bool = true,
+        online: OnlineSetupMode? = nil,
+        onlineNotice: Binding<String?> = .constant(nil)
     ) {
         self.onHome = onHome
         self.coversLiveBar = coversLiveBar
+        self.online = online
+        self._onlineNotice = onlineNotice
+        _onlinePublic = State(initialValue: online?.isPublic ?? true)
         let draft = preset ?? SetupDraft(mode: mode)
         let entry: SetupStep
         // Rychlá hra přijde s hotovou sestavou a má hned ukázat, kdo hází první.
-        if startAtOpening {
+        if let online {
+            entry = online.editing ? .rules : .players
+        } else if startAtOpening {
             entry = draft.seats.count > 1 ? .opening : .rules
         } else {
             entry = pickGame ? .game : .players
@@ -180,10 +203,17 @@ struct SetupView: View {
         draft.seats.count == 1 && draft.includesMe
             && !draft.seats[0].isBot && !draft.seats[0].ghostSeat
     }
-    private var advanceTitle: String { isSoloTraining ? "Trénovat" : "Hrát" }
-    private var advanceSymbol: String { isSoloTraining ? "scope" : "play.fill" }
+    private var advanceTitle: String {
+        if isOnline, isLastStep { return isEditingLobby ? "Uložit" : "Založit lobby" }
+        return isSoloTraining ? "Trénovat" : "Hrát"
+    }
+    private var advanceSymbol: String {
+        if isOnline, isLastStep { return isEditingLobby ? "checkmark" : "person.2.fill" }
+        return isSoloTraining ? "scope" : "play.fill"
+    }
     /// Proč ještě nejde spustit zápas. U sóla je to nápověda, tlačítko zůstane zapnuté.
     private var advanceHint: String? {
+        if isOnline { return nil }
         if let rosterHint { return rosterHint }
         if showsOpening, opening == nil { return "Vyber, kdo hází první." }
         if opening == .pick, pickedStarter == nil { return "Vyber hráče, který začíná." }
@@ -192,6 +222,10 @@ struct SetupView: View {
     }
     /// Co chybí v sestavě. U sóla je to nápověda, pokračovat jde dál.
     private var rosterHint: String? {
+        if isOnline {
+            if !canContinue { return "Doplň jméno soupeře." }
+            return draft.seats.count < 2 ? "Soupeře můžeš přidat teď, nebo ho pozvat potom v lobby." : nil
+        }
         if isSoloTraining { return "Sám u terče otevře trénink. Přidej soupeře, pokud chceš zápas." }
         if draft.seats.contains(where: \.ghostSeat) {
             let offer = draft.ghostKind.flatMap {
@@ -205,7 +239,8 @@ struct SetupView: View {
 
     /// Kroky průvodce. „Kdo začíná“ má smysl jen pro víc hráčů.
     private var flow: [SetupStep] {
-        showsOpening ? [.game, .players, .rules, .opening] : [.game, .players, .rules]
+        if isOnline { return isEditingLobby ? [.rules] : [.players, .rules] }
+        return showsOpening ? [.game, .players, .rules, .opening] : [.game, .players, .rules]
     }
     private var isLastStep: Bool { step == flow.last }
     private func neighbour(_ offset: Int) -> SetupStep? {
@@ -272,7 +307,7 @@ struct SetupView: View {
         .navigationBarBackButtonHidden(showsStepBack)
         .screen()
         .scrollDismissesKeyboard(.interactively)
-        .navigationTitle(step == .game ? "Nový zápas" : step.title)
+        .navigationTitle(isEditingLobby ? "Upravit lobby" : step == .game || (isOnline && step == entryStep) ? "Nový zápas" : step.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if showsStepBack, let previous = neighbour(-1) {
@@ -514,7 +549,7 @@ struct SetupView: View {
         }
     }
 
-    private var canAdvance: Bool { isSoloTraining || canPlay }
+    private var canAdvance: Bool { isOnline ? canContinue : (isSoloTraining || canPlay) }
 
     private func liveMark(_ match: Match) -> String {
         if match.finished { return "Výsledek" }
@@ -541,7 +576,13 @@ struct SetupView: View {
 
     private var setupBar: some View {
         VStack(spacing: 8) {
-            if let stepHint {
+            if let onlineNotice, !onlineNotice.isEmpty {
+                Text(onlineNotice)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+            } else if let stepHint {
                 Text(stepHint)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(stepReady ? Color.secondary : Color.primary)
@@ -572,7 +613,7 @@ struct SetupView: View {
                         }
                     } label: {
                         HStack(spacing: 8) {
-                            Text(isLastStep ? advanceTitle : "Další")
+                            Text(isLastStep ? (onlineSending ? "Zakládám…" : advanceTitle) : "Další")
                                 .font(.headline)
                                 .contentTransition(.opacity)
                             Image(systemName: isLastStep ? advanceSymbol : "arrow.right")
@@ -585,7 +626,7 @@ struct SetupView: View {
                     }
                     .buttonStyle(.plain)
                     .glassEffect(stepReady ? .regular.tint(Theme.brand).interactive() : .regular, in: Capsule())
-                    .disabled(!stepReady)
+                    .disabled(!stepReady || onlineSending)
                     .animation(motion, value: stepReady)
                     .animation(motion, value: isLastStep)
                     .animation(motion, value: isSoloTraining)
@@ -1028,7 +1069,8 @@ struct SetupView: View {
     }
 
     private var canAddSeat: Bool {
-        draft.seats.count < 4 && !draft.seats.contains(where: \.ghostSeat)
+        if isOnline { return draft.seats.count < 2 }
+        return draft.seats.count < 4 && !draft.seats.contains(where: \.ghostSeat)
     }
 
     private func openBotPicker(seatID: UUID) {
@@ -1096,11 +1138,13 @@ struct SetupView: View {
         VStack(alignment: .leading, spacing: 12) {
             pageHeader(
                 "Kdo bude hrát?",
-                hint: isSoloTraining
+                hint: isOnline
+                    ? "Ty a jeden soupeř. Bota ani ghosta online nevezmeš."
+                    : isSoloTraining
                     ? "Jsi tu sám. Přidej soupeře, nebo jdi trénovat."
                     : "Kamarád, bot, nebo v X01 ghost."
             ) {
-                Text("\(draft.seats.count)/4")
+                Text("\(draft.seats.count)/\(isOnline ? 2 : 4)")
                     .font(.caption.weight(.bold).monospacedDigit())
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 9)
@@ -1117,15 +1161,17 @@ struct SetupView: View {
                         .font(.headline)
                         .padding(.top, 6)
                     HStack(spacing: 10) {
-                        opponentOption("Kamarád", detail: "Ze seznamu přátel", icon: "person.fill", tint: GameMode.aroundClock.tileColors) {
+                        opponentOption("Kamarád", detail: isOnline ? "Ze seznamu přátel, nebo až v lobby" : "Ze seznamu přátel", icon: "person.fill", tint: GameMode.aroundClock.tileColors) {
                             openFriendPicker()
                         }
-                        opponentOption("Bot", detail: "Od nováčka po profíka", icon: "cpu", tint: GameMode.cricket.tileColors) {
-                            addBot()
-                        }
-                        if draft.config.mode == .x01 {
-                            opponentOption("Ghost", detail: "Proti svému výkonu", icon: "person.fill.viewfinder", tint: GameMode.countUp.tileColors) {
-                                openGhostPicker(adding: true)
+                        if !isOnline {
+                            opponentOption("Bot", detail: "Od nováčka po profíka", icon: "cpu", tint: GameMode.cricket.tileColors) {
+                                addBot()
+                            }
+                            if draft.config.mode == .x01 {
+                                opponentOption("Ghost", detail: "Proti svému výkonu", icon: "person.fill.viewfinder", tint: GameMode.countUp.tileColors) {
+                                    openGhostPicker(adding: true)
+                                }
                             }
                         }
                     }
@@ -1133,15 +1179,19 @@ struct SetupView: View {
                 .transition(.opacity)
             } else {
                 Label(
-                    draft.seats.contains(where: \.ghostSeat) ? "Ghost se hraje jen jeden na jednoho." : "Sestava je plná. Pro dalšího hráče někoho odeber.",
+                    isOnline
+                        ? "Online je jeden na jednoho."
+                        : draft.seats.contains(where: \.ghostSeat) ? "Ghost se hraje jen jeden na jednoho." : "Sestava je plná. Pro dalšího hráče někoho odeber.",
                     systemImage: "info.circle"
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
 
-            scoreOnlyCard
-                .padding(.top, 6)
+            if !isOnline {
+                scoreOnlyCard
+                    .padding(.top, 6)
+            }
         }
         .animation(motion, value: draft.seats.count)
         .animation(motion, value: canAddSeat)
@@ -1412,9 +1462,11 @@ struct SetupView: View {
         let shape = RoundedRectangle(cornerRadius: 26, style: .continuous)
         return Menu {
             Button("Kamarád", systemImage: "person.fill") { openFriendPicker() }
-            Button("Bot", systemImage: "cpu") { addBot() }
-            if draft.config.mode == .x01 {
-                Button("Ghost", systemImage: "person.fill.viewfinder") { openGhostPicker(adding: true) }
+            if !isOnline {
+                Button("Bot", systemImage: "cpu") { addBot() }
+                if draft.config.mode == .x01 {
+                    Button("Ghost", systemImage: "person.fill.viewfinder") { openGhostPicker(adding: true) }
+                }
             }
         } label: {
             VStack(spacing: 12) {
@@ -1498,7 +1550,8 @@ struct SetupView: View {
     }
 
     private var friendPickerSlots: Int {
-        max(1, min(4, 4 - draft.seats.count))
+        if isOnline { return 1 }
+        return max(1, min(4, 4 - draft.seats.count))
     }
 
     private func openFriendPicker(replacing seatID: UUID? = nil) {
@@ -1655,7 +1708,18 @@ struct SetupView: View {
 
     private var rulesStep: some View {
         VStack(alignment: .leading, spacing: 12) {
-            pageHeader("Jak se bude hrát?", hint: "Výchozí nastavení stačí. Změň jen to, co chceš jinak.")
+            pageHeader(
+                "Jak se bude hrát?",
+                hint: isOnline
+                    ? "Stejně jako lokální X01. Online se hraje bez double in."
+                    : "Výchozí nastavení stačí. Změň jen to, co chceš jinak."
+            )
+            if isOnline {
+                VStack(spacing: 0) {
+                    ruleRow("Lobby", icon: onlinePublic ? "globe" : "lock.fill", value: onlinePublic ? "Veřejné" : "Uzavřené") { onlineVisibilityGroup }
+                }
+                .setupCard()
+            }
             VStack(spacing: 0) {
                 switch draft.config.mode {
                 case .x01:
@@ -1663,11 +1727,15 @@ struct SetupView: View {
                     ruleDivider
                     ruleRow("Zavření", icon: "checkmark.seal.fill") { outGroup }
                     ruleDivider
-                    ruleRow("Otevření", icon: "lock.open.fill") { inGroup }
-                    ruleDivider
+                    if !isOnline {
+                        ruleRow("Otevření", icon: "lock.open.fill") { inGroup }
+                        ruleDivider
+                    }
                     ruleRow("Délka zápasu", icon: "trophy.fill") { lengthGroup }
-                    ruleDivider
-                    ruleRow("Limit šipek", icon: "timer", value: limitValue) { limitGroup }
+                    if !isOnline {
+                        ruleDivider
+                        ruleRow("Limit šipek", icon: "timer", value: limitValue) { limitGroup }
+                    }
                 case .cricket:
                     ruleRow("Body", icon: "plus.forwardslash.minus") { cricketScoringGroup }
                     ruleDivider
@@ -1681,7 +1749,7 @@ struct SetupView: View {
                 }
             }
             .setupCard()
-            if draft.config.mode == .x01 && draft.seats.count > 1 {
+            if !isOnline, draft.config.mode == .x01, draft.seats.count > 1 {
                 handicapCardSection
             }
         }
@@ -2019,6 +2087,29 @@ struct SetupView: View {
                 withAnimation(motion) { options.wrappedValue.clockStyle = style }
             }
             ruleNote("\(draft.config.settings.clockStyle.title). Postupně 1–20 a nakonec bull. U doublů a triplů se bull bere jen jako 50.")
+        }
+    }
+
+    private var onlineVisibilityGroup: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            OptionSwitcher(
+                options: [(id: true, title: "Veřejné"), (id: false, title: "Uzavřené")],
+                selection: onlinePublic
+            ) { open in
+                withAnimation(motion) { onlinePublic = open }
+            }
+            if !onlinePublic {
+                TextField(online?.hasPassword == true ? "Heslo zůstane stejné" : "Heslo, nepovinné", text: $lobbyPassword)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .padding(.horizontal, 14)
+                    .frame(minHeight: 46)
+                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .transition(.opacity)
+            }
+            ruleNote(onlinePublic
+                     ? "Lobby uvidí všichni v seznamu a můžou se rovnou připojit."
+                     : "V seznamu není. Vstoupí jen ten, kdo zná kód, nebo kamarád z pozvánky.")
         }
     }
 
@@ -2532,6 +2623,30 @@ struct SetupView: View {
     private func advance() {
         commitScoreFromField()
         hideKeyboard()
+        if isOnline {
+            guard !onlineSending else { return }
+            onlineSending = true
+            var setup = draft
+            setup.config.mode = .x01
+            setup.config.doubleIn = false
+            setup.config.handicaps = nil
+            var options = setup.config.options ?? MatchOptions()
+            options.dartLimit = nil
+            setup.config.options = options
+            for index in setup.seats.indices { setup.seats[index].handicap = nil }
+            onlineNotice = nil
+            let settings = OnlineLobbySettings(
+                config: setup.config,
+                isPublic: onlinePublic,
+                password: lobbyPassword,
+                keepPassword: isEditingLobby && lobbyPassword.isEmpty && online?.hasPassword == true
+            )
+            Task {
+                await online?.finish(setup, settings)
+                onlineSending = false
+            }
+            return
+        }
         if isSoloTraining {
             openSoloTraining = true
             return

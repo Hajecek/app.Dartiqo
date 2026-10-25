@@ -67,6 +67,8 @@ struct DirectoryPerson: Codable, Identifiable, Equatable {
     var photo: String?
     /// none, outgoing, incoming, accepted nebo declined. Starší odpověď klíč nemá.
     var relation: String?
+    /// Veřejné id účtu. Online zápas ho používá jako id hráče.
+    var publicId: String?
 
     var fullName: String { "\(first) \(last)".trimmingCharacters(in: .whitespaces) }
 }
@@ -345,6 +347,117 @@ struct DartiqoAPI {
         }
         guard (200..<300).contains(status) else {
             throw APIError.server(decoded.message ?? "Server odpověděl chybou \(status).")
+        }
+        return decoded
+    }
+
+    func currentOnline() async throws -> OnlineMatch? {
+        try await online("api/v1/online-matches/current", method: "GET").match
+    }
+
+    func onlineInvites() async throws -> [OnlineInvite] {
+        try await online("api/v1/online-invites", method: "GET").invites
+    }
+
+    func onlineMatch(_ id: String) async throws -> OnlineSnapshot {
+        try await online("api/v1/online-matches/\(id)", method: "GET")
+    }
+
+    func createOnline(_ settings: OnlineLobbySettings) async throws -> OnlineMatch {
+        let body = try JSONSerialization.data(withJSONObject: settings.body)
+        return try await requireMatch(online("api/v1/online-matches", body: body))
+    }
+
+    func updateOnline(_ id: String, settings: OnlineLobbySettings) async throws -> OnlineSnapshot {
+        let body = try JSONSerialization.data(withJSONObject: settings.body)
+        return try await online("api/v1/online-matches/\(id)/settings", body: body)
+    }
+
+    func onlineLobbies(kind: String?) async throws -> OnlineSnapshot {
+        try await online("api/v1/online-lobbies", method: "GET", query: kind.map { [URLQueryItem(name: "kind", value: $0)] } ?? [])
+    }
+
+    func joinPublicOnline(_ id: String) async throws -> OnlineMatch {
+        try await requireMatch(online("api/v1/online-matches/\(id)/join", body: Data("{}".utf8)))
+    }
+
+    func joinOnline(code: String, password: String) async throws -> OnlineMatch {
+        let body = try JSONSerialization.data(withJSONObject: ["code": code, "password": password])
+        guard let match = try await online("api/v1/online-matches/join", body: body).match else {
+            throw APIError.server("Server vrátil neúplnou odpověď.")
+        }
+        return match
+    }
+
+    func setOnlineReady(_ id: String, ready: Bool) async throws -> OnlineMatch {
+        let body = try JSONSerialization.data(withJSONObject: ["ready": ready])
+        return try await requireMatch(online("api/v1/online-matches/\(id)/ready", body: body))
+    }
+
+    func startOnline(_ id: String) async throws -> OnlineMatch {
+        try await requireMatch(online("api/v1/online-matches/\(id)/start", body: Data("{}".utf8)))
+    }
+
+    func inviteOnline(_ id: String, userId: Int) async throws -> OnlineSnapshot {
+        let body = try JSONSerialization.data(withJSONObject: ["userId": userId])
+        return try await online("api/v1/online-matches/\(id)/invites", body: body)
+    }
+
+    func acceptOnlineInvite(_ id: Int) async throws -> OnlineMatch {
+        try await requireMatch(online("api/v1/online-invites/\(id)/accept", body: Data("{}".utf8)))
+    }
+
+    func declineOnlineInvite(_ id: Int) async throws {
+        _ = try await online("api/v1/online-invites/\(id)/decline", body: Data("{}".utf8))
+    }
+
+    func abandonOnline(_ id: String) async throws {
+        _ = try await online("api/v1/online-matches/\(id)/abandon", body: Data("{}".utf8))
+    }
+
+    func throwOnlineDart(_ id: String, seq: Int, dart: Dart) async throws -> OnlineMatch {
+        let body = try JSONSerialization.data(withJSONObject: [
+            "seq": seq,
+            "dartId": UUID().uuidString.lowercased(),
+            "dart": ["segment": dart.segment, "multiplier": dart.multiplier],
+        ])
+        return try await requireMatch(online("api/v1/online-matches/\(id)/darts", body: body))
+    }
+
+    private func requireMatch(_ snapshot: OnlineSnapshot) throws -> OnlineMatch {
+        guard let match = snapshot.match else { throw APIError.server("Server vrátil neúplnou odpověď.") }
+        return match
+    }
+
+    private func online(_ path: String, method: String = "POST", body: Data? = nil, query: [URLQueryItem] = []) async throws -> OnlineSnapshot {
+        var url = baseURL.appending(path: path)
+        if !query.isEmpty { url.append(queryItems: query) }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.timeoutInterval = 12
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let body {
+            request.httpBody = body
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw APIError.network(error.localizedDescription)
+        }
+        let decoded = (try? JSONDecoder().decode(OnlineSnapshot.self, from: data)) ?? OnlineSnapshot()
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 401 {
+            throw APIError.unauthorized(decoded.message ?? "Přihlášení vypršelo.")
+        }
+        guard (200..<300).contains(status) else {
+            throw OnlineFailure(message: decoded.message ?? "Server odpověděl chybou \(status).", match: decoded.match)
         }
         return decoded
     }

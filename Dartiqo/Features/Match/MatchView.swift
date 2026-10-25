@@ -113,6 +113,24 @@ struct MatchView: View {
     /// Šipky po jedné, nebo součet celého kola.
     @State private var voiceMode: VoiceScoreMode = .darts
     @State private var showMatchXP = false
+    @State private var showOnlineLeave = false
+    @ObservedObject private var link: OnlineMatchLink
+    /// Volá se po konci nebo opuštění online zápasu.
+    private var onOnlineExit: () -> Void
+
+    init(online: OnlineMatchLink? = nil, onOnlineExit: @escaping () -> Void = {}) {
+        _link = ObservedObject(wrappedValue: online ?? .local)
+        self.onOnlineExit = onOnlineExit
+    }
+
+    /// Online zápas drží propojení se serverem. Lokální hra zůstává v `AppStore`.
+    private var activeMatch: Match? {
+        get { link.isOnline ? link.game : store.activeMatch }
+        nonmutating set {
+            if link.isOnline { link.propose(newValue) } else { store.activeMatch = newValue }
+        }
+    }
+
     var body: some View { clockTracking(screen) }
     private var screen: some View {
         matchPrompts
@@ -127,15 +145,60 @@ struct MatchView: View {
                 if let message { error = message }
             }
             .onChange(of: isHoldingVisit) { _, holding in
-                if holding { voice.stop() }
+                if holding { voice.stop() } else { applyRemote() }
             }
+            .onChange(of: link.remoteToken) { _, _ in applyRemote() }
+            .onChange(of: legCeremony == nil) { _, idle in if idle { applyRemote() } }
+            .onChange(of: link.resetToken) { _, _ in resetAfterServerSync() }
+            .onChange(of: link.notice) { _, message in
+                guard let message else { return }
+                error = message
+                link.notice = nil
+            }
+            .alert("Opustit zápas?", isPresented: $showOnlineLeave) {
+                Button("Opustit zápas", role: .destructive) {
+                    Task { if await link.abandon() { onOnlineExit() } }
+                }
+                Button("Zůstat", role: .cancel) {}
+            } message: { Text("Zápas skončí a soupeř uvidí, že jsi odešel.") }
+    }
+    /// Šipky soupeře se ukážou stejně jako kolo bota. Během pauzy po kole nebo ceremonie počkají.
+    private func applyRemote() {
+        guard link.isOnline, !isHoldingVisit, legCeremony == nil, !leavingHome, let update = link.takeRemote() else { return }
+        if let visit = update.visit, link.isRemote(visit.player) {
+            if visit.bust {
+                store.feedback(spoken: "Přehoz")
+            } else {
+                store.feedback(visit.credited, checkout: visit.checkout, matchWon: update.game.finished)
+            }
+            applyVisitHold(game: update.game, darts: visit.darts, player: visit.player, fromBot: true)
+        } else {
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { activeMatch = update.game }
+        }
+    }
+    /// Telefon se srovnal se serverem. Rozjeté kolo, oprava ani ceremonie už neplatí.
+    private func resetAfterServerSync() {
+        holdGeneration += 1
+        isHoldingVisit = false
+        holdPlayer = nil
+        holdDarts = []
+        legCeremony = nil
+        oneEightyFlash = nil
+        ceremonyLeaving = false
+        ceremonyDismissing = false
+        editingDart = nil
+        correcting = nil
+        cameraHits = []
+        sumText = ""
+        multiplier = 1
+        revision = UUID()
     }
     private var matchCanvas: some View {
         ZStack {
             Group {
                 if leavingHome {
                     MatchSavedSplash()
-                } else if let game = store.activeMatch {
+                } else if let game = activeMatch {
                     if game.finished && !isHoldingVisit {
                         result(game)
                             .transition(.opacity)
@@ -196,7 +259,7 @@ struct MatchView: View {
     private var matchCovers: some View {
         matchCanvas
             .fullScreenCover(isPresented: $decidingLeg) {
-                if let game = store.activeMatch {
+                if let game = activeMatch {
                     BullOffView(
                         names: game.players.map(\.name),
                         bots: game.players.map(\.botLevel),
@@ -207,7 +270,7 @@ struct MatchView: View {
                 }
             }
             .fullScreenCover(isPresented: $showDecidingStarter) {
-                if let game = store.activeMatch {
+                if let game = activeMatch {
                     DecidingLegStarterView(
                         names: game.players.map(\.name),
                         bots: game.players.map(\.botLevel),
@@ -218,18 +281,18 @@ struct MatchView: View {
                 }
             }
             .fullScreenCover(item: $boardDetail) { selection in
-                if let game = store.activeMatch {
+                if let game = activeMatch {
                     boardDetailScreen(game, player: selection.player)
                 }
             }
             .sheet(item: $statsPlayer) { selection in
-                if let game = store.activeMatch {
+                if let game = activeMatch {
                     playerStatsSheet(game, player: selection.player)
                 }
             }
             .sheet(isPresented: $showProgress) { progressSheet }
             .fullScreenCover(isPresented: pauseCoverPresented) {
-                if let game = store.activeMatch {
+                if let game = activeMatch {
                     pauseScreen(game)
                         .presentationBackground(MatchColors.background)
                         .preferredColorScheme(.dark)
@@ -240,7 +303,7 @@ struct MatchView: View {
         matchCovers
             .alert("Přerušit zápas?", isPresented: $showLeave) {
                 Button("Uložit a odejít") { saveAndLeave() }
-                Button("Vymazat zápas", role: .destructive) { store.activeMatch = nil; dismiss() }
+                Button("Vymazat zápas", role: .destructive) { activeMatch = nil; dismiss() }
                 Button("Zrušit", role: .cancel) {}
             } message: { Text("Ukládá se i rozehrané kolo po jedné nebo dvou šipkách.") }
             .confirmationDialog("Kolik šipek jsi použil na zavření?", isPresented: $finishPrompt, titleVisibility: .visible) {
@@ -269,20 +332,26 @@ struct MatchView: View {
     @ViewBuilder
     private var visitLogSheet: some View {
         NavigationStack {
-            if let game = store.activeMatch {
-                VisitLog(game: game, onRewind: { rewind(to: $0) }).toolbar { ToolbarItem(placement: .confirmationAction) { Button("Hotovo") { showLog = false } } }
+            if let game = activeMatch {
+                VisitLog(game: game, onRewind: { visit in
+                    if link.isOnline {
+                        error = "V online zápase se kola nevracejí. Skóre drží server pro oba hráče."
+                    } else {
+                        rewind(to: visit)
+                    }
+                }).toolbar { ToolbarItem(placement: .confirmationAction) { Button("Hotovo") { showLog = false } } }
             }
         }
     }
     private var settingsSheet: some View {
         MatchSettingsSheet(
             options: matchOptions,
-            mode: store.activeMatch?.config.mode ?? .x01,
+            mode: activeMatch?.config.mode ?? .x01,
             showsBotTempo: settingsShowsBotTempo
         )
     }
     private var settingsShowsBotTempo: Bool {
-        guard let game = store.activeMatch else { return false }
+        guard let game = activeMatch else { return false }
         return game.players.contains { $0.botLevel != nil } || game.ghostVisits != nil
     }
     @ViewBuilder
@@ -291,7 +360,7 @@ struct MatchView: View {
     }
     @ViewBuilder
     private var dartEditCover: some View {
-        if let editingDart, let game = store.activeMatch {
+        if let editingDart, let game = activeMatch {
             let darts = isHoldingVisit ? holdDarts : game.currentDarts
             if darts.indices.contains(editingDart) {
                 DartEditSheet(
@@ -306,7 +375,7 @@ struct MatchView: View {
     }
     /// Člověk může přepsat šipku, dokud je kolo ještě na obrazovce. Bot, duch a součet kola ne.
     private func canEditThrownDarts(_ game: Match) -> Bool {
-        guard !paused, legCeremony == nil, !showDecidingStarter, !game.finished else { return false }
+        guard !link.isOnline, !paused, legCeremony == nil, !showDecidingStarter, !game.finished else { return false }
         if isHoldingVisit {
             guard let player = holdPlayer, game.players.indices.contains(player) else { return false }
             guard game.players[player].botLevel == nil, !game.isGhost(player) else { return false }
@@ -329,7 +398,7 @@ struct MatchView: View {
         scheduleVisitHold(darts: holdDarts, celebrate180: oneEightyFlash != nil)
     }
     private func prepareMatch() {
-        if let game = store.activeMatch {
+        if let game = activeMatch {
             seedSurface(for: game)
             UIApplication.shared.isIdleTimerDisabled = game.config.settings.keepAwake
             if game.currentPlayer.botLevel != nil || game.isGhostTurn { holdDarts = game.currentDarts }
@@ -340,7 +409,7 @@ struct MatchView: View {
     }
     /// Pauza je celé okno nad zápasem. Lišta zápasu pod ním zůstává, proto při zavření nahoře neblikne.
     private var showsPauseScreen: Bool {
-        guard paused, let game = store.activeMatch else { return false }
+        guard paused, let game = activeMatch else { return false }
         return !(game.finished && !isHoldingVisit)
     }
     private var pauseCoverPresented: Binding<Bool> {
@@ -380,15 +449,23 @@ struct MatchView: View {
     @ToolbarContentBuilder
     private var matchToolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .cancellationAction) {
-            Button { showLeave = true } label: { Image(systemName: "xmark") }
+            Button {
+                if !link.isOnline {
+                    showLeave = true
+                } else if activeMatch?.finished == true {
+                    onOnlineExit()
+                } else {
+                    showOnlineLeave = true
+                }
+            } label: { Image(systemName: "xmark") }
                 .accessibilityLabel("Odejít ze hry")
-            if store.activeMatch?.finished != true {
+            if !link.isOnline, activeMatch?.finished != true {
                 Button { showPause() } label: { Image(systemName: "pause.fill") }
                     .accessibilityLabel("Pozastavit hru")
             }
         }
         ToolbarItem(placement: .principal) {
-            if let game = store.activeMatch {
+            if let game = activeMatch {
                 Text(game.config.mode.shortTitle).font(.headline)
             } else {
                 Text("Zápas").font(.headline)
@@ -402,23 +479,24 @@ struct MatchView: View {
         }
     }
     private var botTaskKey: String {
-        guard let g = store.activeMatch else { return "none" }
+        guard let g = activeMatch else { return "none" }
         // isHoldingVisit / legCeremony intentionally omitted — must not cancel mid-throw.
         return "\(g.id)-\(g.active)-\(g.leg)-\(g.visits.last?.id.uuidString ?? "start")-\(g.currentDarts.map(\.label).joined())-\(paused)-\(showSettings)-\(showLog)-\(showProgress)-\(showLeave)-\(statsPlayer != nil)-\(scenePhase == .active)-\(g.finished)-\(g.legWinner ?? -1)-\(g.needsDecidingStarter)-\(showDecidingStarter)-\(revision)"
     }
     private var botIsThrowing: Bool {
-        guard let game = store.activeMatch, !isHoldingVisit else { return false }
+        guard let game = activeMatch, !isHoldingVisit else { return false }
         // Bot čeká, dokud ceremonie úplně nezmizí — šipka nesmí naskočit v prolínání.
         if legCeremony != nil || showDecidingStarter || game.needsDecidingStarter { return false }
-        return game.currentPlayer.botLevel != nil || game.isGhostTurn
+        return game.currentPlayer.botLevel != nil || game.isGhostTurn || (link.isRemote(game.active) && game.legWinner == nil && !game.finished)
     }
     private var holdingBotVisit: Bool {
-        guard isHoldingVisit, let player = holdPlayer, let game = store.activeMatch else { return false }
-        return game.players[player].botLevel != nil || game.isGhost(player)
+        guard isHoldingVisit, let player = holdPlayer, let game = activeMatch else { return false }
+        return game.players[player].botLevel != nil || game.isGhost(player) || link.isRemote(player)
     }
     private var showingBotBoard: Bool { botIsThrowing || holdingBotVisit }
     private func stripDarts(for game: Match) -> [Dart] {
         if isHoldingVisit { return holdDarts }
+        if link.isRemote(game.active) { return game.currentDarts }
         if game.currentPlayer.botLevel != nil || game.isGhostTurn { return holdDarts.isEmpty ? game.currentDarts : holdDarts }
         return game.currentDarts
     }
@@ -477,7 +555,7 @@ struct MatchView: View {
                             labels: game.currentDarts.map(\.label),
                             dartCount: game.currentDarts.count,
                             onDart: { dart, point in recordCameraHit(dart, point: point) },
-                            onCorrect: cameraHits.count == game.currentDarts.count ? { correcting = $0 } : nil
+                            onCorrect: !link.isOnline && cameraHits.count == game.currentDarts.count ? { correcting = $0 } : nil
                         )
                     } else {
                         dartGrid(game, shown: shown)
@@ -519,9 +597,9 @@ struct MatchView: View {
                     labels: holdDarts.map(\.label),
                     ink: MatchColors.ink,
                     fill: MatchColors.ink.opacity(0.07),
-                    onCorrect: cameraHits.count == holdDarts.count && legCeremony == nil ? { correcting = $0 } : nil
+                    onCorrect: !link.isOnline && cameraHits.count == holdDarts.count && legCeremony == nil ? { correcting = $0 } : nil
                 )
-                if cameraHits.count == holdDarts.count {
+                if !link.isOnline, cameraHits.count == holdDarts.count {
                     Text("Nesedí pole? Klepni a oprav ho.")
                         .font(AppFont.caption(12))
                         .foregroundStyle(MatchColors.ink.opacity(0.5))
@@ -537,11 +615,11 @@ struct MatchView: View {
     // MARK: Kamera: opravy a učení
 
     private func recordCameraHit(_ dart: Dart, point: SIMD2<Double>?) -> Bool {
-        let visits = store.activeMatch?.visits.count ?? 0
-        let pending = store.activeMatch?.currentDarts.count ?? 0
+        let visits = activeMatch?.visits.count ?? 0
+        let pending = activeMatch?.currentDarts.count ?? 0
         if pending == 0, !isHoldingVisit { cameraHits = [] }
         hit(dart)
-        let accepted = (store.activeMatch?.visits.count ?? 0) > visits || (store.activeMatch?.currentDarts.count ?? 0) > pending
+        let accepted = (activeMatch?.visits.count ?? 0) > visits || (activeMatch?.currentDarts.count ?? 0) > pending
         if accepted { cameraHits.append(CameraHit(dart: dart, point: point)) }
         return accepted
     }
@@ -579,7 +657,7 @@ struct MatchView: View {
 
     /// Oprava přepíše hod v zápase a uloží se jako učební vzorek.
     private func correctCameraHit(_ index: Int, to dart: Dart) {
-        guard legCeremony == nil, var game = store.activeMatch, cameraHits.indices.contains(index) else { return }
+        guard legCeremony == nil, var game = activeMatch, cameraHits.indices.contains(index) else { return }
         let darts = isHoldingVisit ? holdDarts : game.currentDarts
         guard darts.count == cameraHits.count, darts.indices.contains(index) else { return }
         var hits = cameraHits
@@ -596,16 +674,16 @@ struct MatchView: View {
         holdPlayer = nil
         holdDarts = []
         for _ in index..<darts.count { game.undoLastInput() }
-        store.activeMatch = game
+        activeMatch = game
         cameraHits = Array(hits[..<index])
         var replay = darts
         replay[index] = dart
         for offset in index..<replay.count {
-            let visits = store.activeMatch?.visits.count ?? 0
-            let pending = store.activeMatch?.currentDarts.count ?? 0
+            let visits = activeMatch?.visits.count ?? 0
+            let pending = activeMatch?.currentDarts.count ?? 0
             hit(replay[offset])
-            let finished = (store.activeMatch?.visits.count ?? 0) > visits
-            guard finished || (store.activeMatch?.currentDarts.count ?? 0) > pending else { break }
+            let finished = (activeMatch?.visits.count ?? 0) > visits
+            guard finished || (activeMatch?.currentDarts.count ?? 0) > pending else { break }
             cameraHits.append(hits[offset])
             if finished { break }
         }
@@ -614,7 +692,7 @@ struct MatchView: View {
 
     /// Přepíše jednu šipku a zbytek kola zahraje znovu, ať sedí přehoz i zavření.
     private func replaceThrownDart(at index: Int, with dart: Dart) {
-        guard legCeremony == nil, var game = store.activeMatch else {
+        guard legCeremony == nil, var game = activeMatch else {
             editingDart = nil
             return
         }
@@ -647,7 +725,7 @@ struct MatchView: View {
             holdDarts = []
         }
         for _ in index..<source.count { game.undoLastInput() }
-        store.activeMatch = game
+        activeMatch = game
 
         let previousHits = cameraHits
         var tailHits: [CameraHit] = []
@@ -663,11 +741,11 @@ struct MatchView: View {
         replay[index] = dart
         var landed = false
         for offset in index..<replay.count {
-            let visits = store.activeMatch?.visits.count ?? 0
-            let pending = store.activeMatch?.currentDarts.count ?? 0
+            let visits = activeMatch?.visits.count ?? 0
+            let pending = activeMatch?.currentDarts.count ?? 0
             hit(replay[offset])
-            let finished = (store.activeMatch?.visits.count ?? 0) > visits
-            let advanced = finished || (store.activeMatch?.currentDarts.count ?? 0) > pending
+            let finished = (activeMatch?.visits.count ?? 0) > visits
+            let advanced = finished || (activeMatch?.currentDarts.count ?? 0) > pending
             guard advanced else { break }
             landed = true
             let tailIndex = offset - index
@@ -679,11 +757,11 @@ struct MatchView: View {
         if !landed {
             cameraHits = previousHits
             for original in source[index...] {
-                let visits = store.activeMatch?.visits.count ?? 0
-                let pending = store.activeMatch?.currentDarts.count ?? 0
+                let visits = activeMatch?.visits.count ?? 0
+                let pending = activeMatch?.currentDarts.count ?? 0
                 hit(original)
-                let finished = (store.activeMatch?.visits.count ?? 0) > visits
-                let advanced = finished || (store.activeMatch?.currentDarts.count ?? 0) > pending
+                let finished = (activeMatch?.visits.count ?? 0) > visits
+                let advanced = finished || (activeMatch?.currentDarts.count ?? 0) > pending
                 guard advanced else { break }
                 if finished { break }
             }
@@ -1109,6 +1187,7 @@ struct MatchView: View {
         let player = game.players[index]
         if let level = player.botLevel { return (nil, BotLevel.get(level).photo) }
         if game.isGhost(index) { return (store.profile?.photoJPEG, nil) }
+        if link.isOnline, let photo = link.photo(for: player.id) { return (photo, nil) }
         return (store.photo(for: player.id), nil)
     }
 
@@ -1943,7 +2022,7 @@ struct MatchView: View {
 
     @ViewBuilder
     private var progressSheet: some View {
-        if let game = store.activeMatch {
+        if let game = activeMatch {
             let shown = game.liveProjection
             let player = isHoldingVisit ? (holdPlayer ?? game.active) : game.active
             NavigationStack {
@@ -2446,6 +2525,9 @@ struct MatchView: View {
             HStack(spacing: 10) {
                 GlassEffectContainer(spacing: 10) {
                     HStack(spacing: 10) {
+                        if link.isOnline {
+                            onlineTurnBadge(game)
+                        } else {
                         Button { undo() } label: {
                             Label("Zpět", systemImage: "arrow.uturn.backward")
                                 .font(.headline)
@@ -2460,6 +2542,7 @@ struct MatchView: View {
                         .disabled(!canUndo)
                         .opacity(canUndo ? 1 : 0.45)
                         .accessibilityHint("Vrátí poslední šipku, včetně hodů bota")
+                        }
 
                         if showTotalConfirm {
                             Button { resolveTotal(game) } label: {
@@ -2509,6 +2592,28 @@ struct MatchView: View {
         }
     }
 
+    /// Online místo vracení šipek: kdo je na tahu.
+    private func onlineTurnBadge(_ game: Match) -> some View {
+        let mine = link.yourTurn
+        let name = game.players.indices.contains(game.active) ? game.players[game.active].name : "Soupeř"
+        return HStack(spacing: 8) {
+            Circle()
+                .fill(mine ? MatchColors.finish : Color.white.opacity(0.4))
+                .frame(width: 8, height: 8)
+            Text(mine ? "Jsi na tahu" : "Hází \(name)")
+                .font(.headline)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .contentTransition(.opacity)
+        }
+        .foregroundStyle(.primary)
+        .padding(.horizontal, 16)
+        .frame(minHeight: 52)
+        .glassEffect(.regular, in: Capsule())
+        .animation(reduceMotion ? nil : .smooth(duration: 0.25), value: mine)
+        .accessibilityElement(children: .combine)
+    }
+
     private func boardInput(_ game: Match) -> some View {
         let guide = checkoutGuide(game, shown: game.liveProjection, thrown: game.currentDarts.count)
         return matchDartboard(marks: game.currentDarts, interactive: true, suggestion: guide.route.first, onHit: hit)
@@ -2551,7 +2656,8 @@ struct MatchView: View {
         if isHoldingVisit { return holdSurface == .grid }
         return surface == .grid
     }
-    private func canUseTotal(_ game: Match) -> Bool { game.config.mode == .x01 && !game.config.anyDoubleIn(players: game.players.count) }
+    /// Online server potřebuje každou šipku zvlášť, součet kola tam nejde.
+    private func canUseTotal(_ game: Match) -> Bool { !link.isOnline && game.config.mode == .x01 && !game.config.anyDoubleIn(players: game.players.count) }
 
     /// Mikrofon smí běžet jen při tvém zápisu — ne během bota, holdu ani pauzy.
     private func isVoiceArmed(_ game: Match) -> Bool {
@@ -2565,12 +2671,13 @@ struct MatchView: View {
             && !game.finished
             && game.currentPlayer.botLevel == nil
             && !game.isGhostTurn
+            && (!link.isOnline || link.yourTurn)
             && !showProgress
             && !showDecidingStarter
     }
 
     private var voiceSyncKey: String {
-        guard let game = store.activeMatch else { return "none" }
+        guard let game = activeMatch else { return "none" }
         return "\(surface.rawValue)-\(game.active)-\(isHoldingVisit)-\(paused)-\(showProgress)-\(game.finished)-\(game.legWinner ?? -1)-\(game.needsBullOff)-\(game.needsDecidingStarter)-\(botIsThrowing)"
     }
 
@@ -2713,7 +2820,7 @@ struct MatchView: View {
             syncVoiceListening(for: game)
         }
         .onChange(of: voiceSyncKey) { _, _ in
-            if let live = store.activeMatch {
+            if let live = activeMatch {
                 syncVoiceListening(for: live)
             }
         }
@@ -2794,9 +2901,9 @@ struct MatchView: View {
     private func startVoiceListening(for game: Match) {
         let mode = effectiveVoiceMode(for: game)
         voice.start(mode: mode) { command in
-            guard let live = store.activeMatch, isVoiceArmed(live) else { return }
+            guard let live = activeMatch, isVoiceArmed(live) else { return }
             applyVoiceCommand(command, gameCanTotal: canUseTotal(live))
-            if let updated = store.activeMatch {
+            if let updated = activeMatch {
                 voice.updateMode(effectiveVoiceMode(for: updated))
             }
         }
@@ -2816,7 +2923,7 @@ struct MatchView: View {
                 error = "Součet \(score) hlasem jde jen v X01 bez double-in."
                 return
             }
-            guard let game = store.activeMatch else { return }
+            guard let game = activeMatch else { return }
             if !game.currentDarts.isEmpty {
                 error = "Součet jde jen na začátku kola. Dokonči nebo vrať šipky."
                 return
@@ -2905,13 +3012,13 @@ struct MatchView: View {
             changeSurface(.voice)
             return
         }
-        if let game = store.activeMatch {
+        if let game = activeMatch {
             voice.updateMode(effectiveVoiceMode(for: game))
         }
     }
 
     private func changeSurface(_ value: ScoringSurface) {
-        guard let live = store.activeMatch else { return }
+        guard let live = activeMatch else { return }
         if value == .total && !live.currentDarts.isEmpty {
             error = "Součet lze zapnout na začátku kola. Dokonči nebo vrať rozehrané šipky."
             return
@@ -2929,17 +3036,18 @@ struct MatchView: View {
         let entry: EntryStyle = value == .total ? .total : .darts
         if live.config.settings.entry != entry {
             Task { @MainActor in
-                guard var game = store.activeMatch else { return }
+                guard var game = activeMatch else { return }
                 var options = game.config.settings
                 guard options.entry != entry else { return }
                 options.entry = entry
                 game.config.options = options
-                store.activeMatch = game
+                activeMatch = game
             }
         }
     }
     private func hit(_ dart: Dart) {
-        guard !paused, !isHoldingVisit, legCeremony == nil, !showDecidingStarter, var game = store.activeMatch, game.currentPlayer.botLevel == nil, !game.finished, game.legWinner == nil, !game.needsBullOff, !game.needsDecidingStarter else { return }
+        guard !paused, !isHoldingVisit, legCeremony == nil, !showDecidingStarter, var game = activeMatch, game.currentPlayer.botLevel == nil, !game.finished, game.legWinner == nil, !game.needsBullOff, !game.needsDecidingStarter else { return }
+        guard !link.isOnline || link.yourTurn else { return }
         let thrower = game.active
         let count = game.visits.count
         do {
@@ -2955,12 +3063,12 @@ struct MatchView: View {
                 applyVisitHold(game: game, darts: visit.darts, player: thrower, fromBot: false)
             } else {
                 store.tapHaptic(.light)
-                store.activeMatch = game
+                activeMatch = game
             }
         } catch { self.error = error.localizedDescription }
     }
     private func rewind(to visit: Visit) {
-        guard var game = store.activeMatch else { return }
+        guard var game = activeMatch else { return }
         guard game.rewind(before: visit.id) else {
             error = "Na toto kolo se už nejde vrátit. Starší zápis nemá uložený stav."
             return
@@ -2975,13 +3083,13 @@ struct MatchView: View {
         holdDarts = []
         sumText = ""
         multiplier = 1
-        withAnimation(reduceMotion ? nil : .snappy(duration: 0.35)) { store.activeMatch = game }
+        withAnimation(reduceMotion ? nil : .snappy(duration: 0.35)) { activeMatch = game }
         revision = UUID()
         showLog = false
         store.feedback(nil)
     }
     private func undo() {
-        guard legCeremony == nil, var game = store.activeMatch else { return }
+        guard !link.isOnline, legCeremony == nil, var game = activeMatch else { return }
         store.tapHaptic(.soft)
         if isHoldingVisit {
             holdGeneration += 1
@@ -2990,7 +3098,7 @@ struct MatchView: View {
             oneEightyFlash = nil
         }
         game.undoLastInput()
-        withAnimation(reduceMotion ? nil : .snappy(duration: 0.35)) { store.activeMatch = game }
+        withAnimation(reduceMotion ? nil : .snappy(duration: 0.35)) { activeMatch = game }
         if cameraHits.count > game.currentDarts.count { cameraHits = Array(cameraHits.prefix(game.currentDarts.count)) }
         sumText = ""
         multiplier = 1
@@ -3019,17 +3127,17 @@ struct MatchView: View {
         }
         // Skóre se odečítá vlastní animací čísla. Zbytek hřiště se při tom nehýbe, ať rychlé šipky nezaseknou přepnutí tahu.
         if !fromBot && holdSurface == .grid {
-            store.activeMatch = game
+            activeMatch = game
         } else {
             withAnimation(reduceMotion ? nil : .snappy(duration: 0.35)) {
-                store.activeMatch = game
+                activeMatch = game
             }
         }
         scheduleVisitHold(darts: darts, celebrate180: celebrate180)
     }
     @MainActor private func scheduleVisitHold(darts: [Dart], celebrate180: Bool = false) {
-        let delay = store.activeMatch?.config.settings.botDelay ?? 1.5
-        let legOver = store.activeMatch?.legWinner != nil
+        let delay = activeMatch?.config.settings.botDelay ?? 1.5
+        let legOver = activeMatch?.legWinner != nil
         // Keep the whole throw screen visible long enough to read before the turn flips.
         // A winning visit goes straight to the ceremony, which shows the checkout itself.
         // Čísla: bez náhledu terče, jen krátká odezva.
@@ -3045,7 +3153,7 @@ struct MatchView: View {
         if celebrate180 {
             hold = max(hold, OneEightyCelebration.duration)
         }
-        if store.activeMatch?.visits.last?.bust == true {
+        if activeMatch?.visits.last?.bust == true {
             hold = max(hold, reduceMotion ? 0.9 : 1.6)
         }
         holdGeneration += 1
@@ -3060,7 +3168,7 @@ struct MatchView: View {
     }
     @MainActor private func finishVisitHold() {
         if holdSurface == .camera { learnConfirmedHits() }
-        guard let game = store.activeMatch else {
+        guard let game = activeMatch else {
             isHoldingVisit = false
             holdDarts = []
             holdPlayer = nil
@@ -3165,13 +3273,13 @@ struct MatchView: View {
     }
     /// Skóre se přepne na start dalšího legu bez vlastního pohybu — pohyb obstará prolínání.
     private func revealNextLeg() {
-        guard var game = store.activeMatch, game.legWinner != nil, !game.finished else { return }
+        guard var game = activeMatch, game.legWinner != nil, !game.finished else { return }
         let newSet = legCeremony?.setClosed == true
-        game.nextLeg()
+        if link.isOnline { OnlineMatchLink.advanceLeg(&game) } else { game.nextLeg() }
         var quiet = Transaction(animation: nil)
         quiet.disablesAnimations = true
         withTransaction(quiet) {
-            store.activeMatch = game
+            activeMatch = game
             isHoldingVisit = false
             holdDarts = []
             holdPlayer = nil
@@ -3220,12 +3328,12 @@ struct MatchView: View {
         }
     }
     private func resolveDecidingStarter(_ player: Int) {
-        guard var game = store.activeMatch, game.needsDecidingStarter else {
+        guard var game = activeMatch, game.needsDecidingStarter else {
             showDecidingStarter = false
             return
         }
         game.resolveDecidingStarter(to: player)
-        store.activeMatch = game
+        activeMatch = game
         showDecidingStarter = false
         revision = UUID()
         announceLegStart(game, newSet: false)
@@ -3288,7 +3396,7 @@ struct MatchView: View {
             .task {
                 while !Task.isCancelled {
                     try? await Task.sleep(for: .seconds(1))
-                    guard let game = store.activeMatch, !game.finished else { continue }
+                    guard let game = activeMatch, !game.finished else { continue }
                     publishLiveClock(game)
                 }
             }
@@ -3299,15 +3407,15 @@ struct MatchView: View {
                 syncClock()
                 if !isPaused { lastActivity = Date() }
             }
-            .onChange(of: store.activeMatch?.finished ?? true) { _, _ in syncClock() }
+            .onChange(of: activeMatch?.finished ?? true) { _, _ in syncClock() }
     }
     /// Živá hra v popředí. Ceremonie a hotový zápas se samy nepauzují.
     private var shouldWatchIdle: Bool {
-        scenePhase == .active && !paused && !leavingHome && legCeremony == nil && store.activeMatch.map { !$0.finished } == true
+        !link.isOnline && scenePhase == .active && !paused && !leavingHome && legCeremony == nil && activeMatch.map { !$0.finished } == true
     }
     /// Cokoli, čím hra postupuje: šipka, kolo, hráč, leg, rozepsaný součet nebo přepnutí zápisu.
     private var playActivity: String {
-        guard let game = store.activeMatch else { return "none" }
+        guard let game = activeMatch else { return "none" }
         let darts = game.currentDarts.map(\.label).joined(separator: ",")
         return "\(game.visits.count)|\(darts)|\(game.active)|\(game.leg)|\(game.legWinner ?? -1)|\(sumText)|\(multiplier)|\(surface.rawValue)"
     }
@@ -3322,18 +3430,18 @@ struct MatchView: View {
         }
     }
     private var clockRuns: Bool {
-        scenePhase == .active && !paused && store.activeMatch.map { !$0.finished } == true
+        scenePhase == .active && !paused && activeMatch.map { !$0.finished } == true
     }
     private func syncClock(_ phase: ScenePhase? = nil) {
         let phase = phase ?? scenePhase
-        let runs = phase == .active && !paused && store.activeMatch?.finished != true
+        let runs = phase == .active && !paused && activeMatch?.finished != true
         if runs {
             if clockStart == nil { clockStart = Date() }
-            publishLiveClock(store.activeMatch, phase: phase)
+            publishLiveClock(activeMatch, phase: phase)
         } else if clockStart != nil {
             flushClock(for: phase)
         } else {
-            publishLiveClock(store.activeMatch, phase: phase)
+            publishLiveClock(activeMatch, phase: phase)
         }
     }
     /// Připíše uběhlý úsek do zápasu. Průběžně, aby se čas neztratil ani při pádu appky.
@@ -3342,13 +3450,15 @@ struct MatchView: View {
         let now = Date()
         let running = keepRunning && clockRuns
         clockStart = running ? now : nil
-        guard var game = store.activeMatch else { return }
+        guard var game = activeMatch else { return }
         game.addPlayTime(from: start, to: now)
         publishLiveClock(game, phase: phase)
-        store.activeMatch = game
+        activeMatch = game
     }
     /// Web dostane stejný čas jako tabule. Pauza na telefonu i odchod z aplikace ten čas zastaví, web ukáže pauzu.
     private func publishLiveClock(_ game: Match?, phase: ScenePhase? = nil) {
+        // Online zápas na web posílá server, ne tahle tabule.
+        guard !link.isOnline else { return }
         guard let game else {
             DartiqoAccount.shared.noteLiveClock(paused: false, played: 0, running: false, match: nil, store: store)
             return
@@ -3365,20 +3475,20 @@ struct MatchView: View {
         )
     }
     private func awardBullOff(_ winner: Int) {
-        guard var game = store.activeMatch, game.needsBullOff else { decidingLeg = false; return }
+        guard var game = activeMatch, game.needsBullOff else { decidingLeg = false; return }
         game.awardBullOff(to: winner)
-        store.activeMatch = game
+        activeMatch = game
         decidingLeg = false
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 450_000_000)
-            guard let current = store.activeMatch, current.legWinner == winner, legCeremony == nil else { return }
+            guard let current = activeMatch, current.legWinner == winner, legCeremony == nil else { return }
             presentLegCeremony(current, winner: winner)
         }
     }
     private func continuePastDartLimit() {
-        guard var game = store.activeMatch, game.needsBullOff else { return }
+        guard var game = activeMatch, game.needsBullOff else { return }
         game.continuePastDartLimit()
-        store.activeMatch = game
+        activeMatch = game
         revision = UUID()
     }
     private func bullOffCard(_ game: Match) -> some View {
@@ -3498,12 +3608,12 @@ struct MatchView: View {
     }
     @MainActor private func throwBotDart() async {
         guard scenePhase == .active, !paused, !showSettings, !showLog, !showProgress, !showLeave, statsPlayer == nil else { return }
-        guard let game = store.activeMatch, !game.finished, game.legWinner == nil, !game.needsBullOff, !game.needsDecidingStarter, !showDecidingStarter else { return }
+        guard let game = activeMatch, !game.finished, game.legWinner == nil, !game.needsBullOff, !game.needsDecidingStarter, !showDecidingStarter else { return }
         let auto = game.currentPlayer.botLevel != nil || game.isGhostTurn
         guard auto else { return }
         guard await waitUntilThrowIsClear() else { return }
         guard scenePhase == .active, !paused, !showSettings, !showLog, !showProgress, !showLeave, statsPlayer == nil, !isHoldingVisit, legCeremony == nil, !showDecidingStarter else { return }
-        guard let ready = store.activeMatch, !ready.finished, ready.legWinner == nil, !ready.needsBullOff, !ready.needsDecidingStarter else { return }
+        guard let ready = activeMatch, !ready.finished, ready.legWinner == nil, !ready.needsBullOff, !ready.needsDecidingStarter else { return }
         guard ready.currentPlayer.botLevel != nil || ready.isGhostTurn else { return }
         if holdDarts.count != ready.currentDarts.count { holdDarts = ready.currentDarts }
         let key = botTaskKey
@@ -3512,7 +3622,7 @@ struct MatchView: View {
         let visits = ready.visits.count
         let delay = ready.config.settings.botDelay
         do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) } catch { return }
-        guard !Task.isCancelled, key == botTaskKey, !isHoldingVisit, legCeremony == nil, var current = store.activeMatch else { return }
+        guard !Task.isCancelled, key == botTaskKey, !isHoldingVisit, legCeremony == nil, var current = activeMatch else { return }
         guard current.currentPlayer.botLevel != nil || current.isGhostTurn else { return }
         guard current.active == thrower, current.currentDarts.count == pending, current.visits.count == visits else { return }
         let dart: Dart
@@ -3536,7 +3646,7 @@ struct MatchView: View {
                 applyVisitHold(game: current, darts: shownDarts, player: thrower, fromBot: true)
             } else {
                 holdDarts = shownDarts
-                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { store.activeMatch = current }
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { activeMatch = current }
             }
         } catch { self.error = error.localizedDescription }
     }
@@ -3560,7 +3670,7 @@ struct MatchView: View {
         else { submitTotal(darts:3) }
     }
     private func submitTotal(darts: Int) {
-        guard !isHoldingVisit, legCeremony == nil, let score = Int(sumText), var game = store.activeMatch, game.currentPlayer.botLevel == nil else { return }
+        guard !isHoldingVisit, legCeremony == nil, let score = Int(sumText), var game = activeMatch, game.currentPlayer.botLevel == nil else { return }
         let thrower = game.active
         do {
             try game.submitTotal(score, checkoutDarts: darts)
@@ -3575,12 +3685,12 @@ struct MatchView: View {
                 // Vždy součet jako jedno číslo — ne tři syntetické šipky.
                 holdSurface = .total
             } else {
-                store.activeMatch = game; sumText = ""; store.feedback(score, announce: surface != .voice)
+                activeMatch = game; sumText = ""; store.feedback(score, announce: surface != .voice)
             }
         } catch { self.error = error.localizedDescription }
     }
     private func bust(_ count: Int) {
-        guard !isHoldingVisit, legCeremony == nil, var game = store.activeMatch, game.currentPlayer.botLevel == nil else { return }
+        guard !isHoldingVisit, legCeremony == nil, var game = activeMatch, game.currentPlayer.botLevel == nil else { return }
         let thrower = game.active
         do {
             try game.recordBust(darts: count)
@@ -3589,14 +3699,14 @@ struct MatchView: View {
                 store.feedback(announce: surface != .voice, spoken: "Přehoz")
                 applyVisitHold(game: game, darts: visit.darts, player: thrower, fromBot: false)
             } else {
-                store.activeMatch = game; sumText = ""; store.feedback(0, announce: surface != .voice)
+                activeMatch = game; sumText = ""; store.feedback(0, announce: surface != .voice)
             }
         } catch { self.error = error.localizedDescription }
     }
     private var matchOptions: Binding<MatchOptions> {
-        Binding(get:{ store.activeMatch?.config.settings ?? MatchOptions() },set:{ options in
-            guard var game = store.activeMatch else { return }
-            game.config.options = options; store.activeMatch = game
+        Binding(get:{ activeMatch?.config.settings ?? MatchOptions() },set:{ options in
+            guard var game = activeMatch else { return }
+            game.config.options = options; activeMatch = game
             UIApplication.shared.isIdleTimerDisabled = options.keepAwake
         })
     }
@@ -3683,7 +3793,7 @@ struct MatchView: View {
             VStack(alignment: .leading, spacing: 16) {
                 resultHeroBanner(game)
                     .modifier(ResultRise(shown: resultShown, delay: 0, reduceMotion: reduceMotion))
-                if xp.hasAward {
+                if xp.hasAward, !link.isOnline {
                     resultXPBanner(xp)
                         .modifier(ResultRise(shown: resultShown, delay: 0.08, reduceMotion: reduceMotion))
                 }
@@ -3698,10 +3808,17 @@ struct MatchView: View {
                             .modifier(ResultRise(shown: resultShown, delay: 0.18 + Double(offset) * 0.06, reduceMotion: reduceMotion))
                     }
                 }
-                Button("Opravit poslední šipku") { undo() }
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.6))
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                if link.isOnline {
+                    Text("Výsledek najdeš v Moje hry.")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.6))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                } else {
+                    Button("Opravit poslední šipku") { undo() }
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.6))
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 12)
@@ -4349,11 +4466,34 @@ struct MatchView: View {
         .accessibilityElement(children: .combine)
     }
 
+    @ViewBuilder
     private func resultActions(_ game: Match) -> some View {
+        if link.isOnline {
+            Button(action: onOnlineExit) {
+                Label("Zpět do lobby", systemImage: "person.2.fill")
+                    .font(.headline)
+                    .labelStyle(.titleAndIcon)
+                    .foregroundStyle(Color.black)
+                    .frame(maxWidth: .infinity, minHeight: 52)
+                    .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .glassEffect(.regular.tint(MatchColors.finish).interactive(), in: Capsule())
+            .padding(.horizontal, 16)
+            .padding(.top, 10)
+            .padding(.bottom, 6)
+            .frame(maxWidth: 780)
+            .frame(maxWidth: .infinity)
+        } else {
+            localResultActions(game)
+        }
+    }
+
+    private func localResultActions(_ game: Match) -> some View {
         HStack(spacing: 12) {
             Button {
                 store.finish()
-                store.activeMatch = Match(config: game.config, players: game.players, firstPlayer: (game.starter + 1) % game.players.count)
+                activeMatch = Match(config: game.config, players: game.players, firstPlayer: (game.starter + 1) % game.players.count)
                 multiplier = 1; sumText = ""; paused = false; holdDarts = []; isHoldingVisit = false; holdPlayer = nil; legCeremony = nil; oneEightyFlash = nil; ceremonyLeaving = false; ceremonyDismissing = false; resultShown = false; revision = UUID()
             } label: {
                 Label("Odveta", systemImage: "arrow.clockwise")
