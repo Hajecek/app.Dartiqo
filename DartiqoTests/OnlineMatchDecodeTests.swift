@@ -84,12 +84,13 @@ struct OnlineMatchDecodeTests {
     @Test func lobbySettingsBody() {
         var config = GameConfig(startingScore: 301, outRule: .master, legsToWin: 3, setsToWin: 2, format: .bestOf)
         config.options = MatchOptions()
-        let body = OnlineLobbySettings(config: config, isPublic: false, password: " tajne ", keepPassword: false).body
+        let body = OnlineLobbySettings(config: config, isPublic: false).body
         #expect(body["kind"] as? String == "classic")
         #expect(body["visibility"] as? String == "private")
         #expect(body["setsToWin"] as? Int == 2)
         #expect(body["format"] as? String == "bestOf")
         #expect(body["outRule"] as? String == "master")
-        #expect(body["password"] as? String == "tajne")
+        #expect(body["password"] as? String == "")
+        #expect(body["keepPassword"] as? Bool == false)
     }
 }

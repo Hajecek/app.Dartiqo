@@ -142,7 +142,7 @@ struct OnlineRoomView: View {
                     .buttonStyle(.bordered)
                     .buttonBorderShape(.capsule)
                     .controlSize(.small)
-                    .accessibilityHint("Změní pravidla, viditelnost nebo heslo lobby")
+                    .accessibilityHint("Změní pravidla nebo viditelnost lobby")
                 }
             }
 
@@ -177,7 +177,7 @@ struct OnlineRoomView: View {
 
     private func visibilityText(_ match: OnlineMatch) -> String {
         if match.isPublic { return "Veřejné lobby" }
-        return match.hasPassword ? "Uzavřené lobby · heslo" : "Uzavřené lobby"
+        return "Uzavřené lobby"
     }
 
     private func ruleChip(title: String, value: String) -> some View {
@@ -241,11 +241,6 @@ struct OnlineRoomView: View {
             .sensoryFeedback(.success, trigger: copied) { _, now in now }
             .accessibilityLabel("Kód lobby \(code.map(String.init).joined(separator: " "))")
             .accessibilityHint("Zkopíruje kód")
-            if match.hasPassword {
-                Label("Kdo vstoupí kódem, zadá i heslo. Pozvaný kamarád ho nepotřebuje.", systemImage: "key.fill")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
@@ -258,9 +253,7 @@ struct OnlineRoomView: View {
     }
 
     private func shareText(_ match: OnlineMatch, code: String) -> String {
-        var text = "Zahraj si se mnou šipky v Dartiqo. \(match.rules.summary). Kód lobby: \(code)"
-        if match.hasPassword { text += " (heslo ti pošlu zvlášť)" }
-        return text
+        "Zahraj si se mnou šipky v Dartiqo. \(match.rules.summary). Kód lobby: \(code)"
     }
 
     @ViewBuilder
@@ -398,7 +391,7 @@ struct OnlineRoomView: View {
     private func invites(_ match: OnlineMatch) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Pozvat kamaráda").font(.headline)
-            Text("Pozvánka ho posadí do lobby. Heslo kvůli tomu nezadává.")
+            Text("Pozvánka ho posadí rovnou do lobby.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if session.friends.isEmpty {

@@ -43,7 +43,6 @@ struct OnlineMatch: Codable, Equatable, Identifiable {
     var activeSlot: Int
     var yourTurn: Bool
     var member: Bool
-    var hasPassword: Bool
     var winner: Int?
     var rules: OnlineRules
     var players: [OnlinePlayer]
@@ -175,7 +174,7 @@ struct OnlineLobbyInvite: Codable, Equatable, Identifiable {
     var id: String { publicId }
 }
 
-/// Veřejné lobby ze seznamu. Kód ani heslo k němu nejsou potřeba.
+/// Veřejné lobby ze seznamu. Vstoupí se do něj rovnou, bez kódu.
 struct OnlineLobby: Codable, Equatable, Identifiable {
     struct Host: Codable, Equatable {
         var name: String
@@ -195,9 +194,6 @@ struct OnlineLobby: Codable, Equatable, Identifiable {
 /// Co telefon posílá při založení i úpravě lobby.
 struct OnlineLobbySettings: Equatable {
     var isPublic = true
-    var password = ""
-    /// Při úpravě nechá staré heslo, dokud ho hostitel nepřepíše.
-    var keepPassword = false
     var startingScore = 501
     var outRule = OutRule.double
     var legsToWin = 2
@@ -206,10 +202,8 @@ struct OnlineLobbySettings: Equatable {
 
     init() {}
 
-    init(config: GameConfig, isPublic: Bool, password: String, keepPassword: Bool) {
+    init(config: GameConfig, isPublic: Bool) {
         self.isPublic = isPublic
-        self.password = password
-        self.keepPassword = keepPassword
         startingScore = config.startingScore
         outRule = config.outRule
         legsToWin = config.legsToWin
@@ -221,8 +215,9 @@ struct OnlineLobbySettings: Equatable {
         [
             "kind": "classic",
             "visibility": isPublic ? "public" : "private",
-            "password": password.trimmingCharacters(in: .whitespacesAndNewlines),
-            "keepPassword": keepPassword,
+            // Lobby drží jen kód. Prázdné heslo smaže starší zámek, kdyby na serveru ještě zůstal.
+            "password": "",
+            "keepPassword": false,
             "startingScore": startingScore,
             "outRule": outRule.rawValue,
             "legsToWin": legsToWin,

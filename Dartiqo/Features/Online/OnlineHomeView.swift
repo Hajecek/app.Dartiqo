@@ -129,10 +129,10 @@ final class OnlineSession: ObservableObject {
         }
     }
 
-    func join(code: String, password: String) async -> String? {
+    func join(code: String) async -> String? {
         let normalized = code.uppercased().filter { !$0.isWhitespace }
         return await perform {
-            let joined = try await $0.joinOnline(code: normalized, password: password)
+            let joined = try await $0.joinOnline(code: normalized)
             apply(joined)
             current = joined
             return joined.id
@@ -181,7 +181,7 @@ final class OnlineSession: ObservableObject {
         defer { busy = false }
         do {
             _ = try await api.inviteOnline(id, userId: userId)
-            notice = "Pozvánka je odeslaná. Kamarád heslo nepotřebuje."
+            notice = "Pozvánka je odeslaná."
             await fetch(id)
         } catch let failure as OnlineFailure {
             if let next = failure.match { apply(next) }
@@ -333,7 +333,6 @@ struct OnlineHomeView: View {
                     online: OnlineSetupMode(
                         editing: true,
                         isPublic: match.isPublic,
-                        hasPassword: match.hasPassword,
                         finish: saveSettings
                     ),
                     onlineNotice: $setupNotice
@@ -638,11 +637,7 @@ private struct OnlineJoinView: View {
     @ObservedObject var session: OnlineSession
     var onOpen: (String) -> Void
     @State private var code = ""
-    @State private var password = ""
-    @State private var revealPassword = false
-    @FocusState private var focus: Field?
-
-    private enum Field { case code, password }
+    @FocusState private var focus: Bool
 
     /// Stejná abeceda jako generátor kódů na serveru, bez zaměnitelných 0, O, 1 a I.
     private static let alphabet = Set("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
@@ -668,7 +663,6 @@ private struct OnlineJoinView: View {
                         guard let first = values.first else { return }
                         Task { @MainActor in
                             code = Self.clean(first)
-                            if complete { focus = .password }
                         }
                     }
                     .buttonBorderShape(.capsule)
@@ -678,14 +672,12 @@ private struct OnlineJoinView: View {
                     if !code.isEmpty {
                         Button("Smazat", systemImage: "delete.left") {
                             code = ""
-                            focus = .code
+                            focus = true
                         }
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.secondary)
                     }
                 }
-
-                passwordCard
 
                 if let notice = session.notice, !notice.isEmpty {
                     Label(notice, systemImage: "exclamationmark.triangle.fill")
@@ -706,11 +698,10 @@ private struct OnlineJoinView: View {
         .navigationTitle("Připojit")
         .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) { joinBar }
-        .onAppear { focus = .code }
+        .onAppear { focus = true }
         .onChange(of: code) { _, next in
             let cleaned = Self.clean(next)
             if cleaned != next { code = cleaned }
-            if cleaned.count == Self.length, focus == .code { focus = .password }
         }
     }
 
@@ -719,13 +710,13 @@ private struct OnlineJoinView: View {
         let characters = Array(code)
         return ZStack {
             TextField("", text: $code)
-                .focused($focus, equals: .code)
+                .focused($focus)
                 .textInputAutocapitalization(.characters)
                 .autocorrectionDisabled()
                 .keyboardType(.asciiCapable)
                 .textContentType(.oneTimeCode)
-                .submitLabel(.next)
-                .onSubmit { focus = .password }
+                .submitLabel(.join)
+                .onSubmit(join)
                 .foregroundStyle(.clear)
                 .tint(.clear)
                 .frame(height: 1)
@@ -735,7 +726,7 @@ private struct OnlineJoinView: View {
 
             HStack(spacing: 8) {
                 ForEach(0..<Self.length, id: \.self) { index in
-                    let active = focus == .code && index == min(characters.count, Self.length - 1)
+                    let active = focus && index == min(characters.count, Self.length - 1)
                     Text(index < characters.count ? String(characters[index]) : "")
                         .font(AppFont.display(30))
                         .monospaced()
@@ -750,7 +741,7 @@ private struct OnlineJoinView: View {
             }
             .animation(.snappy(duration: 0.2), value: code)
             .contentShape(Rectangle())
-            .onTapGesture { focus = .code }
+            .onTapGesture { focus = true }
             .accessibilityHidden(true)
         }
     }
@@ -759,44 +750,6 @@ private struct OnlineJoinView: View {
         if complete { return Theme.positive.opacity(0.7) }
         if active { return Theme.brand }
         return filled ? Color.primary.opacity(0.25) : Color.primary.opacity(0.1)
-    }
-
-    private var passwordCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Heslo", systemImage: "lock.fill")
-                .font(.headline)
-            HStack(spacing: 10) {
-                Group {
-                    if revealPassword {
-                        TextField("Jen u uzavřeného lobby", text: $password)
-                    } else {
-                        SecureField("Jen u uzavřeného lobby", text: $password)
-                    }
-                }
-                .focused($focus, equals: .password)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .submitLabel(.join)
-                .onSubmit(join)
-                Button {
-                    revealPassword.toggle()
-                } label: {
-                    Image(systemName: revealPassword ? "eye.slash" : "eye")
-                        .foregroundStyle(.secondary)
-                        .frame(width: 32, height: 32)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(revealPassword ? "Skrýt heslo" : "Zobrazit heslo")
-            }
-            .padding(.horizontal, 14)
-            .frame(minHeight: 50)
-            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            Text("Bez hesla nech prázdné. Pozvaný kamarád heslo nezadává.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(16)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
     private var joinBar: some View {
@@ -830,7 +783,7 @@ private struct OnlineJoinView: View {
     private func join() {
         guard complete, !session.busy else { return }
         Task {
-            if let id = await session.join(code: code, password: password) {
+            if let id = await session.join(code: code) {
                 onOpen(id)
             }
         }

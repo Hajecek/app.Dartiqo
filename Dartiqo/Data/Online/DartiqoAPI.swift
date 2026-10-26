@@ -385,8 +385,8 @@ struct DartiqoAPI {
         try await requireMatch(online("api/v1/online-matches/\(id)/join", body: Data("{}".utf8)))
     }
 
-    func joinOnline(code: String, password: String) async throws -> OnlineMatch {
-        let body = try JSONSerialization.data(withJSONObject: ["code": code, "password": password])
+    func joinOnline(code: String) async throws -> OnlineMatch {
+        let body = try JSONSerialization.data(withJSONObject: ["code": code])
         guard let match = try await online("api/v1/online-matches/join", body: body).match else {
             throw APIError.server("Server vrátil neúplnou odpověď.")
         }

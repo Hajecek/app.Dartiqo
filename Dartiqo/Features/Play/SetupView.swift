@@ -4,7 +4,6 @@ import SwiftUI
 struct OnlineSetupMode {
     var editing = false
     var isPublic = true
-    var hasPassword = false
     var finish: (SetupDraft, OnlineLobbySettings) async -> Void
 }
 
@@ -140,7 +139,6 @@ struct SetupView: View {
     /// Online zápas nezačne na telefonu. Po pravidlech se založí nebo upraví lobby.
     private let online: OnlineSetupMode?
     @Binding private var onlineNotice: String?
-    @State private var lobbyPassword = ""
     @State private var onlinePublic = true
     @State private var onlineSending = false
     private var isOnline: Bool { online != nil }
@@ -2098,15 +2096,6 @@ struct SetupView: View {
             ) { open in
                 withAnimation(motion) { onlinePublic = open }
             }
-            if !onlinePublic {
-                TextField(online?.hasPassword == true ? "Heslo zůstane stejné" : "Heslo, nepovinné", text: $lobbyPassword)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .padding(.horizontal, 14)
-                    .frame(minHeight: 46)
-                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .transition(.opacity)
-            }
             ruleNote(onlinePublic
                      ? "Lobby uvidí všichni v seznamu a můžou se rovnou připojit."
                      : "V seznamu není. Vstoupí jen ten, kdo zná kód, nebo kamarád z pozvánky.")
@@ -2637,9 +2626,7 @@ struct SetupView: View {
             onlineNotice = nil
             let settings = OnlineLobbySettings(
                 config: setup.config,
-                isPublic: onlinePublic,
-                password: lobbyPassword,
-                keepPassword: isEditingLobby && lobbyPassword.isEmpty && online?.hasPassword == true
+                isPublic: onlinePublic
             )
             Task {
                 await online?.finish(setup, settings)
