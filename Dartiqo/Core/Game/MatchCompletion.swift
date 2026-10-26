@@ -60,4 +60,20 @@ public struct MatchCompletionLedger: Codable, Equatable {
         entries.append(Entry(matchID: matchID, outcome: outcome))
         return true
     }
+
+    /// Přepíše bilanci podle tabulky matches na serveru. Lokální id se neuchovávají.
+    public mutating func replace(from remote: MatchCompletionSnapshot) {
+        entries = []
+        for index in 0..<max(0, remote.completed) {
+            entries.append(Entry(matchID: Self.remoteID(kind: 0, index: index), outcome: .completed))
+        }
+        for index in 0..<max(0, remote.abandoned) {
+            entries.append(Entry(matchID: Self.remoteID(kind: 1, index: index), outcome: .abandoned))
+        }
+    }
+
+    private static func remoteID(kind: Int, index: Int) -> UUID {
+        let hex = String(format: "%012x", (kind << 24) | (index & 0x00FF_FFFF))
+        return UUID(uuidString: "00000000-0000-4000-8000-\(hex)") ?? UUID()
+    }
 }

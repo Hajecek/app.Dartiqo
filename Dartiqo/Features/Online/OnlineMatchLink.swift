@@ -16,6 +16,8 @@ final class OnlineMatchLink: ObservableObject {
 
     let isOnline: Bool
     let yourSlot: Int
+    /// Veřejné id online zápasu. Pro bilanci dokončených zápasů.
+    var publicMatchID: String { matchID }
     @Published private(set) var game: Match?
     /// Zvedne se, když na serveru přibyly šipky soupeře. Obrazovka si je vyzvedne přes `takeRemote()`.
     @Published private(set) var remoteToken = 0
@@ -217,11 +219,8 @@ final class OnlineMatchLink: ObservableObject {
         game.visits.flatMap(\.darts) + game.currentDarts
     }
 
-    /// Stálé id hráče z veřejného id účtu, ať se fotka a statistiky drží i po přehrání.
     private static func uuid(_ publicId: String) -> UUID {
-        let hex = publicId.lowercased().filter(\.isHexDigit)
-        let padded = String((hex + String(repeating: "0", count: 32)).prefix(32))
-        let parts = [padded.prefix(8), padded.dropFirst(8).prefix(4), padded.dropFirst(12).prefix(4), padded.dropFirst(16).prefix(4), padded.dropFirst(20)]
-        return UUID(uuidString: parts.joined(separator: "-")) ?? UUID()
+        AppStore.stableID(forOnlineMatch: publicId)
     }
 }
+

@@ -169,10 +169,27 @@ import Combine
         }
     }
 
+    /// Po opuštění online zápasu znovu načte % dokončených z tabulky matches.
+    func refreshMatchCompletion(into appStore: AppStore) async {
+        guard let api else { return }
+        do {
+            let remote = try await api.me()
+            persistUser(remote)
+            if let completion = remote.matchCompletion {
+                appStore.applyServerMatchCompletion(completion, accountID: remote.id)
+            }
+        } catch APIError.unauthorized {
+            clear()
+        } catch {}
+    }
+
     private func applyRemote(_ remote: AccountUser, into appStore: AppStore?, forcePhoto: Data? = nil, cleared: Bool = false) async {
         let revisionChanged = remote.profileRevision != appliedRevision
         persistUser(remote)
         guard let appStore else { return }
+        if let completion = remote.matchCompletion {
+            appStore.applyServerMatchCompletion(completion, accountID: remote.id)
+        }
         if !revisionChanged && forcePhoto == nil && !cleared { return }
 
         let jpeg: Data?

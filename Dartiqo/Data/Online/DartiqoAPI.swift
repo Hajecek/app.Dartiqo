@@ -29,14 +29,16 @@ struct AccountUser: Codable, Equatable {
     /// Relativní cesta na serveru, např. /uploads/avatars/….jpg?v=3
     var photo: String?
     var profileRevision: Int
+    /// Bilance dokončených zápasů z tabulky matches na serveru.
+    var matchCompletion: MatchCompletionSnapshot?
 
     var fullName: String { "\(first) \(last)".trimmingCharacters(in: .whitespaces) }
 
     enum CodingKeys: String, CodingKey {
-        case id, username, email, first, last, photo, profileRevision
+        case id, username, email, first, last, photo, profileRevision, matchCompletion
     }
 
-    init(id: Int, username: String, email: String, first: String, last: String, photo: String? = nil, profileRevision: Int = 1) {
+    init(id: Int, username: String, email: String, first: String, last: String, photo: String? = nil, profileRevision: Int = 1, matchCompletion: MatchCompletionSnapshot? = nil) {
         self.id = id
         self.username = username
         self.email = email
@@ -44,6 +46,7 @@ struct AccountUser: Codable, Equatable {
         self.last = last
         self.photo = photo
         self.profileRevision = profileRevision
+        self.matchCompletion = matchCompletion
     }
 
     init(from decoder: Decoder) throws {
@@ -55,6 +58,7 @@ struct AccountUser: Codable, Equatable {
         last = try c.decode(String.self, forKey: .last)
         photo = try c.decodeIfPresent(String.self, forKey: .photo)
         profileRevision = try c.decodeIfPresent(Int.self, forKey: .profileRevision) ?? 1
+        matchCompletion = try c.decodeIfPresent(MatchCompletionSnapshot.self, forKey: .matchCompletion)
     }
 }
 

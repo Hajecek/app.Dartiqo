@@ -789,10 +789,30 @@ enum InactivityLock {
         } else if data.profiles[index].photoJPEG == nil, let photoJPEG {
             data.profiles[index].photoJPEG = photoJPEG
         }
+        if let remote = user.matchCompletion {
+            var ledger = MatchCompletionLedger()
+            ledger.replace(from: remote)
+            data.profiles[index].matchCompletion = ledger
+        }
         if data.selectedProfile != data.profiles[index].id {
             data.selectedProfile = data.profiles[index].id
         }
         flushSave()
+    }
+
+    /// Bilance z tabulky matches. Přepisuje lokální % u propojeného profilu.
+    func applyServerMatchCompletion(_ remote: MatchCompletionSnapshot, accountID: Int? = nil) {
+        let index: Int?
+        if let accountID {
+            index = data.profiles.firstIndex(where: { $0.accountID == accountID })
+        } else {
+            index = data.profiles.firstIndex(where: { $0.id == profile?.id })
+        }
+        guard let index else { return }
+        var ledger = MatchCompletionLedger()
+        ledger.replace(from: remote)
+        data.profiles[index].matchCompletion = ledger
+        save()
     }
 
     /// Jednorázově smaže lokální profily a hry z doby před účty. Nastavení zařízení zůstane.
@@ -844,6 +864,20 @@ enum InactivityLock {
             }
         }
         if changed { save() }
+    }
+
+    /// Stálé id z veřejného id online zápasu / účtu.
+    static func stableID(forOnlineMatch publicId: String) -> UUID {
+        let hex = publicId.lowercased().filter(\.isHexDigit)
+        let padded = String((hex + String(repeating: "0", count: 32)).prefix(32))
+        let parts = [
+            padded.prefix(8),
+            padded.dropFirst(8).prefix(4),
+            padded.dropFirst(12).prefix(4),
+            padded.dropFirst(16).prefix(4),
+            padded.dropFirst(20),
+        ]
+        return UUID(uuidString: parts.joined(separator: "-")) ?? UUID()
     }
 
     /// Dohrání připíše všem místním profilům v zápase. Zrušení jen tomu, kdo ho zahodil.

@@ -157,10 +157,15 @@ struct MatchView: View {
             }
             .alert("Opustit zápas?", isPresented: $showOnlineLeave) {
                 Button("Opustit zápas", role: .destructive) {
-                    Task { if await link.abandon() { onOnlineExit() } }
+                    Task {
+                        if await link.abandon() {
+                            await DartiqoAccount.shared.refreshMatchCompletion(into: store)
+                            onOnlineExit()
+                        }
+                    }
                 }
                 Button("Zůstat", role: .cancel) {}
-            } message: { Text("Zápas skončí a soupeř uvidí, že jsi odešel.") }
+            } message: { Text("Zápas skončí a soupeř uvidí, že jsi odešel. Počítá se do % dokončených zápasů.") }
     }
     /// Šipky soupeře se ukážou stejně jako kolo bota. Během pauzy po kole nebo ceremonie počkají.
     private func applyRemote() {

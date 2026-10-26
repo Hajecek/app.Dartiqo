@@ -10,6 +10,8 @@ struct OnlineRoomView: View {
     var onEdit: () -> Void
     @State private var copied = false
     @State private var confirmLeave = false
+    /// Jakmile zápas jednou běžel, opuštění ukáže vzdání, ne zrušené lobby.
+    @State private var sawLive = false
 
     private var match: OnlineMatch? { session.match?.id == matchID ? session.match : nil }
 
@@ -20,7 +22,12 @@ struct OnlineRoomView: View {
                 case "live", "finished":
                     OnlineLiveMatch(session: session, match: match, onLeave: onLeave)
                 case "abandoned":
-                    closed(match)
+                    closed(match, forfeited: sawLive)
+                        .task {
+                            if sawLive {
+                                await DartiqoAccount.shared.refreshMatchCompletion(into: store)
+                            }
+                        }
                 default:
                     lobby(match)
                 }
@@ -32,6 +39,12 @@ struct OnlineRoomView: View {
         .screen()
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: match?.status) { _, status in
+            if status == "live" || status == "finished" { sawLive = true }
+        }
+        .onAppear {
+            if match?.isLive == true || match?.status == "finished" { sawLive = true }
+        }
         .toolbar {
             if let match, match.status == "lobby" {
                 ToolbarItem(placement: .primaryAction) {
@@ -443,14 +456,36 @@ struct OnlineRoomView: View {
         }
     }
 
-    private func closed(_ match: OnlineMatch) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(match.startedAtLabel).font(AppFont.title(26))
+    private func closed(_ match: OnlineMatch, forfeited: Bool) -> some View {
+        let opponent = match.players.first(where: { !$0.you })
+        let name = opponent?.name ?? "Soupeř"
+        return VStack(spacing: 0) {
+            Spacer(minLength: 24)
+            VStack(spacing: 18) {
+                Text(forfeited ? "🏳️" : "👋")
+                    .font(.system(size: 72))
+                    .accessibilityHidden(true)
+                Text(forfeited ? "Soupeř vzdal zápas" : "Lobby už není")
+                    .font(AppFont.title(28))
+                    .multilineTextAlignment(.center)
+                Text(forfeited
+                     ? "\(name) odešel z online zápasu. Zápas skončil vzdáním."
+                     : "Hostitel lobby zrušil, nebo už vypršelo.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 28)
+            Spacer(minLength: 24)
             Button("Zpět do lobby") { onLeave() }
                 .buttonStyle(PrimaryButton())
-            Spacer()
+                .padding(.horizontal, 22)
+                .padding(.bottom, 22)
         }
-        .padding(22)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationTitle(forfeited ? "Vzdání" : "Lobby")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     private func friendName(_ user: DirectoryPerson) -> String {
@@ -490,11 +525,3 @@ private struct OnlineLiveMatch: View {
     }
 }
 
-private extension OnlineMatch {
-    /// Zrušené lobby a opuštěný zápas vypadají pro hráče různě.
-    var startedAtLabel: String {
-        state.leg > 1 || players.contains(where: { $0.legs > 0 || ($0.sets ?? 0) > 0 })
-            ? "Zápas skončil odchodem"
-            : "Lobby už není"
-    }
-}
