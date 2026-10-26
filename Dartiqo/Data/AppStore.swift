@@ -5,6 +5,33 @@ import LocalAuthentication
 import AVFoundation
 import UniformTypeIdentifiers
 
+/// Zápis na disk mimo hlavní vlákno. Novější snímek přepíše starší, i když se starší dokóduje dřív.
+private final class MatchDiskWriter: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "dartiqo.save", qos: .utility)
+    private var applied = 0
+
+    func submit(
+        generation: Int,
+        snapshot: StoredData,
+        url: URL,
+        wait: Bool,
+        onError: @escaping @Sendable (String) -> Void
+    ) {
+        let work = {
+            guard generation >= self.applied else { return }
+            do {
+                let payload = try JSONEncoder().encode(snapshot)
+                guard generation >= self.applied else { return }
+                self.applied = generation
+                try payload.write(to: url, options: [.atomic, .completeFileProtection])
+            } catch {
+                onError("Změny se nepodařilo uložit. \(error.localizedDescription)")
+            }
+        }
+        if wait { queue.sync(execute: work) } else { queue.async(execute: work) }
+    }
+}
+
 struct Profile: Codable, Identifiable {
     var id = UUID()
     var name: String
@@ -162,6 +189,9 @@ enum InactivityLock {
     private let file: URL
     /// Spojí rychlé zápisy (šipky) do jednoho zápisu na disk.
     private var saveTask: Task<Void, Never>?
+    /// Kódování celého souboru neběží na hlavním vlákně — tam by zastavilo číselník.
+    private let diskWriter = MatchDiskWriter()
+    private var diskGeneration = 0
     /// Jedna připravená odezva. Nový generátor na každý stisk při rychlých třech šipkách zasekne hlavní vlákno.
     private let lightImpact = UIImpactFeedbackGenerator(style: .light)
     private let softImpact = UIImpactFeedbackGenerator(style: .soft)
@@ -702,7 +732,7 @@ enum InactivityLock {
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled else { return }
             saveTask = nil
-            writeToDisk()
+            writeToDisk(wait: false)
         }
     }
 
@@ -710,15 +740,20 @@ enum InactivityLock {
     func flushSave() {
         saveTask?.cancel()
         saveTask = nil
-        writeToDisk()
+        writeToDisk(wait: true)
     }
 
-    private func writeToDisk() {
+    private func writeToDisk(wait: Bool) {
         guard !needsRecovery else { return }
-        do {
-            try JSONEncoder().encode(data).write(to: file, options: [.atomic, .completeFileProtection])
-        } catch {
-            storageError = "Změny se nepodařilo uložit. \(error.localizedDescription)"
+        diskGeneration += 1
+        let generation = diskGeneration
+        let snapshot = data
+        let destination = file
+        diskWriter.submit(generation: generation, snapshot: snapshot, url: destination, wait: wait) { message in
+            Task { @MainActor in
+                guard generation == self.diskGeneration else { return }
+                self.storageError = message
+            }
         }
     }
     func createProfile(_ name: String) {
@@ -828,7 +863,7 @@ enum InactivityLock {
         fresh.voice = data.voice
         fresh.boardCalibration = data.boardCalibration
         data = fresh
-        writeToDisk()
+        writeToDisk(wait: true)
         UserDefaults.standard.set(true, forKey: key)
     }
     func finish() {

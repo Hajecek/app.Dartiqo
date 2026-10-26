@@ -4,6 +4,7 @@ import SwiftUI
 struct HitMissPad: View {
     var target: String
     var onThrow: (Bool) -> Void
+    @State private var pace = ScoringPace()
 
     var body: some View {
         HStack(spacing: 10) {
@@ -11,10 +12,17 @@ struct HitMissPad: View {
             button(hit: true)
         }
         .frame(height: 190)
+        .transaction { transaction in
+            transaction.animation = nil
+            transaction.disablesAnimations = true
+        }
     }
 
     private func button(hit: Bool) -> some View {
-        Button { onThrow(hit) } label: {
+        InstantPressButton(accessibilityLabel: hit ? "Trefa \(target)" : "Vedle") {
+            let throwHit = onThrow
+            pace.enqueue { throwHit(hit) }
+        } label: {
             VStack(spacing: 8) {
                 Image(systemName: hit ? "checkmark" : "xmark")
                     .font(.system(size: 30, weight: .heavy))
@@ -34,10 +42,7 @@ struct HitMissPad: View {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .strokeBorder(.white.opacity(hit ? 0 : 0.14), lineWidth: 1)
             )
-            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(hit ? "Trefa \(target)" : "Vedle")
     }
 }
 

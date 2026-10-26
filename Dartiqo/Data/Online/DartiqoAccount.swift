@@ -35,6 +35,9 @@ import Combine
     private var liveClockPlayed: TimeInterval = 0
     private var liveClockRunning = false
     private var liveClockNotedAt = Date()
+    /// Živý stav pro web se skládá mimo klepnutí na číslo, ať se tabule při tom nezasekne.
+    private var pendingBoard: (match: Match?, store: AppStore)?
+    private var boardPump: Task<Void, Never>?
 
     private init() {
         serverURL = defaults.string(forKey: Keys.server).flatMap(ServerConfig.normalized) ?? ServerConfig.defaultURL
@@ -246,6 +249,27 @@ import Combine
     }
 
     func syncLive(_ match: Match?, store: AppStore) {
+        pendingBoard = (match, store)
+        guard boardPump == nil else { return }
+        boardPump = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            guard !Task.isCancelled else {
+                boardPump = nil
+                return
+            }
+            let next = pendingBoard
+            pendingBoard = nil
+            if let next {
+                pushLive(next.match, store: next.store)
+            }
+            boardPump = nil
+            if let again = pendingBoard {
+                syncLive(again.match, store: again.store)
+            }
+        }
+    }
+
+    private func pushLive(_ match: Match?, store: AppStore) {
         let photos = match.map { livePhotos($0, store: store) } ?? []
         let clock = liveClockSnapshot(match)
         MatchLiveActivity.shared.update(match, paused: clock.paused, played: clock.played, running: clock.running)

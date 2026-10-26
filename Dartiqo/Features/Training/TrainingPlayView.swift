@@ -118,7 +118,7 @@ struct TrainingPlayView: View {
             .frame(maxWidth: 780)
         }
         .scrollIndicators(.hidden)
-        .scrollDisabled((surface == .grid || (isHoldingVisit && holdSurface == .grid)) && !finished)
+        .scrollDisabled((surface == .grid || surface == .total || (isHoldingVisit && (holdSurface == .grid || holdSurface == .total))) && !finished)
         .background(TrainingColors.background)
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if oneEightyFlash == nil { bottomBar }
@@ -233,8 +233,6 @@ struct TrainingPlayView: View {
                 Text(percent)
                     .font(AppFont.display(34, weight: .bold))
                     .monospacedDigit()
-                    .contentTransition(.numericText(value: stats.rate))
-                    .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: stats.hits)
             }
             .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
             HStack(spacing: 8) {
@@ -263,7 +261,6 @@ struct TrainingPlayView: View {
     private var classicScoreboard: some View {
         let busted = isHoldingVisit && projection.feedback == .bust
         let headline = busted ? "BUST" : (projection.target.isEmpty ? projection.scoreText : projection.target)
-        let numeric = Double(projection.score)
         return VStack(alignment: .leading, spacing: 2) {
             Text(definition.title)
                 .font(AppFont.body(14, weight: .semibold))
@@ -274,8 +271,6 @@ struct TrainingPlayView: View {
                 .minimumScaleFactor(0.4)
                 .lineLimit(1)
                 .foregroundStyle(.white)
-                .contentTransition(busted ? .opacity : .numericText(value: numeric))
-                .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: headline)
                 .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
                 .accessibilityLabel(busted ? "Přehoz" : headline)
             HStack(spacing: 8) {
@@ -651,8 +646,7 @@ struct TrainingPlayView: View {
                             .labelStyle(.titleAndIcon)
                             .foregroundStyle(sumText.isEmpty ? Color.secondary : Color.black)
                             .frame(maxWidth: .infinity, minHeight: 52)
-                            .contentShape(Capsule())
-                            .contentTransition(.numericText())
+                        .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
                     .glassEffect(
@@ -745,8 +739,12 @@ struct TrainingPlayView: View {
         var buffer = visitBuffer
         buffer.append(dart)
         let after = TrainingEngine.project(current)
-        session = current
-        visitBuffer = buffer
+        var quiet = Transaction(animation: nil)
+        quiet.disablesAnimations = true
+        withTransaction(quiet) {
+            session = current
+            visitBuffer = buffer
+        }
         store.stageTraining(current)
         if after.feedback == .bust {
             store.feedback(announce: surface != .total, spoken: "Přehoz")

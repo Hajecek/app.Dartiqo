@@ -158,15 +158,17 @@ struct TotalScorePad: View {
     var onQuick: (Int) -> Void
     var onBust: () -> Void = {}
     var onTap: () -> Void = {}
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Čísla jdou za sebou. Po záseku se neslijí do jednoho překreslení.
+    @State private var pace = ScoringPace()
 
     var body: some View {
         VStack(spacing: 8) {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 6), spacing: 6) {
                 ForEach([26, 41, 60, 100, 140, 180], id: \.self) { score in
-                    Button {
+                    InstantPressButton(accessibilityLabel: "Součet \(score)") {
                         onTap()
-                        onQuick(score)
+                        let quick = onQuick
+                        pace.enqueue { quick(score) }
                     } label: {
                         Text("\(score)")
                             .font(AppFont.caption(13, weight: .bold))
@@ -174,8 +176,6 @@ struct TotalScorePad: View {
                             .frame(maxWidth: .infinity, minHeight: 44)
                             .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Součet \(score)")
                 }
             }
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
@@ -183,20 +183,11 @@ struct TotalScorePad: View {
                     if key.isEmpty {
                         Color.clear.frame(maxWidth: .infinity, minHeight: 48)
                     } else {
-                        Button {
+                        InstantPressButton(
+                            accessibilityLabel: key == "⌫" ? "Smazat" : key == "BUST" ? "Přehoz" : key
+                        ) {
                             onTap()
-                            if key == "⌫" {
-                                guard !sumText.isEmpty else { return }
-                                withAnimation(reduceMotion ? nil : .snappy(duration: 0.22)) {
-                                    sumText.removeLast()
-                                }
-                            } else if key == "BUST" {
-                                onBust()
-                            } else if sumText.count < 3 {
-                                withAnimation(reduceMotion ? nil : .snappy(duration: 0.22)) {
-                                    sumText = sumText == "0" ? key : sumText + key
-                                }
-                            }
+                            pace.enqueue { apply(key) }
                         } label: {
                             Text(key)
                                 .font(key == "BUST" || key == "⌫" ? AppFont.caption(14, weight: .bold) : AppFont.display(24, weight: .bold))
@@ -204,11 +195,25 @@ struct TotalScorePad: View {
                                 .frame(maxWidth: .infinity, minHeight: 48)
                                 .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(key == "⌫" ? "Smazat" : key == "BUST" ? "Přehoz" : key)
                     }
                 }
             }
+        }
+        .transaction { transaction in
+            transaction.animation = nil
+            transaction.disablesAnimations = true
+        }
+    }
+
+    /// Čte součet až ve chvíli zápisu, ať rychlá druhá číslice naváže na první.
+    private func apply(_ key: String) {
+        if key == "⌫" {
+            guard !sumText.isEmpty else { return }
+            sumText.removeLast()
+        } else if key == "BUST" {
+            onBust()
+        } else if sumText.count < 3 {
+            sumText = sumText == "0" ? key : sumText + key
         }
     }
 
@@ -276,9 +281,26 @@ enum ScoringTotal {
     }
 }
 
+/// Po sobě jdoucí čísla se vykreslí zvlášť. Bez toho SwiftUI po záseku ukáže dvě najednou.
+/// Třída, ne stav pohledu — výměna úlohy nesmí složit mřížku znovu uprostřed doteku.
+@MainActor
+final class ScoringPace {
+    private var task: Task<Void, Never>?
+
+    func enqueue(_ work: @escaping @MainActor () -> Void) {
+        let previous = task
+        task = Task { @MainActor in
+            _ = await previous?.value
+            work()
+            // Jeden snímek na číslo. Další klepnutí, které čekalo ve frontě, neskočí do stejného překreslení.
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+    }
+}
+
 /// Číslo se zapíše při doteku, ne až při puštění prstu.
 /// SwiftUI `Button` gesto zahodí, když se mřížka mezitím překreslí — rychlé tři šipky se pak ztratí nebo dorazí pozdě.
-private struct InstantPressButton<Label: View>: View {
+struct InstantPressButton<Label: View>: View {
     var disabled = false
     var accessibilityLabel: String
     var accessibilityHint: String = ""
@@ -355,12 +377,19 @@ private final class TouchDownControl: UIControl {
         releaseScrollDelayIfPinned()
     }
 
-    /// ScrollView jinak podrží dotek, než rozhodne, že to není posun. U čísel je posun vypnutý, takže šipka může jít hned.
+    /// Jeden prst = jedno číslo, i když SwiftUI při překreslení tlačítko složí znovu a dotek přijde podruhé.
+    private static var claimedTouches: [ObjectIdentifier: CFTimeInterval] = [:]
+    private var ownedTouches = Set<ObjectIdentifier>()
+
+    /// ScrollView jinak podrží dotek, než rozhodne, že to není posun. Číslo má jít hned, i když se stránka ještě dá posouvat.
     private func releaseScrollDelayIfPinned() {
         var ancestor = superview
         while let view = ancestor {
-            if let scroll = view as? UIScrollView, !scroll.isScrollEnabled {
+            if let scroll = view as? UIScrollView {
                 scroll.delaysContentTouches = false
+                if !scroll.isScrollEnabled {
+                    scroll.canCancelContentTouches = false
+                }
             }
             ancestor = view.superview
         }
@@ -369,17 +398,42 @@ private final class TouchDownControl: UIControl {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesBegan(touches, with: event)
         guard isEnabled else { return }
+        let fresh = touches.filter { touch in
+            let id = ObjectIdentifier(touch)
+            guard Self.claimedTouches[id] == nil else { return false }
+            Self.claimedTouches[id] = CACurrentMediaTime()
+            ownedTouches.insert(id)
+            return true
+        }
+        guard !fresh.isEmpty else { return }
         onDown?()
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesEnded(touches, with: event)
-        onUp?()
+        release(touches, keepClaim: false)
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
         super.touchesCancelled(touches, with: event)
-        onUp?()
+        release(touches, keepClaim: true)
+    }
+
+    private func release(_ touches: Set<UITouch>, keepClaim: Bool) {
+        let mine = touches.contains { ownedTouches.contains(ObjectIdentifier($0)) }
+        for touch in touches {
+            let id = ObjectIdentifier(touch)
+            ownedTouches.remove(id)
+            if keepClaim {
+                // Zrušený dotek při překreslení ještě chvíli patří tomuto gestu, ať se číslo nezapíše podruhé.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                    Self.claimedTouches.removeValue(forKey: id)
+                }
+            } else {
+                Self.claimedTouches.removeValue(forKey: id)
+            }
+        }
+        if mine { onUp?() }
     }
 }
 
@@ -392,6 +446,8 @@ struct ManualScorePad: View {
     var numbers: [Int]? = nil
     var onSelect: () -> Void = {}
     var onHit: (Dart) -> Void
+    /// Šipky jdou za sebou, ať se po záseku neobjeví dvě pole najednou.
+    @State private var pace = ScoringPace()
 
     private var accent: Color {
         switch multiplier {
@@ -445,6 +501,10 @@ struct ManualScorePad: View {
                 }
             }
         }
+        .transaction { transaction in
+            transaction.animation = nil
+            transaction.disablesAnimations = true
+        }
     }
 
     private var multiplierName: String {
@@ -493,9 +553,11 @@ struct ManualScorePad: View {
     }
 
     /// Po zápisu šipky vypne Double / Triple — další hod začíná jako single.
+    /// Samotný zápis jde až po předchozí šipce, mimo gesto, ať se číselník při překreslení nezasekne.
     private func score(_ dart: Dart) {
-        onHit(dart)
         multiplier = 1
+        let deliver = onHit
+        pace.enqueue { deliver(dart) }
     }
 
     private func tileFill(focused: Bool, dimmed: Bool = false) -> Color {

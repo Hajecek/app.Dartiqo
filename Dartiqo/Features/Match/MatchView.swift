@@ -573,7 +573,7 @@ struct MatchView: View {
             }.padding(.horizontal, 16).padding(.vertical, surface == .grid ? 6 : 10).frame(maxWidth: 780)
         }
         .scrollIndicators(.hidden)
-        .scrollDisabled(keepsNumberPad && !showingBotBoard && !liveStatsNeedRoom(game))
+        .scrollDisabled(pinsScoringPad && !showingBotBoard && !liveStatsNeedRoom(game))
         .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar(game) }
     }
 
@@ -1138,8 +1138,6 @@ struct MatchView: View {
                         .minimumScaleFactor(0.5)
                         .lineLimit(1)
                         .foregroundStyle(active ? Color.white : MatchColors.ink)
-                        .contentTransition(score.headline == "BUST" ? .opacity : .numericText(value: score.headlineNumber))
-                        .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: score.headline)
                         .accessibilityLabel(score.headline == "BUST" ? "Přehoz" : score.headline)
                         .frame(maxWidth: .infinity, minHeight: 80, maxHeight: 80, alignment: .leading)
                     if !chips.isEmpty, !perLeg {
@@ -1310,33 +1308,13 @@ struct MatchView: View {
         .accessibilityLabel(chip.accessibility)
     }
 
-    /// Číslo v živém zápase. Průměr mezi šipkami dojede po desetinách, ostatní čísla přetočí číslice.
-    @ViewBuilder
-    private func liveNumber(_ text: String, number: Double, font: Font) -> some View {
-        let shown = Double(text)
-        if reduceMotion || shown == nil {
-            Text(text)
-                .font(font)
-                .monospacedDigit()
-                .contentTransition(.opacity)
-                .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: text)
-                .minimumScaleFactor(0.7)
-                .lineLimit(1)
-        } else if text.contains("."), let shown {
-            RollingMatchNumber(value: shown)
-                .animation(.snappy(duration: 0.45), value: shown)
-                .font(font)
-                .minimumScaleFactor(0.7)
-                .lineLimit(1)
-        } else {
-            Text(text)
-                .font(font)
-                .monospacedDigit()
-                .contentTransition(.numericText(value: number))
-                .animation(.snappy(duration: 0.28), value: text)
-                .minimumScaleFactor(0.7)
-                .lineLimit(1)
-        }
+    /// Číslo v živém zápase. Mění se hned — přetáčení číslic při každé šipce zasekávalo další klepnutí.
+    private func liveNumber(_ text: String, number _: Double, font: Font) -> some View {
+        Text(text)
+            .font(font)
+            .monospacedDigit()
+            .minimumScaleFactor(0.7)
+            .lineLimit(1)
     }
 
     private func liveStatsNeedRoom(_ game: Match) -> Bool {
@@ -1779,8 +1757,6 @@ struct MatchView: View {
                     .font(AppFont.display(34, weight: .bold))
                     .monospacedDigit()
                     .foregroundStyle(filled ? Color.white : Color.white.opacity(0.28))
-                    .contentTransition(.numericText(value: number))
-                    .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: number)
             }
             Spacer(minLength: 0)
             Image(systemName: "sum")
@@ -2556,8 +2532,6 @@ struct MatchView: View {
                                     .foregroundStyle(sumText.isEmpty ? Color.secondary : Theme.onAccent)
                                     .frame(maxWidth: .infinity, minHeight: 52)
                                     .contentShape(Capsule())
-                                    .contentTransition(.numericText(value: Double(sumText) ?? 0))
-                                    .animation(reduceMotion ? nil : .snappy(duration: 0.22), value: sumText)
                             }
                             .buttonStyle(.plain)
                             .glassEffect(
@@ -2654,6 +2628,12 @@ struct MatchView: View {
     /// Cricket ukáže jen zvolená pole. Ostatní režimy nechají celou klávesnici.
     private func scorePadNumbers(_ game: Match) -> [Int]? {
         game.config.mode == .cricket ? game.config.settings.activeCricketNumbers : nil
+    }
+
+    /// Číselník i součet nemají čekat, než scroll rozhodne, jestli jde o posun.
+    private var pinsScoringPad: Bool {
+        if isHoldingVisit { return holdSurface == .grid || holdSurface == .total }
+        return surface == .grid || surface == .total
     }
 
     /// Číselná mřížka zůstane na obrazovce i v krátké pauze po třetí šipce.
@@ -2933,9 +2913,7 @@ struct MatchView: View {
                 error = "Součet jde jen na začátku kola. Dokonči nebo vrať šipky."
                 return
             }
-            withAnimation(reduceMotion ? nil : .snappy(duration: 0.22)) {
-                sumText = "\(score)"
-            }
+            sumText = "\(score)"
             resolveTotal(game)
             // Zobraz „180“, ne syntetické T20 (60·60·60).
             if isHoldingVisit { holdSurface = .total }
@@ -3068,7 +3046,9 @@ struct MatchView: View {
                 applyVisitHold(game: game, darts: visit.darts, player: thrower, fromBot: false)
             } else {
                 store.tapHaptic(.light)
-                activeMatch = game
+                var quiet = Transaction(animation: nil)
+                quiet.disablesAnimations = true
+                withTransaction(quiet) { activeMatch = game }
             }
         } catch { self.error = error.localizedDescription }
     }
@@ -3661,9 +3641,7 @@ struct MatchView: View {
             showBust: true,
             onQuick: { score in
                 store.tapHaptic(.medium)
-                withAnimation(reduceMotion ? nil : .snappy(duration: 0.22)) {
-                    sumText = "\(score)"
-                }
+                sumText = "\(score)"
                 resolveTotal(game)
             },
             onBust: { bustPrompt = true },
@@ -4695,21 +4673,6 @@ private struct ResultDetailCard: ViewModifier {
 private extension View {
     func detailCard() -> some View {
         modifier(ResultDetailCard())
-    }
-}
-
-/// Průměr na jedno desetinné místo. Mezi dvěma šipkami číslo samo dojede.
-private struct RollingMatchNumber: View, Animatable {
-    var value: Double
-
-    var animatableData: Double {
-        get { value }
-        set { value = newValue }
-    }
-
-    var body: some View {
-        Text(String(format: "%.1f", value))
-            .monospacedDigit()
     }
 }
 
