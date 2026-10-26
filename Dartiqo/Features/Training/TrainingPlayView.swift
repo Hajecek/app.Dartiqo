@@ -233,6 +233,8 @@ struct TrainingPlayView: View {
                 Text(percent)
                     .font(AppFont.display(34, weight: .bold))
                     .monospacedDigit()
+                    .contentTransition(.numericText(value: stats.rate))
+                    .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: stats.hits)
             }
             .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
             HStack(spacing: 8) {
@@ -271,6 +273,8 @@ struct TrainingPlayView: View {
                 .minimumScaleFactor(0.4)
                 .lineLimit(1)
                 .foregroundStyle(.white)
+                .contentTransition(busted ? .opacity : .numericText(value: Double(projection.score)))
+                .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: headline)
                 .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
                 .accessibilityLabel(busted ? "Přehoz" : headline)
             HStack(spacing: 8) {
@@ -739,12 +743,8 @@ struct TrainingPlayView: View {
         var buffer = visitBuffer
         buffer.append(dart)
         let after = TrainingEngine.project(current)
-        var quiet = Transaction(animation: nil)
-        quiet.disablesAnimations = true
-        withTransaction(quiet) {
-            session = current
-            visitBuffer = buffer
-        }
+        session = current
+        visitBuffer = buffer
         store.stageTraining(current)
         if after.feedback == .bust {
             store.feedback(announce: surface != .total, spoken: "Přehoz")

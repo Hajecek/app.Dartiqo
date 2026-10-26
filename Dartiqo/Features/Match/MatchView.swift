@@ -1138,6 +1138,8 @@ struct MatchView: View {
                         .minimumScaleFactor(0.5)
                         .lineLimit(1)
                         .foregroundStyle(active ? Color.white : MatchColors.ink)
+                        .contentTransition(score.headline == "BUST" ? .opacity : .numericText(value: score.headlineNumber))
+                        .animation(reduceMotion ? nil : .snappy(duration: 0.28), value: score.headline)
                         .accessibilityLabel(score.headline == "BUST" ? "Přehoz" : score.headline)
                         .frame(maxWidth: .infinity, minHeight: 80, maxHeight: 80, alignment: .leading)
                     if !chips.isEmpty, !perLeg {
@@ -3046,9 +3048,7 @@ struct MatchView: View {
                 applyVisitHold(game: game, darts: visit.darts, player: thrower, fromBot: false)
             } else {
                 store.tapHaptic(.light)
-                var quiet = Transaction(animation: nil)
-                quiet.disablesAnimations = true
-                withTransaction(quiet) { activeMatch = game }
+                activeMatch = game
             }
         } catch { self.error = error.localizedDescription }
     }
