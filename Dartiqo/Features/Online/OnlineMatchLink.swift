@@ -51,7 +51,7 @@ final class OnlineMatchLink: ObservableObject {
         yourSlot = match.yourSlot ?? 0
         self.session = session
         matchID = match.id
-        config = match.rules.config
+        config = match.playRules.config
         players = match.players.sorted { $0.slot < $1.slot }.map { player in
             let id = player.you ? (profileID ?? Self.uuid(player.id)) : Self.uuid(player.id)
             return Player(id: id, name: player.name)

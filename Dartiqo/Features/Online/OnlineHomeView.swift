@@ -53,7 +53,7 @@ final class OnlineSession: ObservableObject {
         do {
             async let current = api.currentOnline()
             async let invites = api.onlineInvites()
-            async let hall = api.onlineLobbies(kind: "classic")
+            async let hall = api.onlineLobbies(kind: nil)
             let match = try await current
             let incoming = try await invites
             let listed = try await hall
@@ -357,7 +357,7 @@ struct OnlineHomeView: View {
 
     private func preset(for match: OnlineMatch) -> SetupDraft {
         var draft = SetupDraft(mode: .x01)
-        draft.config = match.rules.config
+        draft.config = match.playRules.config
         return draft
     }
 
@@ -527,7 +527,7 @@ struct OnlineHomeView: View {
     private func lobbyLine(_ match: OnlineMatch) -> String {
         var parts: [String] = []
         if let code = match.code, !match.isLive { parts.append("Kód \(code)") }
-        parts.append(match.rules.summary)
+        parts.append(match.playRules.summary)
         if !match.isLive { parts.append("\(match.players.count)/2") }
         return parts.joined(separator: " · ")
     }
@@ -594,7 +594,7 @@ struct OnlineHomeView: View {
             Avatar(name: lobby.host.name, size: 46, photo: session.photo(lobby.host.photo))
             VStack(alignment: .leading, spacing: 4) {
                 Text(lobby.host.name).font(.headline).lineLimit(1)
-                Text(lobby.rules.summary)
+                Text(lobby.playRules.summary)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)

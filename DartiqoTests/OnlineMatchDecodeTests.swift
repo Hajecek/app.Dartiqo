@@ -92,5 +92,21 @@ struct OnlineMatchDecodeTests {
         #expect(body["outRule"] as? String == "master")
         #expect(body["password"] as? String == "")
         #expect(body["keepPassword"] as? Bool == false)
+        #expect(body["mode"] == nil)
+    }
+
+    @Test func cricketLobbyBody() {
+        var config = GameConfig(mode: .cricket)
+        var options = MatchOptions()
+        options.cricketNoScore = true
+        options.countUpRounds = 8
+        options.clockStyle = .doubles
+        config.options = options
+        let body = OnlineLobbySettings(config: config, isPublic: true).body
+        #expect(body["kind"] as? String == "cricket")
+        #expect(body["mode"] as? String == "cricket")
+        #expect(body["cricketNoScore"] as? Bool == true)
+        #expect(body["countUpRounds"] == nil)
+        #expect(body["clockStyle"] == nil)
     }
 }

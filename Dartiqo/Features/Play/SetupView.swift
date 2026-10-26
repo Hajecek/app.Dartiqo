@@ -165,7 +165,7 @@ struct SetupView: View {
         let entry: SetupStep
         // Rychlá hra přijde s hotovou sestavou a má hned ukázat, kdo hází první.
         if let online {
-            entry = online.editing ? .rules : .players
+            entry = online.editing ? .rules : .game
         } else if startAtOpening {
             entry = draft.seats.count > 1 ? .opening : .rules
         } else {
@@ -237,7 +237,7 @@ struct SetupView: View {
 
     /// Kroky průvodce. „Kdo začíná“ má smysl jen pro víc hráčů.
     private var flow: [SetupStep] {
-        if isOnline { return isEditingLobby ? [.rules] : [.players, .rules] }
+        if isOnline { return isEditingLobby ? [.rules] : [.game, .players, .rules] }
         return showsOpening ? [.game, .players, .rules, .opening] : [.game, .players, .rules]
     }
     private var isLastStep: Bool { step == flow.last }
@@ -694,7 +694,7 @@ struct SetupView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            if startsWithGame, let last = store.lastSetup {
+            if startsWithGame, !isOnline, let last = store.lastSetup {
                 lastSetupCard(last)
             }
 
@@ -704,11 +704,14 @@ struct SetupView: View {
                 }
             }
 
-            if !store.presets.isEmpty {
+            if !isOnline, !store.presets.isEmpty {
                 presetList
             }
 
-            Label("Hra a všechny předvolby fungují offline.", systemImage: "wifi.slash")
+            Label(
+                isOnline ? "Soupeř se připojí kódem lobby." : "Hra a všechny předvolby fungují offline.",
+                systemImage: isOnline ? "person.2" : "wifi.slash"
+            )
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity)
@@ -1704,13 +1707,20 @@ struct SetupView: View {
         }
     }
 
+    private var onlineRulesHint: String {
+        switch draft.config.mode {
+        case .x01: return "Stejně jako lokální X01. Online se hraje bez double in."
+        case .cricket: return "Stejný cricket jako v lokální hře. Soupeř se připojí kódem lobby."
+        case .aroundClock: return "Stejné kolo hodin jako v lokální hře. Soupeř se připojí kódem lobby."
+        case .countUp: return "Stejný Count Up jako v lokální hře. Soupeř se připojí kódem lobby."
+        }
+    }
+
     private var rulesStep: some View {
         VStack(alignment: .leading, spacing: 12) {
             pageHeader(
                 "Jak se bude hrát?",
-                hint: isOnline
-                    ? "Stejně jako lokální X01. Online se hraje bez double in."
-                    : "Výchozí nastavení stačí. Změň jen to, co chceš jinak."
+                hint: isOnline ? onlineRulesHint : "Výchozí nastavení stačí. Změň jen to, co chceš jinak."
             )
             if isOnline {
                 VStack(spacing: 0) {
@@ -2616,7 +2626,6 @@ struct SetupView: View {
             guard !onlineSending else { return }
             onlineSending = true
             var setup = draft
-            setup.config.mode = .x01
             setup.config.doubleIn = false
             setup.config.handicaps = nil
             var options = setup.config.options ?? MatchOptions()

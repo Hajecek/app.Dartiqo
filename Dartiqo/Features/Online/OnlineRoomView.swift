@@ -157,18 +157,7 @@ struct OnlineRoomView: View {
                 seat(match, slot: 1)
             }
 
-            VStack(spacing: 8) {
-                HStack(spacing: 8) {
-                    ruleChip(title: "Start", value: "\(match.rules.startingScore)")
-                    ruleChip(title: "Zavření", value: match.rules.outLabel)
-                    if !match.rules.playsSets {
-                        ruleChip(title: "Délka", value: match.rules.lengthLabel)
-                    }
-                }
-                if match.rules.playsSets {
-                    ruleChip(title: "Délka", value: match.rules.lengthLabel)
-                }
-            }
+            ruleOverview(match.playRules)
         }
         .padding(18)
         .frame(maxWidth: .infinity)
@@ -176,8 +165,29 @@ struct OnlineRoomView: View {
     }
 
     private func visibilityText(_ match: OnlineMatch) -> String {
-        if match.isPublic { return "Veřejné lobby" }
-        return "Uzavřené lobby"
+        let game = match.playRules.gameMode.shortTitle
+        if match.isPublic { return "Veřejné lobby · \(game)" }
+        return "Uzavřené lobby · \(game)"
+    }
+
+    @ViewBuilder
+    private func ruleOverview(_ rules: OnlineRules) -> some View {
+        let chips = rules.overviewChips
+        if rules.gameMode == .x01, rules.playsSets, chips.count >= 3 {
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    ruleChip(title: chips[0].title, value: chips[0].value)
+                    ruleChip(title: chips[1].title, value: chips[1].value)
+                }
+                ruleChip(title: chips[2].title, value: chips[2].value)
+            }
+        } else {
+            HStack(spacing: 8) {
+                ForEach(chips) { chip in
+                    ruleChip(title: chip.title, value: chip.value)
+                }
+            }
+        }
     }
 
     private func ruleChip(title: String, value: String) -> some View {
@@ -253,7 +263,7 @@ struct OnlineRoomView: View {
     }
 
     private func shareText(_ match: OnlineMatch, code: String) -> String {
-        "Zahraj si se mnou šipky v Dartiqo. \(match.rules.summary). Kód lobby: \(code)"
+        "Zahraj si se mnou šipky v Dartiqo. \(match.playRules.summary). Kód lobby: \(code)"
     }
 
     @ViewBuilder
