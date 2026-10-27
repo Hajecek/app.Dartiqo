@@ -36,7 +36,14 @@ struct OnlineRoomView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .screen()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            if lobbyChrome {
+                Color.black.ignoresSafeArea()
+            }
+        }
+        .preferredColorScheme(.dark)
+        .toolbarColorScheme(.dark, for: .navigationBar)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: match?.status) { _, status in
@@ -87,6 +94,15 @@ struct OnlineRoomView: View {
         }
     }
 
+    /// Lobby, načítání a zrušená místnost sedí na černém plátně. Rozehraný zápas má vlastní tabuli.
+    private var lobbyChrome: Bool {
+        guard let match else { return true }
+        switch match.status {
+        case "live", "finished": return false
+        default: return true
+        }
+    }
+
     private var title: String {
         guard let match else { return "Lobby" }
         if match.isLive { return "Zápas" }
@@ -109,17 +125,19 @@ struct OnlineRoomView: View {
 
     private func lobby(_ match: OnlineMatch) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 14) {
                 overview(match)
                 if let code = match.code {
                     codeCard(match, code: code)
                 }
                 if let notice = session.notice, !notice.isEmpty {
-                    Text(notice).font(.subheadline).foregroundStyle(.red)
+                    noticeBanner(notice)
                 }
                 invites(match)
             }
-            .padding(22)
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 24)
             .frame(maxWidth: 760, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
@@ -127,21 +145,33 @@ struct OnlineRoomView: View {
 
     /// Horní přehled: kdo proti komu hraje, kdo je připravený a na jaká pravidla.
     private func overview(_ match: OnlineMatch) -> some View {
-        VStack(spacing: 18) {
-            HStack(spacing: 8) {
-                Label(visibilityText(match), systemImage: match.isPublic ? "globe" : "lock.fill")
-                    .font(.caption.weight(.heavy))
-                    .foregroundStyle(.secondary)
-                    .labelStyle(.titleAndIcon)
+        VStack(spacing: 20) {
+            HStack(spacing: 10) {
+                Image(systemName: match.playRules.gameMode.symbol)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 36, height: 36)
+                    .background(
+                        LinearGradient(colors: match.playRules.gameMode.tileColors, startPoint: .topLeading, endPoint: .bottomTrailing),
+                        in: Circle()
+                    )
+                    .accessibilityHidden(true)
+                Text(visibilityText(match))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
                 Spacer(minLength: 8)
                 if match.isHost {
                     Button(action: onEdit) {
                         Label("Upravit", systemImage: "pencil")
                             .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Color.white.opacity(0.1), in: Capsule())
                     }
-                    .buttonStyle(.bordered)
-                    .buttonBorderShape(.capsule)
-                    .controlSize(.small)
+                    .buttonStyle(.plain)
                     .accessibilityHint("Změní pravidla nebo viditelnost lobby")
                 }
             }
@@ -149,10 +179,10 @@ struct OnlineRoomView: View {
             HStack(alignment: .top, spacing: 0) {
                 seat(match, slot: 0)
                 Text("VS")
-                    .font(AppFont.title(20))
-                    .foregroundStyle(.secondary)
+                    .font(AppFont.display(18))
+                    .foregroundStyle(Theme.brand)
                     .frame(width: 44)
-                    .padding(.top, 30)
+                    .padding(.top, 34)
                     .accessibilityHidden(true)
                 seat(match, slot: 1)
             }
@@ -161,7 +191,7 @@ struct OnlineRoomView: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .modifier(LobbyPanel())
     }
 
     private func visibilityText(_ match: OnlineMatch) -> String {
@@ -197,24 +227,27 @@ struct OnlineRoomView: View {
                 .foregroundStyle(.secondary)
             Text(value)
                 .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
                 .minimumScaleFactor(0.75)
         }
         .frame(maxWidth: .infinity, minHeight: 58)
         .padding(.horizontal, 6)
-        .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .accessibilityElement(children: .combine)
     }
 
     private func codeCard(_ match: OnlineMatch, code: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Eyebrow(text: "Kód lobby")
+                    Text("KÓD LOBBY")
+                        .font(.caption2.weight(.heavy))
+                        .foregroundStyle(.white.opacity(0.5))
                     Text(copied ? "Zkopírováno do schránky" : "Klepnutím zkopíruješ")
                         .font(.caption)
-                        .foregroundStyle(copied ? Theme.positive : .secondary)
+                        .foregroundStyle(copied ? Theme.positive : .white.opacity(0.62))
                         .contentTransition(.opacity)
                 }
                 Spacer(minLength: 8)
@@ -237,11 +270,12 @@ struct OnlineRoomView: View {
                         Text(String(character))
                             .font(AppFont.display(28))
                             .monospaced()
-                            .frame(maxWidth: .infinity, minHeight: 54)
-                            .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .foregroundStyle(Theme.brand)
+                            .frame(maxWidth: .infinity, minHeight: 56)
+                            .background(Color.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .stroke(copied ? Theme.positive.opacity(0.6) : .clear, lineWidth: 1.5)
+                                    .stroke(copied ? Theme.positive.opacity(0.8) : Color.white.opacity(0.08), lineWidth: 1.5)
                             )
                     }
                 }
@@ -254,7 +288,7 @@ struct OnlineRoomView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .modifier(LobbyPanel())
         .task(id: copied) {
             guard copied else { return }
             try? await Task.sleep(for: .seconds(2))
@@ -273,7 +307,7 @@ struct OnlineRoomView: View {
                 Avatar(name: player.name, size: 84, photo: photo(of: player))
                     .padding(4)
                     .overlay(
-                        Circle().stroke(player.ready ? Theme.positive : Color.primary.opacity(0.12), lineWidth: 3)
+                        Circle().stroke(player.ready ? Theme.positive : Color.white.opacity(0.16), lineWidth: 3)
                     )
                     .overlay(alignment: .bottomTrailing) {
                         if player.ready {
@@ -281,7 +315,7 @@ struct OnlineRoomView: View {
                                 .font(.title2)
                                 .symbolRenderingMode(.palette)
                                 .foregroundStyle(.white, Theme.positive)
-                                .background(Circle().fill(Theme.card).padding(-2))
+                                .background(Circle().fill(Color.black).padding(-2))
                                 .transition(.scale.combined(with: .opacity))
                         }
                     }
@@ -289,14 +323,15 @@ struct OnlineRoomView: View {
                     .padding(.bottom, 4)
                 Text(player.you ? "Ty" : player.name)
                     .font(.headline)
+                    .foregroundStyle(.white)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 Text(player.slot == 0 ? "Hostitel" : "Soupeř")
                     .font(.caption2.weight(.heavy))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.5))
                 Text(player.ready ? "Připraven" : "Čeká")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(player.ready ? Theme.positive : .secondary)
+                    .foregroundStyle(player.ready ? Theme.positive : .white.opacity(0.62))
             }
             .frame(maxWidth: .infinity)
             .accessibilityElement(children: .combine)
@@ -304,17 +339,20 @@ struct OnlineRoomView: View {
             VStack(spacing: 6) {
                 Image(systemName: "person.badge.plus")
                     .font(.title)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.brand)
                     .frame(width: 84, height: 84)
                     .padding(4)
+                    .background(Theme.brand.opacity(0.08), in: Circle())
                     .overlay(
-                        Circle().strokeBorder(Color.primary.opacity(0.25), style: StrokeStyle(lineWidth: 2, dash: [6, 5]))
+                        Circle().strokeBorder(Theme.brand.opacity(0.7), style: StrokeStyle(lineWidth: 2, dash: [6, 5]))
                     )
                     .padding(.bottom, 4)
-                Text("Volné místo").font(.headline)
+                Text("Volné místo")
+                    .font(.headline)
+                    .foregroundStyle(.white)
                 Text("Čeká se na soupeře")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.62))
                     .multilineTextAlignment(.center)
             }
             .frame(maxWidth: .infinity)
@@ -334,7 +372,7 @@ struct OnlineRoomView: View {
         return VStack(spacing: 8) {
             Text(lobbyStatus(match))
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.white.opacity(0.62))
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: .infinity)
                 .contentTransition(.opacity)
@@ -399,36 +437,88 @@ struct OnlineRoomView: View {
     }
 
     private func invites(_ match: OnlineMatch) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Pozvat kamaráda").font(.headline)
-            Text("Pozvánka ho posadí rovnou do lobby.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        let people = invitees(in: match)
+        let full = match.players.count >= 2
+        return VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Pozvat kamaráda")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                Text(full ? "Místo je obsazené. Až se uvolní, můžeš sem někoho poslat." : "Pozvánka ho posadí rovnou do lobby.")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.62))
+            }
             if session.friends.isEmpty {
                 Text("Zatím nemáš kamarády. Přidáš je v profilu a pak je sem pozveš.")
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.62))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+                    .modifier(LobbyPanel())
             } else {
-                ForEach(invitees(in: match)) { friend in
-                    HStack {
-                        Avatar(name: friendName(friend.user), size: 36, photo: session.photo(friend.user.photo))
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(friendName(friend.user)).lineLimit(1)
-                            Text("@\(friend.user.username)").font(.caption).foregroundStyle(.secondary)
+                VStack(spacing: 0) {
+                    ForEach(Array(people.enumerated()), id: \.element.id) { index, friend in
+                        if index > 0 {
+                            Rectangle()
+                                .fill(Color.white.opacity(0.08))
+                                .frame(height: 1)
+                                .padding(.leading, 64)
                         }
-                        Spacer()
-                        if let publicId = friend.user.publicId, pending(publicId) {
-                            Text("Pozváno").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                        } else {
-                            Button("Pozvat") { Task { await session.invite(friend.user.id) } }
-                                .buttonStyle(.bordered)
-                                .disabled(session.busy || match.players.count >= 2)
-                        }
+                        friendInviteRow(friend, full: full)
                     }
                 }
+                .modifier(LobbyPanel())
             }
         }
-        .surface()
+    }
+
+    private func friendInviteRow(_ friend: FriendLink, full: Bool) -> some View {
+        let invited = friend.user.publicId.map(pending) ?? false
+        return HStack(spacing: 12) {
+            Avatar(name: friendName(friend.user), size: 40, photo: session.photo(friend.user.photo))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(friendName(friend.user))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                Text("@\(friend.user.username)")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.5))
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            if invited {
+                Label("Pozváno", systemImage: "checkmark")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.positive)
+                    .labelStyle(.titleAndIcon)
+            } else {
+                Button {
+                    Task { await session.invite(friend.user.id) }
+                } label: {
+                    Text("Pozvat")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Theme.brand, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(session.busy || full)
+                .opacity(session.busy || full ? 0.4 : 1)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+    }
+
+    private func noticeBanner(_ text: String) -> some View {
+        let sent = text == "Pozvánka je odeslaná."
+        return Label(text, systemImage: sent ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(sent ? Theme.positive : Color.red)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background((sent ? Theme.positive : Color.red).opacity(0.14), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func invitees(in match: OnlineMatch) -> [FriendLink] {
@@ -464,18 +554,22 @@ struct OnlineRoomView: View {
         let name = opponent?.name ?? "Soupeř"
         return VStack(spacing: 0) {
             Spacer(minLength: 24)
-            VStack(spacing: 18) {
-                Text(forfeited ? "🏳️" : "👋")
-                    .font(.system(size: 72))
+            VStack(spacing: 16) {
+                Image(systemName: forfeited ? "flag.fill" : "person.2.slash")
+                    .font(.system(size: 32, weight: .semibold))
+                    .foregroundStyle(forfeited ? .black : Theme.brand)
+                    .frame(width: 84, height: 84)
+                    .background(forfeited ? Theme.brand : Theme.brand.opacity(0.14), in: Circle())
                     .accessibilityHidden(true)
                 Text(forfeited ? "Soupeř vzdal zápas" : "Lobby už není")
                     .font(AppFont.title(28))
+                    .foregroundStyle(.white)
                     .multilineTextAlignment(.center)
                 Text(forfeited
                      ? "\(name) odešel z online zápasu. Zápas skončil vzdáním."
                      : "Hostitel lobby zrušil, nebo už vypršelo.")
                     .font(.body)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.white.opacity(0.62))
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -494,6 +588,16 @@ struct OnlineRoomView: View {
     private func friendName(_ user: DirectoryPerson) -> String {
         let name = user.fullName
         return name.isEmpty ? user.username : name
+    }
+}
+
+/// Tmavý panel lobby. Sedí na černém plátně stejně jako karty na Domů.
+struct LobbyPanel: ViewModifier {
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 22, style: .continuous)
+        content
+            .background(Color.white.opacity(0.06), in: shape)
+            .overlay(shape.stroke(Color.white.opacity(0.08), lineWidth: 1))
     }
 }
 
