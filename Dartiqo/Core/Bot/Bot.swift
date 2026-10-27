@@ -24,7 +24,7 @@ public struct BotLevel: Identifiable {
     public var checkoutLow: Int { max(1, Int((tuning.targetDoubleHit * 100).rounded()) - 2) }
     public var checkoutHigh: Int { min(99, Int((tuning.targetDoubleHit * 100).rounded()) + 2) }
     public var checkoutText: String { "\(Int((tuning.targetDoubleHit * 100).rounded())) %" }
-    public var oneEightiesPerLeg: Double { max(0, (tuning.targetAverage - 50) / 110) }
+    public var oneEightiesPerLeg: Double { tuning.oneEightiesPerLeg }
     public var maxVisitText: String {
         let value = oneEightiesPerLeg.formatted(.number.precision(.fractionLength(oneEightiesPerLeg < 0.1 ? 2 : 1)))
         return "\(value) / leg"

@@ -2,7 +2,8 @@ import Foundation
 
 /// Dlouhodobé cíle a rozptyl dvaceti úrovní pro 501 double out.
 /// Sigma je směrodatná odchylka v souřadnicích terče (1 = poloměr bodované plochy).
-/// Hodnoty se kalibrují úpravou rozptylu, nikdy úpravou už hozeného skóre.
+/// Kalibrace mění jen rozptyl, nikdy už hozené skóre. Triple odpovídá očekávanému
+/// průměru při míření na T20, double samostatné úspěšnosti zásahu.
 public enum BotDifficulty {
     public static let count = 20
 
@@ -24,6 +25,8 @@ public enum BotDifficulty {
         public var intelligence: Double
         public var pressureResistance: Double
         public var throwSeconds: Double
+        /// Odhad z návštěv na T20 se sdílenou formou, přepočtený na šipky v legu 501.
+        public var oneEightiesPerLeg: Double
 
         public var singleSigma: Double { tripleSigma }
         /// Horizontální složka skórovacího rozptylu.
@@ -63,6 +66,68 @@ public enum BotDifficulty {
         return Double(count - 1)
     }
 
+    /// Šipky, které na leg stojí jeden očekávaný pokus na double. Změřeno simulací vlastních botů:
+    /// lepší double než obvyklý k průměru šetří i nastřelovací šipky, horší stojí zhruba jen ten pokus.
+    static func dartsPerDoubleAttempt(average: Double, checkout: Double) -> Double {
+        checkout > checkoutRate(at: index(forAverage: average)) ? 1.25 : 1.0
+    }
+
+    /// Index skórovací přesnosti pro vlastního bota. Leg 501 má 1503 / průměr šipek.
+    /// Šipky mimo double ubývají se skórováním, pokusy na double dělá úspěšnost. Lepší double proto
+    /// potřebuje horší skóre, jinak by bot hrál nad nastavený průměr.
+    /// Index může přesáhnout tabulku: průměr 110 s 30 % na double potřebuje skóre nad legendu.
+    static func scoringIndex(forAverage average: Double, checkout: Double) -> Double {
+        let average = min(maximumAverage, max(minimumAverage, average))
+        let checkout = min(maximumCheckout, max(minimumCheckout, checkout))
+        let weight = dartsPerDoubleAttempt(average: average, checkout: checkout)
+        let need = 1503 / average - weight / checkout
+        func otherDarts(_ index: Double) -> Double {
+            let level = 1503 / (minimumAverage + index * 5)
+            return level - weight / checkoutRate(at: index)
+        }
+        var lo = scoringIndexRange.lowerBound
+        var hi = scoringIndexRange.upperBound
+        if need >= otherDarts(lo) { return lo }
+        if need <= otherDarts(hi) { return hi }
+        for _ in 0..<48 {
+            let mid = (lo + hi) / 2
+            if otherDarts(mid) > need { lo = mid } else { hi = mid }
+        }
+        return (lo + hi) / 2
+    }
+
+    static let scoringIndexRange = -2.0...24.0
+
+    /// Rozptyl na triple podle indexu. Mimo tabulku pokračuje stejným poměrem jako krajní úrovně.
+    static func scoringSigma(at index: Double) -> Double {
+        let last = count - 1
+        if index > Double(last) {
+            let step = levels[last].tripleSigma / levels[last - 1].tripleSigma
+            return levels[last].tripleSigma * pow(step, index - Double(last))
+        }
+        if index < 0 {
+            let step = levels[0].tripleSigma / levels[1].tripleSigma
+            return levels[0].tripleSigma * pow(step, -index)
+        }
+        return blend(at: index).tripleSigma
+    }
+
+    static func checkoutRate(at index: Double) -> Double {
+        let last = count - 1
+        if index > Double(last) {
+            let step = levels[last].targetDoubleHit - levels[last - 1].targetDoubleHit
+            return min(0.95, levels[last].targetDoubleHit + step * (index - Double(last)))
+        }
+        if index < 0 {
+            let step = levels[1].targetDoubleHit - levels[0].targetDoubleHit
+            return max(0.008, levels[0].targetDoubleHit + step * index)
+        }
+        let lo = Int(index.rounded(.down))
+        let hi = min(last, lo + 1)
+        let t = index - Double(lo)
+        return levels[lo].targetDoubleHit * (1 - t) + levels[hi].targetDoubleHit * t
+    }
+
     struct Blend {
         var tripleSigma: Double
         var doubleSigma: Double
@@ -81,11 +146,21 @@ public enum BotDifficulty {
             let sample = blend(at: index(forCheckout: clamped))
             return (sample.doubleSigma, sample.bullSigma)
         }
-        let start = levels[count - 1].doubleSigma
-        let floor = 0.0045
-        let t = (clamped - cap) / (1 - cap)
-        let sigma = exp(log(start) * (1 - t) + log(floor) * t)
-        return (sigma, sigma * 1.08)
+        // Změřená úspěšnost ve hře podle rozptylu na double. Nad 95 % už jde jen o drobné zúžení.
+        let measured: [(rate: Double, sigma: Double)] = [
+            (cap, levels[count - 1].doubleSigma),
+            (0.55, 0.0290), (0.61, 0.0250), (0.70, 0.0210), (0.79, 0.0180),
+            (0.86, 0.0150), (0.95, 0.0120), (0.975, 0.0100), (0.995, 0.0080), (1.0, 0.0055)
+        ]
+        for i in 1..<measured.count where clamped <= measured[i].rate {
+            let a = measured[i - 1]
+            let b = measured[i]
+            let t = b.rate == a.rate ? 0 : (clamped - a.rate) / (b.rate - a.rate)
+            let sigma = exp(log(a.sigma) * (1 - t) + log(b.sigma) * t)
+            return (sigma, sigma * 1.08)
+        }
+        let last = measured[measured.count - 1].sigma
+        return (last, last * 1.08)
     }
 
     static func blend(at index: Double) -> Blend {
@@ -130,10 +205,15 @@ public enum BotDifficulty {
             "Asp", "Voltage", "Iceman", "Snakebyt", "Flying Scot",
             "Bullyboy", "Cool Hand", "Nuke", "Mighty Mik", "The Powr"
         ]
-        let doubles = [0.02, 0.03, 0.04, 0.06, 0.08, 0.10, 0.12, 0.15, 0.18, 0.21, 0.24, 0.27, 0.30, 0.33, 0.36, 0.39, 0.42, 0.45, 0.48, 0.52]
-        // Monotónní rozptyl. Vyšší úroveň má vždy menší sigma, ať síla na T20 roste.
-        let tripleSigma = [0.168, 0.150, 0.128, 0.118, 0.108, 0.088, 0.077, 0.069, 0.066, 0.055, 0.051, 0.049, 0.044, 0.040, 0.037, 0.033, 0.030, 0.028, 0.025, 0.023]
-        let doubleSigma = [0.340, 0.240, 0.200, 0.165, 0.152, 0.120, 0.112, 0.092, 0.086, 0.073, 0.066, 0.059, 0.054, 0.049, 0.044, 0.041, 0.037, 0.034, 0.031, 0.027]
+        // Úspěšnost šipky mířené na double podle reálných amatérských i PDC statistik pro daný průměr.
+        let doubles = [0.025, 0.04, 0.06, 0.08, 0.10, 0.12, 0.14, 0.17, 0.20, 0.22, 0.245, 0.27, 0.295, 0.32, 0.345, 0.37, 0.395, 0.42, 0.45, 0.48]
+        // Rozptyl je fit na očekávané skóre, ne na dojem. Střední sigma jinak drží šipku v dvacítce
+        // (spousta S20) a bot s průměrem 57.5 hází jako 70+. Triple proto odpovídá 3-šipkovému
+        // průměru při míření na T20 včetně formy návštěvy, o 2.5–5 bodů nad tabulkou (první devítka).
+        // Double je samostatně fitovaný na zásah D20 se stejnou formou.
+        let tripleSigma = [0.5547, 0.4119, 0.2923, 0.2132, 0.1631, 0.1347, 0.1147, 0.1015, 0.0911, 0.0820, 0.0751, 0.0685, 0.0632, 0.0581, 0.0534, 0.0487, 0.0448, 0.0411, 0.0376, 0.0344]
+        let doubleSigma = [0.2993, 0.2327, 0.1836, 0.1559, 0.1345, 0.1179, 0.1051, 0.0910, 0.0807, 0.0735, 0.0666, 0.0607, 0.0559, 0.0515, 0.0475, 0.0437, 0.0410, 0.0385, 0.0359, 0.0332]
+        let oneEighties = [0, 0, 0, 0.002, 0.003, 0.006, 0.011, 0.015, 0.022, 0.033, 0.049, 0.066, 0.084, 0.108, 0.134, 0.180, 0.231, 0.284, 0.352, 0.433]
         return (0..<count).map { index in
             let t = Double(index) / Double(count - 1)
             return Level(
@@ -149,7 +229,8 @@ public enum BotDifficulty {
                 consistency: 0.30 + t * 0.58,
                 intelligence: 0.22 + t * 0.73,
                 pressureResistance: 0.28 + t * 0.60,
-                throwSeconds: 2.5 - t * 1.85
+                throwSeconds: 2.5 - t * 1.85,
+                oneEightiesPerLeg: oneEighties[index]
             )
         }
     }()

@@ -173,7 +173,8 @@ public struct BotProfile: Identifiable, Equatable {
         )
     }
 
-    /// Vlastní soupeř. Průměr řídí skórovací rozptyl, double řídí zavírání. Styl k tomu přidá způsob hry a čísla neposouvá.
+    /// Vlastní soupeř. Double řídí zavírání, skórovací rozptyl se dopočítá tak, aby celý leg seděl na průměr.
+    /// Styl k tomu přidá způsob hry a čísla neposouvá.
     public static func custom(
         average: Double,
         checkout: Double,
@@ -185,17 +186,18 @@ public struct BotProfile: Identifiable, Equatable {
     ) -> BotProfile {
         let average = min(BotDifficulty.maximumAverage, max(BotDifficulty.minimumAverage, average))
         let checkout = min(BotDifficulty.maximumCheckout, max(BotDifficulty.minimumCheckout, checkout))
-        let scoring = BotDifficulty.blend(at: BotDifficulty.index(forAverage: average))
+        let persona = BotDifficulty.blend(at: BotDifficulty.index(forAverage: average))
+        let scoring = BotDifficulty.scoringSigma(at: BotDifficulty.scoringIndex(forAverage: average, checkout: checkout))
         let finishing = BotDifficulty.finishingSpread(forCheckout: checkout)
         var tuned = shape(
             Knobs(
-                triple: scoring.tripleSigma,
+                triple: scoring,
                 double: finishing.doubleSigma,
-                single: scoring.tripleSigma,
+                single: scoring,
                 bull: finishing.bullSigma,
-                consistency: scoring.consistency,
-                intelligence: scoring.intelligence,
-                pressure: scoring.pressureResistance,
+                consistency: persona.consistency,
+                intelligence: persona.intelligence,
+                pressure: persona.pressureResistance,
                 scoring: Dart(20, 3),
                 doubles: standardDoubles
             ),
@@ -272,8 +274,8 @@ public struct BotProfile: Identifiable, Equatable {
             intelligence *= 0.92
         case .checkoutSpecialist:
             if !lockAccuracy {
-                triple *= 1.16
-                single *= 1.08
+                triple *= 1.10
+                single *= 1.05
                 double *= 0.82
                 bull *= 0.86
             }
@@ -282,19 +284,16 @@ public struct BotProfile: Identifiable, Equatable {
         case .consistent:
             consistency = min(0.97, consistency + 0.18)
         case .aggressive:
-            if !lockAccuracy { triple *= 0.94 }
+            if !lockAccuracy { triple *= 0.97 }
             intelligence *= 0.82
             scoring = Dart(20, 3)
         case .tactical:
             intelligence = min(0.98, intelligence + 0.12)
-            if !lockAccuracy { triple *= 1.04 }
+            if !lockAccuracy { triple *= 1.02 }
             doubles = [20, 16, 18, 10, 8, 4, 2, 12, 6, 14, 5, 9, 11, 13, 15, 17, 19, 7, 3, 1]
         case .unpredictable:
+            // Výkyvy formy samy srazí průměr, přesnost proto zůstává podle úrovně.
             consistency = max(0.12, consistency - 0.30)
-            if !lockAccuracy {
-                triple *= 1.04
-                double *= 1.05
-            }
         }
 
         if identity != 0 && !lockAccuracy {

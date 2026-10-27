@@ -416,18 +416,56 @@ final class BotEngineTests: XCTestCase {
         XCTAssertGreaterThan(high, 0.35)
     }
 
+    func testTrebleTwentyAverageSitsOnAdvertisedLevel() {
+        for level in [5, 9, 12, 16, 20] {
+            let profile = BotProfile.reference(level: level)
+            var rng = BotRNG(seed: 11)
+            var sum = 0
+            let n = 6_000
+            var form = BotVisitForm.neutral
+            for index in 0..<n {
+                if index % 3 == 0 {
+                    form = BotFormEngine.sample(consistency: profile.consistency, using: &rng)
+                }
+                sum += DartThrowSimulator.throw(at: Dart(20, 3), profile: profile, form: form, using: &rng).score
+            }
+            let mean3 = Double(sum) / Double(n) * 3
+            XCTAssertEqual(mean3, profile.targetAverage, accuracy: 8, "Level \(level) T20 \(mean3) mimo \(profile.targetAverage)")
+        }
+    }
+
     func testReferenceLevelsApproachTargets() {
         for level in 1...BotDifficulty.count {
             let isolated = BotCalibrationEngine.doubleHitRate(level: level, attempts: 2_500, seed: 7)
             let targetDouble = BotDifficulty.level(level).targetDoubleHit
-            XCTAssertEqual(isolated, targetDouble, accuracy: 0.05, "Level \(level) double \(isolated) mimo \(targetDouble)")
+            XCTAssertEqual(isolated, targetDouble, accuracy: 0.025, "Level \(level) double \(isolated) mimo \(targetDouble)")
         }
         for level in [1, 5, 10, 15, 20] {
             let report = BotCalibrationEngine.simulate(level: level, legs: 24, seed: 21)
             XCTAssertEqual(report.threeDartAverage, report.targetAverage, accuracy: 10, "Level \(level) průměr \(report.threeDartAverage)")
+            XCTAssertEqual(report.first9Average, report.targetAverage, accuracy: 12, "Level \(level) první devítka \(report.first9Average)")
             XCTAssertGreaterThan(report.dartsPerLeg, 8)
             XCTAssertLessThan(report.dartsPerLeg, 160)
         }
+    }
+
+    /// Průměr nesmí vzniknout tak, že bot skóruje o třídu výš a pak dlouho zavírá.
+    func testMidLevelScoresLikeItsAverage() {
+        for level in [9, 14] {
+            let report = BotCalibrationEngine.simulate(level: level, legs: 90, seed: 33)
+            XCTAssertEqual(report.threeDartAverage, report.targetAverage, accuracy: 6, "Level \(level) průměr \(report.threeDartAverage)")
+            XCTAssertEqual(report.first9Average, report.targetAverage, accuracy: 10, "Level \(level) první devítka \(report.first9Average)")
+            XCTAssertEqual(report.doubleHitRate, report.targetDoubleHit, accuracy: 0.06, "Level \(level) double \(report.doubleHitRate)")
+        }
+    }
+
+    func testCustomBotWithSharpDoublesScoresLess() {
+        let usual = BotProfile.custom(average: 57.5, checkout: 0.20)
+        let sharp = BotProfile.custom(average: 57.5, checkout: 0.50)
+        let blunt = BotProfile.custom(average: 57.5, checkout: 0.08)
+        XCTAssertGreaterThan(sharp.tripleSigma, usual.tripleSigma)
+        XCTAssertLessThan(blunt.tripleSigma, usual.tripleSigma)
+        XCTAssertLessThan(sharp.doubleSigma, usual.doubleSigma)
     }
 
     func testStylesAreNotIdentical() {
