@@ -505,30 +505,7 @@ struct SetupView: View {
                 pregameSeries = nil
             }
         }
-        .fullScreenCover(isPresented: $showPregame) {
-            ZStack {
-                if pregameLaunched {
-                    NavigationStack { MatchView() }
-                        .transition(.opacity)
-                } else if let series = pregameSeries {
-                    HeadToHeadPregameView(
-                        series: series,
-                        myName: store.profile?.name ?? "Já",
-                        myPhoto: store.profile?.photoJPEG,
-                        theirPhoto: pregameOpponentPhoto(series),
-                        onContinue: { finishPregame() },
-                        onCancel: {
-                            showPregame = false
-                            pregameLaunched = false
-                            pregameSeen = false
-                            pregameSeries = nil
-                        }
-                    )
-                    .transition(.opacity)
-                }
-            }
-            .environmentObject(store)
-        }
+        .fullScreenCover(isPresented: $showPregame) { pregameCover() }
         .fullScreenCover(isPresented: $showStarterPicker) {
             StarterPickerView(
                 players: starterPicks,
@@ -2690,6 +2667,39 @@ struct SetupView: View {
     private func start() {
         guard makeMatch() else { return }
         live = true
+    }
+
+    /// Obrazovka bilance je mimo `body`, ať ji kompilátor stihne typově ověřit.
+    private func pregameCover() -> some View {
+        ZStack {
+            if pregameLaunched {
+                NavigationStack { MatchView() }
+                    .transition(.opacity)
+            } else if let series = pregameSeries {
+                pregameScreen(series)
+            }
+        }
+        .environmentObject(store)
+    }
+
+    private func pregameScreen(_ series: HeadToHead) -> some View {
+        HeadToHeadPregameView(
+            series: series,
+            myName: store.profile?.name ?? "Já",
+            myPhoto: store.profile?.photoJPEG,
+            theirPhoto: pregameOpponentPhoto(series),
+            onContinue: finishPregame,
+            onCancel: cancelPregame,
+            automatic: false
+        )
+        .transition(.opacity)
+    }
+
+    private func cancelPregame() {
+        showPregame = false
+        pregameLaunched = false
+        pregameSeen = false
+        pregameSeries = nil
     }
 
     /// H2H před zápasem, když už je jasné, kdo začíná (výběr hráče i rozhoz).

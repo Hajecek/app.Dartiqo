@@ -188,7 +188,7 @@ struct HeadToHeadDetailView: View {
     }
 }
 
-/// Obrazovka před startem — bilance, nebo úplně jiný plakát, když je to první vzájemný zápas.
+/// Obrazovka před startem. Bilance, nebo premiérový plakát, když spolu hráči ještě nehráli.
 struct HeadToHeadPregameView: View {
     @EnvironmentObject private var store: AppStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -199,14 +199,13 @@ struct HeadToHeadPregameView: View {
     var theirPhoto: Data?
     var onContinue: () -> Void
     var onCancel: (() -> Void)?
+    /// Los a rozhoz odpočítají samy. Ruční výběr hráče počká na klepnutí.
+    var automatic = true
 
     @State private var progress: CGFloat = 0
     @State private var appeared = false
     @State private var didContinue = false
     @State private var autoToken = UUID()
-
-    private let canvas = Color(red: 0.055, green: 0.10, blue: 0.08)
-    private let accent = Color(red: 1, green: 0.60, blue: 0.10)
 
     private var isDebut: Bool { series.played == 0 }
     private var duration: Double { reduceMotion ? 1.2 : 3.5 }
@@ -215,7 +214,7 @@ struct HeadToHeadPregameView: View {
 
     var body: some View {
         ZStack {
-            if isDebut { debutBackground } else { background }
+            Color.black.ignoresSafeArea()
             Group {
                 if isDebut {
                     debutLayout
@@ -223,21 +222,19 @@ struct HeadToHeadPregameView: View {
                     rivalryLayout
                 }
             }
-            .frame(maxWidth: isDebut ? 520 : 560)
+            .frame(maxWidth: 560)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .scaleEffect(appeared || reduceMotion ? 1 : 0.94)
-            .opacity(appeared || reduceMotion ? 1 : 0)
         }
-        .foregroundStyle(isDebut ? .black : .white)
+        .foregroundStyle(.white)
         .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
-        .preferredColorScheme(isDebut ? .light : .dark)
+        .preferredColorScheme(.dark)
         .onAppear(perform: startAutoContinue)
         .onDisappear { autoToken = UUID() }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel)
-        .accessibilityHint("Klepni Začít hru nebo počkej")
+        .accessibilityHint(automatic ? "Klepni Začít hru nebo počkej" : "Klepni Začít hru")
     }
 
     private var accessibilityLabel: String {
@@ -247,58 +244,34 @@ struct HeadToHeadPregameView: View {
         return "Head-to-Head proti \(series.opponentName). \(series.standingTitle) \(series.recordLine)."
     }
 
-    private let debutPaper = Color(red: 0.97, green: 0.96, blue: 0.94)
-
-    /// Čistě typografický list: jména pod sebou a „Poprvé.“ Žádné karty, skóre ani historie.
+    /// První zápas: obrazovka rozdělená napůl, ty nahoře, soupeř dole, mezi vámi šikmý žlutý pruh.
     private var debutLayout: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("HEAD-TO-HEAD · ZÁPAS Č. 1")
-                .font(.caption.weight(.heavy))
-                .tracking(1.6)
-                .foregroundStyle(.black.opacity(0.45))
-                .debutReveal(appeared || reduceMotion, step: 0)
-            Spacer(minLength: 24)
-            debutName(myName, kicker: "Ty", photo: myPhoto, bot: false, asset: nil, badge: nil)
-                .debutReveal(appeared || reduceMotion, step: 1)
-            Text("proti")
-                .font(.system(size: 30, weight: .regular, design: .serif))
-                .italic()
-                .foregroundStyle(.black.opacity(0.45))
-                .padding(.leading, 58)
-                .padding(.vertical, 6)
-                .debutReveal(appeared || reduceMotion, step: 2)
-            debutName(
-                series.opponentName,
+        let shown = appeared || reduceMotion
+        return VStack(spacing: 0) {
+            debutHalf(
+                name: myName,
+                kicker: "Ty",
+                photo: myPhoto,
+                bot: false,
+                asset: nil,
+                badge: nil,
+                top: true
+            )
+            .debutReveal(shown, step: 0, x: -60)
+            debutBand
+                .zIndex(1)
+                .debutReveal(shown, step: 1, scale: true)
+            debutHalf(
+                name: series.opponentName,
                 kicker: opponentKicker,
                 photo: theirPhoto,
                 bot: opponentIsBot,
                 asset: opponentAsset,
-                badge: opponentBadge
+                badge: series.opponentBotLevel.map { "Lv. \($0)" },
+                top: false
             )
-            .debutReveal(appeared || reduceMotion, step: 3)
-            Spacer(minLength: 32)
-            Text("POPRVÉ.")
-                .font(.system(size: 76, weight: .black, design: .rounded))
-                .minimumScaleFactor(0.5)
-                .lineLimit(1)
-                .background(alignment: .bottom) {
-                    Theme.brand
-                        .frame(height: 30)
-                        .padding(.horizontal, -6)
-                        .offset(y: -8)
-                }
-                .debutReveal(appeared || reduceMotion, step: 4)
-            Text("Žádná historie, žádná bilance. Kdo vyhraje, napíše první řádek.")
-                .font(.body.weight(.medium))
-                .foregroundStyle(.black.opacity(0.6))
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 10)
-                .debutReveal(appeared || reduceMotion, step: 5)
-            Spacer(minLength: 16)
+            .debutReveal(shown, step: 2, x: 60)
         }
-        .padding(.horizontal, 28)
-        .padding(.top, 28)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var opponentKicker: String {
@@ -307,95 +280,178 @@ struct HeadToHeadPregameView: View {
         return "Soupeř"
     }
 
-    private var opponentBadge: String? {
-        series.opponentBotLevel.map { "Lv. \($0)" }
-    }
-
-    private func debutName(_ name: String, kicker: String, photo: Data?, bot: Bool, asset: String?, badge: String?) -> some View {
-        HStack(alignment: .center, spacing: 14) {
-            Avatar(name: name, bot: bot, size: 44, photo: photo, asset: asset)
-                .overlay(Circle().strokeBorder(.black, lineWidth: 1.5))
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 6) {
-                    Text(kicker.uppercased())
-                        .font(.caption2.weight(.heavy))
-                        .tracking(1.2)
-                        .foregroundStyle(.black.opacity(0.45))
-                    if let badge {
-                        Text(badge)
-                            .font(.caption2.weight(.bold))
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .background(Theme.brand, in: Capsule())
-                    }
+    private func debutHalf(
+        name: String,
+        kicker: String,
+        photo: Data?,
+        bot: Bool,
+        asset: String?,
+        badge: String?,
+        top: Bool
+    ) -> some View {
+        HStack(spacing: 18) {
+            if !top { Spacer(minLength: 0) }
+            if top { debutPortrait(name: name, photo: photo, bot: bot, asset: asset) }
+            VStack(alignment: top ? .leading : .trailing, spacing: 6) {
+                Text(kicker.uppercased())
+                    .font(.caption.weight(.heavy))
+                    .tracking(1.4)
+                    .foregroundStyle(Theme.brand)
+                Text(name)
+                    .font(AppFont.display(30, weight: .black))
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(top ? .leading : .trailing)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.55)
+                if let badge {
+                    Text(badge)
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Theme.brand, in: Capsule())
                 }
-                Text(name.uppercased())
-                    .font(.system(size: 46, weight: .heavy, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.4)
             }
+            if !top { debutPortrait(name: name, photo: photo, bot: bot, asset: asset) }
+            if top { Spacer(minLength: 0) }
         }
+        .padding(.horizontal, 28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
     }
 
-    private var debutBackground: some View {
-        debutPaper
-            .overlay(alignment: .bottomTrailing) {
-                Text("1")
-                    .font(.system(size: 460, weight: .black, design: .rounded))
-                    .foregroundStyle(.black.opacity(0.035))
-                    .offset(x: 70, y: 90)
-            }
-            .clipped()
-            .ignoresSafeArea()
+    private func debutPortrait(name: String, photo: Data?, bot: Bool, asset: String?) -> some View {
+        Avatar(name: name, bot: bot, size: 116, photo: photo, asset: asset)
+            .overlay(Circle().strokeBorder(Theme.brand, lineWidth: 3))
+            .shadow(color: Theme.brand.opacity(0.18), radius: 22)
             .accessibilityHidden(true)
     }
 
+    /// Už odehraná série: stejné portréty, uprostřed skóre a krátká řada výsledků.
     private var rivalryLayout: some View {
-        VStack(spacing: 0) {
+        let shown = appeared || reduceMotion
+        return VStack(spacing: 0) {
             Spacer(minLength: 12)
-            h2hPill
+            faces
+                .padding(.horizontal, 32)
+                .debutReveal(shown, step: 0)
+            Text(series.recordLine)
+                .font(AppFont.display(72, weight: .black))
+                .monospacedDigit()
+                .foregroundStyle(leadTint)
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+                .padding(.top, 8)
+                .debutReveal(shown, step: 1)
+            Text(series.standingTitle)
+                .font(.subheadline.weight(.heavy))
+                .foregroundStyle(.white.opacity(0.72))
+                .padding(.top, 4)
+                .debutReveal(shown, step: 1)
             if let me = store.profile?.id {
-                ScrollView {
-                    standing(me: me)
-                        .padding(.horizontal, 20)
-                        .padding(.top, 16)
-                        .padding(.bottom, 12)
-                }
-                .scrollIndicators(.hidden)
+                resultRail(me: me)
+                    .padding(.top, 22)
+                    .debutReveal(shown, step: 2)
             }
-            Spacer(minLength: 0)
+            names
+                .padding(.horizontal, 24)
+                .padding(.top, 22)
+                .debutReveal(shown, step: 2)
+            Spacer(minLength: 12)
         }
     }
 
-    private var h2hPill: some View {
-        Label("Head-to-Head", systemImage: "person.2.fill")
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(accent)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(accent.opacity(0.16), in: Capsule())
-    }
-
-    private func standing(me: UUID) -> some View {
-        HeadToHeadStandingView(
-            series: series,
-            me: me,
-            myName: myName,
-            myPhoto: myPhoto,
-            theirPhoto: theirPhoto,
-            style: .ceremony,
-            compact: true,
-            onSelectMatch: nil
-        )
-    }
-
-    private var background: some View {
-        ZStack {
-            canvas
-            RadialGradient(colors: [accent.opacity(0.42), .clear], center: .top, startRadius: 0, endRadius: 560)
-            RadialGradient(colors: [accent.opacity(0.12), .clear], center: .bottom, startRadius: 0, endRadius: 420)
+    private var faces: some View {
+        HStack(alignment: .center, spacing: 28) {
+            face(name: myName, photo: myPhoto, bot: false, asset: nil)
+            face(
+                name: series.opponentName,
+                photo: theirPhoto,
+                bot: opponentIsBot,
+                asset: opponentAsset
+            )
         }
-        .ignoresSafeArea()
+    }
+
+    private var names: some View {
+        HStack(alignment: .top, spacing: 16) {
+            laneName(myName, badge: nil)
+            laneName(series.opponentName, badge: series.opponentBotLevel.map { "Lv. \($0)" })
+        }
+    }
+
+    /// Pruh je širší než obrazovka, aby po natočení nebyly vidět jeho konce.
+    private var debutBand: some View {
+        Text("První vzájemný zápas")
+            .font(AppFont.display(24, weight: .black))
+            .foregroundStyle(.black)
+            .lineLimit(1)
+            .minimumScaleFactor(0.55)
+            .padding(.horizontal, 40)
+            .frame(maxWidth: .infinity)
+            .frame(height: 66)
+            .background(Theme.brand)
+            .padding(.horizontal, -60)
+            .rotationEffect(.degrees(-7))
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    private func face(name: String, photo: Data?, bot: Bool, asset: String?) -> some View {
+        Avatar(name: name, bot: bot, size: 112, photo: photo, asset: asset)
+            .overlay(Circle().strokeBorder(Color.black, lineWidth: 5))
+            .overlay(Circle().strokeBorder(Theme.brand, lineWidth: 2))
+            .shadow(color: .black.opacity(0.5), radius: 14, y: 8)
+            .accessibilityHidden(true)
+    }
+
+    private func laneName(_ name: String, badge: String?) -> some View {
+        VStack(spacing: 6) {
+            Text(name)
+                .font(AppFont.display(18, weight: .bold))
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.65)
+            if let badge {
+                Text(badge)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Theme.brand, in: Capsule())
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var leadTint: Color {
+        if series.myWins > series.theirWins { return Theme.positive }
+        if series.myWins < series.theirWins { return Color(red: 1, green: 0.38, blue: 0.32) }
+        return .white
+    }
+
+    private func resultRail(me: UUID) -> some View {
+        let marks = Array(series.outcomesChronological(me: me).suffix(8))
+        return HStack(spacing: 8) {
+            ForEach(Array(marks.enumerated()), id: \.offset) { _, outcome in
+                Text(outcome.short)
+                    .font(.caption.weight(.heavy))
+                    .foregroundStyle(.black)
+                    .frame(width: 30, height: 30)
+                    .background(chipColor(outcome), in: Circle())
+                    .accessibilityLabel(outcome.title)
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func chipColor(_ outcome: H2HOutcome) -> Color {
+        switch outcome {
+        case .win: return Theme.positive
+        case .loss: return Color(red: 1, green: 0.38, blue: 0.32)
+        case .draw: return Color.white.opacity(0.72)
+        }
     }
 
     /// Stejná spodní lišta jako setup — glass menu, progress animace uvnitř tlačítka.
@@ -425,13 +481,15 @@ struct HeadToHeadPregameView: View {
                     .foregroundStyle(.black)
                     .frame(maxWidth: .infinity, minHeight: 56, maxHeight: 56)
                     .background {
-                        // Stejná progress animace jako u zavřeného legu — uvnitř kapsle.
+                        // U losu a rozhozu se kapsla plní a hra začne sama. Po ručním výběru čeká na klepnutí.
                         GeometryReader { geo in
                             ZStack(alignment: .leading) {
                                 Theme.brand
-                                Rectangle()
-                                    .fill(.white.opacity(0.34))
-                                    .frame(width: geo.size.width * progress)
+                                if automatic {
+                                    Rectangle()
+                                        .fill(.white.opacity(0.34))
+                                        .frame(width: geo.size.width * progress)
+                                }
                             }
                         }
                     }
@@ -440,7 +498,7 @@ struct HeadToHeadPregameView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Začít hru")
-                .accessibilityHint("Nebo počkej, hra začne sama")
+                .accessibilityHint(automatic ? "Nebo počkej, hra začne sama" : "Spustí zápas")
             }
         }
         .padding(.horizontal, 20)
@@ -455,6 +513,7 @@ struct HeadToHeadPregameView: View {
         withAnimation(reduceMotion ? nil : .spring(response: 0.45, dampingFraction: 0.82)) {
             appeared = true
         }
+        guard automatic else { return }
         withAnimation(.linear(duration: duration)) { progress = 1 }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
@@ -478,11 +537,12 @@ struct HeadToHeadPregameView: View {
 }
 
 private extension View {
-    /// Postupné naskakování řádků debut obrazovky.
-    func debutReveal(_ visible: Bool, step: Int) -> some View {
+    /// Nástup premiéry: nejdřív nadpis, pak hráči.
+    func debutReveal(_ visible: Bool, step: Int, x: CGFloat = 0, scale: Bool = false) -> some View {
         opacity(visible ? 1 : 0)
-            .offset(x: visible ? 0 : -28)
-            .animation(.spring(response: 0.5, dampingFraction: 0.85).delay(Double(step) * 0.12), value: visible)
+            .offset(x: visible ? 0 : x)
+            .scaleEffect(!scale || visible ? 1 : 0.7)
+            .animation(.spring(response: 0.55, dampingFraction: 0.84).delay(Double(step) * 0.07), value: visible)
     }
 }
 
