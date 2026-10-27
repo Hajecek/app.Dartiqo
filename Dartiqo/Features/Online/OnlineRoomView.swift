@@ -7,6 +7,8 @@ struct OnlineRoomView: View {
     @EnvironmentObject private var store: AppStore
     var matchID: String
     var onLeave: () -> Void
+    /// Zrušení lobby nebo zápasu zavře online a vrátí na Domů.
+    var onCancel: () -> Void
     var onEdit: () -> Void
     @State private var copied = false
     @State private var confirmLeave = false
@@ -20,7 +22,7 @@ struct OnlineRoomView: View {
             if let match {
                 switch match.status {
                 case "live", "finished":
-                    OnlineLiveMatch(session: session, match: match, onLeave: onLeave)
+                    OnlineLiveMatch(session: session, match: match, onLeave: onLeave, onCancel: onCancel)
                 case "abandoned":
                     closed(match, forfeited: sawLive)
                         .task {
@@ -87,7 +89,7 @@ struct OnlineRoomView: View {
         .confirmationDialog(leaveTitle, isPresented: $confirmLeave, titleVisibility: .visible) {
             Button(leaveAction, role: .destructive) {
                 Task {
-                    if await session.abandon() { onLeave() }
+                    if await session.abandon() { onCancel() }
                 }
             }
             Button("Zůstat", role: .cancel) {}
@@ -607,12 +609,13 @@ private struct OnlineLiveMatch: View {
     @EnvironmentObject private var store: AppStore
     var match: OnlineMatch
     var onLeave: () -> Void
+    var onCancel: () -> Void
     @State private var link: OnlineMatchLink?
 
     var body: some View {
         Group {
             if let link, link.game != nil {
-                MatchView(online: link, onOnlineExit: onLeave)
+                MatchView(online: link, onOnlineExit: onLeave, onOnlineCancel: onCancel)
             } else if link != nil {
                 ContentUnavailableView(
                     "Zápas nejde zobrazit",

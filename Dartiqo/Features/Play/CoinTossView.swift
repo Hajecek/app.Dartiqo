@@ -9,7 +9,7 @@ struct CoinTossPlayer: Identifiable, Equatable {
     var tint: Color
 }
 
-/// Los mincí — líc jeden hráč, rub druhý. Točení přes Animatable, ať jsou vidět obě fotky.
+/// Los mincí — líc jeden hráč, rub druhý. Točení přes Animatable, ať jsou vidět obě strany.
 struct CoinTossView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -27,6 +27,8 @@ struct CoinTossView: View {
     @State private var winner: Int?
     @State private var appeared = false
 
+    private let coinSize: CGFloat = 228
+
     private var playerA: CoinTossPlayer? { players.indices.contains(faceA) ? players[faceA] : nil }
     private var playerB: CoinTossPlayer? { players.indices.contains(faceB) ? players[faceB] : nil }
     private var winnerPlayer: CoinTossPlayer? {
@@ -34,36 +36,32 @@ struct CoinTossView: View {
         return players[winner]
     }
 
+    private var stageTint: Color {
+        settled ? (winnerPlayer?.tint ?? Theme.brand) : Theme.brand
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                Spacer(minLength: 10)
                 header
-                Spacer(minLength: 28)
+                    .padding(.top, 8)
+                Spacer(minLength: 8)
                 coinStage
-                Spacer(minLength: 24)
-                resultLine
-                Spacer(minLength: 14)
+                Spacer(minLength: 16)
                 actions
-                    .padding(.bottom, 10)
+                    .padding(.bottom, 8)
             }
             .padding(.horizontal, 24)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background {
-                ZStack {
-                    Theme.background
-                    RadialGradient(
-                        colors: [Theme.brand.opacity(0.2), .clear],
-                        center: .center,
-                        startRadius: 20,
-                        endRadius: 420
-                    )
-                }
-                .ignoresSafeArea()
-            }
-            .navigationTitle("Los mincí")
+            .background { backdrop }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("LOS MINCÍ")
+                        .font(AppFont.caption(12, weight: .bold))
+                        .tracking(2.4)
+                        .foregroundStyle(.secondary)
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Zavřít", action: onCancel)
                 }
@@ -81,40 +79,77 @@ struct CoinTossView: View {
         }
     }
 
+    private var backdrop: some View {
+        ZStack {
+            Theme.background
+            RadialGradient(
+                colors: [stageTint.opacity(settled ? 0.28 : 0.16), .clear],
+                center: UnitPoint(x: 0.5, y: 0.42),
+                startRadius: 20,
+                endRadius: 460
+            )
+        }
+        .animation(.smooth(duration: 0.55), value: settled)
+        .ignoresSafeArea()
+    }
+
     private var header: some View {
-        VStack(spacing: 6) {
-            Text(settled ? "Začíná" : "Los")
-                .font(.subheadline.weight(.semibold))
+        VStack(spacing: 8) {
+            Text(settled ? "ZAČÍNÁ" : "KDO HÁZÍ PRVNÍ")
+                .font(AppFont.caption(12, weight: .bold))
+                .tracking(2.2)
                 .foregroundStyle(.secondary)
             Text(settled ? (winnerPlayer?.name ?? "Hráč") : "Hod mincí")
-                .font(.largeTitle.bold())
+                .font(AppFont.display(40, weight: .black))
                 .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.55)
                 .contentTransition(.opacity)
-                .animation(.smooth(duration: 0.3), value: settled)
+            Text(settled ? "Hází první šipku" : "Každý hráč má svou stranu")
+                .font(AppFont.body(16, weight: .medium))
+                .foregroundStyle(.secondary)
+                .contentTransition(.opacity)
         }
+        .animation(.smooth(duration: 0.35), value: settled)
+        .frame(maxWidth: .infinity, minHeight: 96)
     }
 
     private var coinStage: some View {
         ZStack {
-            Ellipse()
-                .fill(.black.opacity(0.32))
-                .frame(width: 170, height: 32)
-                .blur(radius: 8)
-                .offset(y: 132)
-                .scaleEffect(x: max(0.55, 1 - abs(lift) / 160), y: 1)
-                .opacity(spinning ? 0.4 : 0.65)
+            Circle()
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                .frame(width: coinSize + 56, height: coinSize + 56)
+            Circle()
+                .stroke(stageTint.opacity(settled ? 0.85 : 0.22), lineWidth: settled ? 2.5 : 1)
+                .frame(width: coinSize + 16, height: coinSize + 16)
+                .animation(.smooth(duration: 0.45), value: settled)
+            Circle()
+                .fill(stageTint.opacity(settled ? 0.34 : 0.1))
+                .frame(width: coinSize * 0.92, height: coinSize * 0.92)
+                .blur(radius: 36)
+                .animation(.smooth(duration: 0.45), value: settled)
 
-            Coin3D(
-                degrees: degrees,
-                front: playerA,
-                back: playerB
-            )
-            .frame(width: 220, height: 220)
-            .offset(y: lift)
-            .scaleEffect(appeared || reduceMotion ? 1 : 0.88)
-            .opacity(appeared || reduceMotion ? 1 : 0)
+            Ellipse()
+                .fill(
+                    RadialGradient(
+                        colors: [.black.opacity(spinning ? 0.28 : 0.4), .clear],
+                        center: .center,
+                        startRadius: 8,
+                        endRadius: 100
+                    )
+                )
+                .frame(width: 168, height: 34)
+                .blur(radius: 7)
+                .offset(y: coinSize * 0.56)
+                .scaleEffect(x: max(0.52, 1 - abs(lift) / 150))
+
+            Coin3D(degrees: degrees, front: playerA, back: playerB)
+                .frame(width: coinSize, height: coinSize)
+                .offset(y: lift)
+                .scaleEffect(appeared || reduceMotion ? 1 : 0.88)
+                .opacity(appeared || reduceMotion ? 1 : 0)
         }
-        .frame(height: 290)
+        .frame(height: 272)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessLabel)
     }
@@ -125,14 +160,6 @@ struct CoinTossView: View {
             return "Mince. Líc \(a.name), rub \(b.name)."
         }
         return "Mince"
-    }
-
-    private var resultLine: some View {
-        Text(settled ? "\(winnerPlayer?.name ?? "Hráč") hází první" : " ")
-            .font(.title3.weight(.semibold))
-            .frame(minHeight: 28)
-            .opacity(settled ? 1 : 0)
-            .animation(.smooth(duration: 0.3), value: settled)
     }
 
     private var actions: some View {
@@ -188,11 +215,6 @@ struct CoinTossView: View {
     private func toss() {
         guard players.count >= 2, !spinning else { return }
 
-        var t = Transaction(); t.disablesAnimations = true
-        withTransaction(t) {
-            degrees = ((degrees.truncatingRemainder(dividingBy: 360)) + 360).truncatingRemainder(dividingBy: 360)
-        }
-
         spinToken += 1
         let token = spinToken
         settled = false
@@ -202,35 +224,45 @@ struct CoinTossView: View {
         let landFront = Bool.random()
         let picked = landFront ? faceA : faceB
 
-        // Každých 180° = půlotáčka a výměna strany. Sudé → líc, liché → rub.
+        // Nový los vždy ze stejného klidového úhlu. Stejný počet otáček i stejné 3 s.
+        let start: Double = coinShowsFront(degrees) ? 0 : 180
         var halves = Int.random(in: 17...23)
-        if landFront && !halves.isMultiple(of: 2) { halves += 1 }
-        if !landFront && halves.isMultiple(of: 2) { halves += 1 }
-
-        let start = degrees
+        let endsFront = (start == 0) == halves.isMultiple(of: 2)
+        if endsFront != landFront { halves += 1 }
         let target = start + Double(halves) * 180
         let duration = reduceMotion ? 0.4 : 3.0
 
-        if reduceMotion {
-            degrees = target
+        var reset = Transaction()
+        reset.disablesAnimations = true
+        withTransaction(reset) {
+            degrees = start
             lift = 0
-        } else {
-            withAnimation(.easeOut(duration: 0.3)) { lift = -88 }
-            withAnimation(.timingCurve(0.12, 0.78, 0.14, 1.0, duration: duration)) {
-                degrees = target
-            }
-            withAnimation(.timingCurve(0.25, 0.9, 0.3, 1.0, duration: duration * 0.88).delay(0.12)) {
-                lift = 0
-            }
         }
 
         Task { @MainActor in
+            // Nejdřív nechat usadit reset. Jinak animace naváže na starý úhel a zrychlí.
+            try? await Task.sleep(nanoseconds: 32_000_000)
+            guard token == spinToken else { return }
+
+            if !reduceMotion {
+                withAnimation(.easeOut(duration: 0.3)) { lift = -88 }
+                withAnimation(.timingCurve(0.12, 0.78, 0.14, 1.0, duration: duration)) {
+                    degrees = target
+                }
+                withAnimation(.timingCurve(0.25, 0.9, 0.3, 1.0, duration: duration * 0.88).delay(0.12)) {
+                    lift = 0
+                }
+            } else {
+                degrees = target
+            }
+
             try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000) + 50_000_000)
             guard token == spinToken else { return }
-            var snap = Transaction(); snap.disablesAnimations = true
+            var snap = Transaction()
+            snap.disablesAnimations = true
             withTransaction(snap) {
-                let base = (target / 360).rounded(.down) * 360
-                degrees = landFront ? base : base + 180
+                degrees = landFront ? 0 : 180
+                lift = 0
             }
             winner = picked
             spinning = false
@@ -239,9 +271,16 @@ struct CoinTossView: View {
     }
 }
 
-// MARK: - 3D mince (Animatable = přepínání stran v každém snímku animace)
+/// Líc je k nám v pásmu −90…+90 kolem 0/360.
+private func coinShowsFront(_ degrees: Double) -> Bool {
+    var phase = degrees.truncatingRemainder(dividingBy: 360)
+    if phase < 0 { phase += 360 }
+    return phase < 90 || phase >= 270
+}
 
-/// Klasický coin-flip vzor: obě strany v ZStack, jedna rotace, opacity podle úhlu přes Animatable.
+// MARK: - 3D mince
+
+/// Obě strany v jednom ZStacku. Rub je zrcadlený, ať po otočení kolem osy Y není text převrácený.
 private struct Coin3D: View, Animatable {
     var degrees: Double
     var front: CoinTossPlayer?
@@ -252,27 +291,16 @@ private struct Coin3D: View, Animatable {
         set { degrees = newValue }
     }
 
-    /// Normalizovaný úhel 0…360.
-    private var phase: Double {
-        var p = degrees.truncatingRemainder(dividingBy: 360)
-        if p < 0 { p += 360 }
-        return p
-    }
-
-    /// Líc je k nám, když jsme v pásmu −90…+90 kolem 0/360.
     private var showFront: Bool {
-        phase < 90 || phase >= 270
+        coinShowsFront(degrees)
     }
 
     var body: some View {
         ZStack {
-            // Rub — zrcadlově na X, ať po otočení text/fotka není převrácená
-            coinFace(back)
+            CoinMedal(player: back)
                 .scaleEffect(x: -1, y: 1)
                 .opacity(showFront ? 0 : 1)
-
-            // Líc
-            coinFace(front)
+            CoinMedal(player: front)
                 .opacity(showFront ? 1 : 0)
         }
         .rotation3DEffect(
@@ -281,9 +309,23 @@ private struct Coin3D: View, Animatable {
             perspective: 0.55
         )
     }
+}
 
-    private func coinFace(_ player: CoinTossPlayer?) -> some View {
-        ZStack {
+/// Zlatá mince jako dřív. Uvnitř je jen fotka, bez jména.
+private struct CoinMedal: View {
+    var player: CoinTossPlayer?
+
+    var body: some View {
+        GeometryReader { geo in
+            let side = min(geo.size.width, geo.size.height)
+            face(side)
+                .frame(width: geo.size.width, height: geo.size.height)
+        }
+    }
+
+    private func face(_ side: CGFloat) -> some View {
+        let photo = side * 0.62
+        return ZStack {
             Circle()
                 .fill(
                     RadialGradient(
@@ -294,7 +336,7 @@ private struct Coin3D: View, Animatable {
                         ],
                         center: UnitPoint(x: 0.32, y: 0.28),
                         startRadius: 4,
-                        endRadius: 160
+                        endRadius: side * 0.72
                     )
                 )
                 .overlay {
@@ -308,41 +350,45 @@ private struct Coin3D: View, Animatable {
                             lineWidth: 12
                         )
                 }
-                .shadow(color: .black.opacity(0.4), radius: 16, y: 12)
 
             Circle()
                 .strokeBorder((player?.tint ?? Theme.brand).opacity(0.95), lineWidth: 6)
-                .padding(20)
+                .padding(side * 0.09)
 
+            portrait(photo)
+        }
+        .frame(width: side, height: side)
+        .compositingGroup()
+        .shadow(color: .black.opacity(0.4), radius: 16, y: 12)
+    }
+
+    private func portrait(_ size: CGFloat) -> some View {
+        ZStack {
+            Circle()
+                .fill(Color.black.opacity(0.28))
             if let player {
-                VStack(spacing: 8) {
-                    Avatar(
-                        name: player.name,
-                        bot: player.bot,
-                        size: 108,
-                        photo: player.photo,
-                        asset: player.asset
-                    )
-                    .overlay(Circle().strokeBorder(.white.opacity(0.5), lineWidth: 3))
-
-                    Text(player.name)
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.black.opacity(0.88))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                        .padding(.horizontal, 12)
-                }
+                Avatar(
+                    name: player.name,
+                    bot: player.bot,
+                    size: size - 8,
+                    photo: player.photo,
+                    asset: player.asset
+                )
             } else {
                 Image(systemName: "person.fill")
-                    .font(.system(size: 54, weight: .bold))
+                    .font(.system(size: size * 0.38, weight: .bold))
                     .foregroundStyle(.white.opacity(0.75))
             }
         }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay(Circle().strokeBorder(.white.opacity(0.55), lineWidth: 3))
+        .shadow(color: .black.opacity(0.28), radius: 5, y: 3)
     }
 }
 
 #if DEBUG
-#Preview {
+#Preview("Tmavý") {
     CoinTossView(
         players: [
             CoinTossPlayer(id: 0, name: "Ty", photo: nil, asset: nil, bot: false, tint: Theme.playerColor(0)),
@@ -352,5 +398,17 @@ private struct Coin3D: View, Animatable {
         onCancel: {}
     )
     .preferredColorScheme(.dark)
+}
+
+#Preview("Světlý") {
+    CoinTossView(
+        players: [
+            CoinTossPlayer(id: 0, name: "Ty", photo: nil, asset: nil, bot: false, tint: Theme.playerColor(0)),
+            CoinTossPlayer(id: 1, name: "Bot 5", photo: nil, asset: BotLevel.get(5).photo, bot: true, tint: Theme.playerColor(1))
+        ],
+        onFinish: { _ in },
+        onCancel: {}
+    )
+    .preferredColorScheme(.light)
 }
 #endif

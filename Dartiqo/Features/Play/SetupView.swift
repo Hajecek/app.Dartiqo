@@ -213,7 +213,6 @@ struct SetupView: View {
     private var advanceHint: String? {
         if isOnline { return nil }
         if let rosterHint { return rosterHint }
-        if showsOpening, opening == nil { return "Vyber, kdo hází první." }
         if opening == .pick, pickedStarter == nil { return "Vyber hráče, který začíná." }
         if opening == .bull, bullWinner == nil { return "Dohraj rozhoz na střed." }
         return nil

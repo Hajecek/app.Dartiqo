@@ -115,12 +115,15 @@ struct MatchView: View {
     @State private var showMatchXP = false
     @State private var showOnlineLeave = false
     @ObservedObject private var link: OnlineMatchLink
-    /// Volá se po konci nebo opuštění online zápasu.
+    /// Volá se po konci online zápasu, když se hráč vrací do seznamu lobby.
     private var onOnlineExit: () -> Void
+    /// Zrušení online zápasu. Bez vlastní akce se chová jako návrat do lobby.
+    private var onOnlineCancel: () -> Void
 
-    init(online: OnlineMatchLink? = nil, onOnlineExit: @escaping () -> Void = {}) {
+    init(online: OnlineMatchLink? = nil, onOnlineExit: @escaping () -> Void = {}, onOnlineCancel: (() -> Void)? = nil) {
         _link = ObservedObject(wrappedValue: online ?? .local)
         self.onOnlineExit = onOnlineExit
+        self.onOnlineCancel = onOnlineCancel ?? onOnlineExit
     }
 
     /// Online zápas drží propojení se serverem. Lokální hra zůstává v `AppStore`.
@@ -160,7 +163,7 @@ struct MatchView: View {
                     Task {
                         if await link.abandon() {
                             await DartiqoAccount.shared.refreshMatchCompletion(into: store)
-                            onOnlineExit()
+                            onOnlineCancel()
                         }
                     }
                 }
@@ -308,7 +311,11 @@ struct MatchView: View {
         matchCovers
             .alert("Přerušit zápas?", isPresented: $showLeave) {
                 Button("Uložit a odejít") { saveAndLeave() }
-                Button("Vymazat zápas", role: .destructive) { activeMatch = nil; dismiss() }
+                Button("Vymazat zápas", role: .destructive) {
+                    activeMatch = nil
+                    store.returnHome()
+                    dismiss()
+                }
                 Button("Zrušit", role: .cancel) {}
             } message: { Text("Ukládá se i rozehrané kolo po jedné nebo dvou šipkách.") }
             .confirmationDialog("Kolik šipek jsi použil na zavření?", isPresented: $finishPrompt, titleVisibility: .visible) {

@@ -326,6 +326,7 @@ struct OnlineHomeView: View {
                 session: session,
                 matchID: id,
                 onLeave: leaveRoom,
+                onCancel: leaveToHome,
                 onEdit: { path.append(.edit(id)) }
             )
         case .edit(let id):
@@ -393,6 +394,12 @@ struct OnlineHomeView: View {
     private func leaveRoom() {
         session.returnToHall()
         path = []
+    }
+
+    /// Zrušené lobby i vzdání zápasu zavře celý online kryt a ukáže Domů.
+    private func leaveToHome() {
+        session.returnToHall()
+        dismiss()
     }
 
     private func tryJoin(_ lobby: OnlineLobby) {
