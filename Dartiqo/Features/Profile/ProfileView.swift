@@ -31,8 +31,6 @@ struct ProfileView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 playerCard(stats)
-                FriendsProfileEntry()
-                HeadToHeadProfileEntry()
                 playTime
                 if stats.isEmpty {
                     ContentUnavailableView("Zatím tu nic není",
@@ -53,6 +51,7 @@ struct ProfileView: View {
                     records(stats)
                     career(stats)
                 }
+                peopleShortcuts
                 milestones
             }
             .padding(.horizontal, 16)
@@ -119,71 +118,139 @@ struct ProfileView: View {
     private func playerCard(_ stats: PlayerStats) -> some View {
         let progress = store.levelProgress
         return VStack(alignment: .leading, spacing: 18) {
-            HStack(spacing: 14) {
-                Avatar(name: store.profile?.name ?? "", size: 64, photo: store.profile?.photoJPEG)
-                    .overlay(Circle().strokeBorder(Theme.brandBlack, lineWidth: 2.5))
-                    .environment(\.colorScheme, .dark)
-                VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .center, spacing: 14) {
+                avatarRing(progress: progress.fraction)
+                VStack(alignment: .leading, spacing: 6) {
                     Text(store.profile?.name ?? "Hráč")
                         .font(.title2.bold())
+                        .foregroundStyle(.white)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                    if let username = store.profile?.username, !username.isEmpty {
+                        Text("@\(username)")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.white.opacity(0.55))
+                            .lineLimit(1)
+                    }
                     Label(rank.title, systemImage: rank.icon)
-                        .font(.subheadline.weight(.semibold))
-                        .opacity(0.7)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.brandBlack)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Theme.brand, in: Capsule())
+                        .labelStyle(.titleAndIcon)
                 }
                 Spacer(minLength: 8)
-                VStack(spacing: 0) {
-                    Text("LVL").font(.caption2.weight(.heavy)).opacity(0.6)
-                    Text("\(store.level)").font(.system(.title, design: .rounded).weight(.heavy))
+                VStack(spacing: 1) {
+                    Text("LVL")
+                        .font(.system(size: 10, weight: .heavy, design: .rounded))
+                        .foregroundStyle(Theme.brandBlack.opacity(0.5))
+                    Text("\(store.level)")
+                        .font(.system(size: 26, weight: .heavy, design: .rounded))
+                        .foregroundStyle(Theme.brandBlack)
+                        .monospacedDigit()
                 }
                 .frame(width: 58, height: 58)
-                .background(Theme.brandBlack.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .background(Theme.brand, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Level \(store.level)")
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                ProgressView(value: progress.fraction)
-                    .tint(Theme.brandBlack)
-                Text("\(progress.intoLevel) / \(progress.needed) XP do levelu \(store.level + 1)")
-                    .font(.caption.weight(.medium))
-                    .opacity(0.65)
+            VStack(alignment: .leading, spacing: 7) {
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.white.opacity(0.12))
+                        Capsule()
+                            .fill(Theme.brand)
+                            .frame(width: max(8, proxy.size.width * progress.fraction))
+                    }
+                }
+                .frame(height: 6)
+                .accessibilityHidden(true)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("\(progress.intoLevel) / \(progress.needed) XP")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.78))
+                    Text("do levelu \(store.level + 1)")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.white.opacity(0.45))
+                }
                 completionRow
             }
 
-            HStack(alignment: .bottom) {
+            HStack(alignment: .bottom, spacing: 0) {
                 headline(String(format: "%.1f", stats.average), mode == .x01 ? "průměr" : "bodů / kolo")
                 Spacer()
                 headline(percent(stats.winRate), "výher")
                 Spacer()
                 VStack(alignment: .trailing, spacing: 6) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 5) {
                         let recent = Array(stats.timeline.suffix(5))
                         ForEach(0..<5, id: \.self) { index in
                             let offset = index - (5 - recent.count)
                             Circle()
-                                .fill(offset >= 0 ? (recent[offset].won ? Theme.brandBlack : Theme.brandBlack.opacity(0.18)) : .clear)
-                                .strokeBorder(Theme.brandBlack.opacity(0.35), lineWidth: offset >= 0 ? 0 : 1)
+                                .fill(offset >= 0 ? (recent[offset].won ? Theme.brand : Color.white.opacity(0.18)) : .clear)
+                                .strokeBorder(Color.white.opacity(0.28), lineWidth: offset >= 0 ? 0 : 1)
                                 .frame(width: 11, height: 11)
                         }
                     }
-                    Text("forma").font(.caption.weight(.medium)).opacity(0.65)
+                    Text("forma").font(.caption.weight(.medium)).foregroundStyle(.white.opacity(0.45))
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Forma: \(stats.timeline.suffix(5).filter(\.won).count) výher z posledních \(min(5, stats.timeline.count))")
             }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .background(Color.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
-        .foregroundStyle(Theme.brandBlack)
-        .padding(20)
-        .background {
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(Theme.brand)
-                .overlay(alignment: .topTrailing) {
-                    Image(systemName: "target")
-                        .font(.system(size: 170, weight: .bold))
-                        .foregroundStyle(Theme.brandBlack.opacity(0.05))
-                        .offset(x: 50, y: -40)
-                        .accessibilityHidden(true)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .padding(18)
+        .background { playerCardBackground }
+        .environment(\.colorScheme, .dark)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func avatarRing(progress: Double) -> some View {
+        ZStack {
+            Circle()
+                .stroke(Color.white.opacity(0.12), lineWidth: 4)
+            Circle()
+                .trim(from: 0, to: max(progress > 0 ? 0.04 : 0, min(1, progress)))
+                .stroke(Theme.brand, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+            Avatar(name: store.profile?.name ?? "", size: 64, photo: store.profile?.photoJPEG)
+                .overlay(Circle().strokeBorder(Color.black.opacity(0.45), lineWidth: 2))
+        }
+        .frame(width: 76, height: 76)
+        .accessibilityHidden(true)
+    }
+
+    private var playerCardBackground: some View {
+        RoundedRectangle(cornerRadius: 28, style: .continuous)
+            .fill(Theme.heroWash)
+            .overlay(alignment: .topLeading) {
+                Circle()
+                    .fill(Theme.brand.opacity(0.16))
+                    .frame(width: 140, height: 140)
+                    .blur(radius: 36)
+                    .offset(x: -36, y: -48)
+                    .accessibilityHidden(true)
+            }
+            .overlay(
+                RoundedRectangle(cornerRadius: 28, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+    }
+
+    private var peopleShortcuts: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Lidé", systemImage: "person.2.fill")
+                .font(.headline)
+                .labelStyle(BlockLabelStyle())
+            HStack(spacing: 12) {
+                FriendsProfileEntry()
+                HeadToHeadProfileEntry()
+            }
         }
     }
 
@@ -191,7 +258,7 @@ struct ProfileView: View {
         let ledger = store.matchCompletion
         return Text(completionDetail(ledger))
             .font(.caption2.weight(.medium))
-            .opacity(0.55)
+            .foregroundStyle(.white.opacity(0.45))
             .accessibilityLabel(completionAccessibility(ledger))
     }
 
@@ -208,11 +275,14 @@ struct ProfileView: View {
     private func headline(_ value: String, _ label: String) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(value)
-                .font(.system(size: 30, weight: .heavy, design: .rounded))
+                .font(.system(size: 28, weight: .heavy, design: .rounded))
+                .foregroundStyle(.white)
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
-            Text(label).font(.caption.weight(.medium)).opacity(0.65)
+            Text(label)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.white.opacity(0.45))
         }
         .accessibilityElement(children: .combine)
     }

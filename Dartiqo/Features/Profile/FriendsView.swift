@@ -11,33 +11,38 @@ struct FriendsProfileEntry: View {
         NavigationLink {
             FriendsView()
         } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "person.2.fill")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(Theme.action)
-                    .frame(width: 44, height: 44)
-                    .background(Theme.action.opacity(0.12), in: Circle())
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top) {
+                    Image(systemName: "person.2.fill")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Theme.action)
+                        .frame(width: 36, height: 36)
+                        .background(Theme.action.opacity(0.12), in: Circle())
+                    Spacer(minLength: 8)
+                    if incoming > 0 {
+                        Text("\(incoming)")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(Theme.brandBlack)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Theme.brand, in: Capsule())
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Kamarádi")
                         .font(.headline)
                     Text(incomingLabel)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer(minLength: 8)
-                if incoming > 0 {
-                    Text("\(incoming)")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(Theme.brandBlack)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Theme.brand, in: Capsule())
-                }
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
             }
-            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(14)
             .background(Theme.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -51,10 +56,10 @@ struct FriendsProfileEntry: View {
 
     private var incomingLabel: String {
         switch incoming {
-        case 0: return "Hledání, žádosti a seznam"
-        case 1: return "1 žádost čeká na tebe"
-        case 2...4: return "\(incoming) žádosti čekají na tebe"
-        default: return "\(incoming) žádostí čeká na tebe"
+        case 0: return "Hledání a žádosti"
+        case 1: return "1 žádost čeká"
+        case 2...4: return "\(incoming) žádosti čekají"
+        default: return "\(incoming) žádostí čeká"
         }
     }
 }

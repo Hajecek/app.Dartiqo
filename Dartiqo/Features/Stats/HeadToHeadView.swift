@@ -1461,27 +1461,36 @@ struct HeadToHeadProfileEntry: View {
         NavigationLink {
             HeadToHeadListView()
         } label: {
-            HStack(spacing: 12) {
-                Avatar(name: store.profile?.name ?? "Já", size: 44, photo: store.profile?.photoJPEG)
-                    .overlay(Circle().strokeBorder(Theme.brand, lineWidth: 2))
-
-                Text("Head-to-Head")
-                    .font(.headline)
-
-                Spacer(minLength: 8)
-
-                if !rivals.isEmpty {
-                    Text("\(totalWins) : \(totalLosses)")
-                        .font(.title3.weight(.heavy))
-                        .monospacedDigit()
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .top) {
+                    Image(systemName: "person.line.dotted.person.fill")
+                        .font(.body.weight(.semibold))
                         .foregroundStyle(standingTint)
+                        .frame(width: 36, height: 36)
+                        .background(standingTint.opacity(0.14), in: Circle())
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
                 }
-
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.tertiary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Head-to-Head")
+                        .font(.headline)
+                    if rivals.isEmpty {
+                        Text("Zatím bez vzájemných zápasů")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    } else {
+                        Text("\(totalWins) : \(totalLosses)")
+                            .font(.title3.weight(.heavy))
+                            .monospacedDigit()
+                            .foregroundStyle(standingTint)
+                    }
+                }
             }
-            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(14)
             .background(Theme.card, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
