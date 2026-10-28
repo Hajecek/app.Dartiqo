@@ -16,17 +16,17 @@ struct RootView: View {
                 }
             if launching {
                 LaunchView()
-                    .transition(.opacity.combined(with: .scale(scale: 1.08)))
+                    .transition(.opacity)
                     .zIndex(1)
             }
         }
         .task {
-            try? await Task.sleep(for: .milliseconds(1200))
+            try? await Task.sleep(for: .milliseconds(1900))
             minimumElapsed = true
         }
         .onChange(of: minimumElapsed && contentReady, initial: true) { _, done in
             guard done, launching else { return }
-            withAnimation(.easeInOut(duration: 0.4)) { launching = false }
+            withAnimation(.easeInOut(duration: 0.45)) { launching = false }
         }
     }
 

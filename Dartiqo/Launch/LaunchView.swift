@@ -1,98 +1,137 @@
 import SwiftUI
 
-/// Úvodní obrazovka po startu. Logo i pozadí odpovídají systémové launch screen
-/// (LaunchLogo 100 pt na středu, barva LaunchBackground), aby přechod nebyl vidět.
+/// Úvod po startu. První snímek sedí na systémovou launch screen
+/// (žluté LaunchLogo 100 pt na černém LaunchBackground). Pak terč
+/// dosedne a šipka doletí do značky.
 struct LaunchView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var appeared = false
-    @State private var score = 501
 
-    private static let countdown = [501, 441, 360, 281, 180, 121, 60, 32, 0]
+    @State private var boardOn = false
+    @State private var flight: CGFloat = 0
+    @State private var hit = false
+    @State private var punch = false
+    @State private var wave: CGFloat = 0
 
     var body: some View {
-        ZStack {
-            Color("LaunchBackground").ignoresSafeArea()
+        GeometryReader { geo in
+            let board = min(geo.size.width, geo.size.height) * 0.94
+            ZStack {
+                Color("LaunchBackground")
 
-            if !reduceMotion {
-                Ripples()
-                    .opacity(appeared ? 1 : 0)
+                glow
+                boardArt(size: board)
+                waves
+                socket
+                mark
+                dart(in: geo.size)
             }
-
-            Image("LaunchLogo")
-                .resizable()
-                .frame(width: 100, height: 100)
-                .scaleEffect(appeared || reduceMotion ? 1 : 0.92)
-                .overlay(alignment: .top) {
-                    Text("DARTIQO")
-                        .font(AppFont.display(22, weight: .black))
-                        .tracking(9)
-                        .foregroundStyle(.black)
-                        .fixedSize()
-                        .offset(y: appeared || reduceMotion ? 116 : 128)
-                        .opacity(appeared ? 1 : 0)
-                }
-
-            VStack(spacing: 2) {
-                Spacer()
-                Text("\(score)")
-                    .font(AppFont.display(44, weight: .black))
-                    .monospacedDigit()
-                    .contentTransition(.numericText(countsDown: true))
-                Text("NAČÍTÁM HRU")
-                    .font(AppFont.caption(11, weight: .bold))
-                    .tracking(3)
-                    .opacity(0.55)
-            }
-            .foregroundStyle(.black)
-            .padding(.bottom, 40)
-            .opacity(appeared ? 1 : 0)
+            .frame(width: geo.size.width, height: geo.size.height)
         }
+        .ignoresSafeArea()
+        .environment(\.colorScheme, .dark)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Dartiqo se načítá")
-        .task {
-            withAnimation(.spring(duration: 0.6, bounce: 0.4).delay(0.05)) { appeared = true }
-            for value in Self.countdown.dropFirst() {
-                try? await Task.sleep(for: .milliseconds(130))
-                withAnimation(.snappy(duration: 0.25)) { score = value }
-            }
-        }
+        .sensoryFeedback(.impact(flexibility: .solid, intensity: 0.95), trigger: hit)
+        .task { await play() }
     }
-}
 
-/// Soustředné kruhy, které se rozbíhají od loga jako kruhy terče.
-private struct Ripples: View {
-    private let count = 4
-    private let period = 2.4
+    private var glow: some View {
+        Circle()
+            .fill(Theme.brand.opacity(hit ? 0.34 : 0.12))
+            .frame(width: 220, height: 220)
+            .blur(radius: 56)
+            .opacity(boardOn || reduceMotion ? 1 : 0)
+            .accessibilityHidden(true)
+    }
 
-    var body: some View {
-        TimelineView(.animation) { timeline in
-            let time = timeline.date.timeIntervalSinceReferenceDate
-            ZStack {
-                ForEach(0..<count, id: \.self) { index in
-                    let phase = (time / period + Double(index) / Double(count)).truncatingRemainder(dividingBy: 1)
-                    Circle()
-                        .stroke(.black, lineWidth: 2)
-                        .frame(width: 110 + phase * 520, height: 110 + phase * 520)
-                        .opacity((1 - phase) * 0.28)
-                }
+    private func boardArt(size: CGFloat) -> some View {
+        LaunchBoard(color: Theme.brand)
+            .frame(width: size, height: size)
+            .rotationEffect(.degrees(boardOn ? 0 : -16))
+            .scaleEffect(boardOn ? 1 : 0.74)
+            .opacity(boardOn ? (hit ? 0.20 : 0.14) : 0)
+            .accessibilityHidden(true)
+    }
+
+    private var waves: some View {
+        ZStack {
+            ForEach(0..<2, id: \.self) { i in
+                let progress = max(0, min(1, wave - CGFloat(i) * 0.16))
+                Circle()
+                    .stroke(Theme.brand.opacity((1 - progress) * 0.55), lineWidth: 2.2 - progress)
+                    .frame(width: 84 + progress * 360, height: 84 + progress * 360)
             }
         }
+        .opacity(hit ? 1 : 0)
         .accessibilityHidden(true)
     }
+
+    private var socket: some View {
+        Circle()
+            .stroke(Theme.brand.opacity(hit ? 0.40 : 0.16), lineWidth: 1.5)
+            .frame(width: 136, height: 136)
+            .scaleEffect(boardOn ? 1 : 0.72)
+            .opacity(boardOn || reduceMotion ? 1 : 0)
+            .accessibilityHidden(true)
+    }
+
+    private var mark: some View {
+        Image("LaunchLogo")
+            .resizable()
+            .frame(width: 100, height: 100)
+            .scaleEffect(punch ? 1.14 : 1)
+            .shadow(color: Theme.brand.opacity(hit ? 0.45 : 0), radius: 18)
+    }
+
+    private func dart(in size: CGSize) -> some View {
+        let travel = min(size.width, size.height) * 0.78
+        return LaunchDart()
+            .scaleEffect(0.88 + 0.18 * flight)
+            .offset(x: travel * 0.70 * (1 - flight), y: -travel * 0.56 * (1 - flight))
+            .opacity(flight > 0.03 && flight < 0.97 ? 1 : 0)
+            .accessibilityHidden(true)
+    }
+
+    @MainActor
+    private func play() async {
+        if reduceMotion {
+            boardOn = true
+            flight = 1
+            hit = true
+            return
+        }
+        try? await Task.sleep(for: .milliseconds(70))
+        withAnimation(.spring(duration: 0.78, bounce: 0.16)) {
+            boardOn = true
+        }
+        try? await Task.sleep(for: .milliseconds(200))
+        withAnimation(.easeIn(duration: 0.46)) {
+            flight = 1
+        }
+        try? await Task.sleep(for: .milliseconds(460))
+        withAnimation(.spring(duration: 0.32, bounce: 0.46)) {
+            hit = true
+            punch = true
+        }
+        withAnimation(.easeOut(duration: 0.72)) {
+            wave = 1
+        }
+        try? await Task.sleep(for: .milliseconds(160))
+        withAnimation(.spring(duration: 0.42, bounce: 0.18)) {
+            punch = false
+        }
+    }
 }
 
-/// Terč jako čárová grafika jednou barvou. Dvojité a trojité pole se střídavě vyplňují.
-struct BoardLines: View {
-    var color: Color = .black
-    var numbers = true
-
-    private static let order = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5]
+/// Terč jako tenká drátěná kresba. Dvojité a trojité pole se střídavě vyplňují.
+struct LaunchBoard: View {
+    var color: Color = Theme.brand
 
     var body: some View {
         Canvas { context, size in
             let c = CGPoint(x: size.width / 2, y: size.height / 2)
-            let r = min(size.width, size.height) / 2 * (numbers ? 0.84 : 1)
-            let line = max(1, r * 0.008)
+            let r = min(size.width, size.height) / 2
+            let line = max(1, r * 0.007)
 
             func ring(_ radius: Double) -> Path {
                 Path(ellipseIn: CGRect(x: c.x - r * radius, y: c.y - r * radius, width: r * radius * 2, height: r * radius * 2))
@@ -108,30 +147,62 @@ struct BoardLines: View {
             for i in 0..<20 {
                 let a = Double(i) * 18 - 99
                 if i.isMultiple(of: 2) {
-                    context.fill(wedge(0.93, 1, a, a + 18), with: .color(color))
-                    context.fill(wedge(0.56, 0.62, a, a + 18), with: .color(color))
+                    context.fill(wedge(0.93, 1, a, a + 18), with: .color(color.opacity(0.55)))
+                    context.fill(wedge(0.56, 0.62, a, a + 18), with: .color(color.opacity(0.55)))
                 }
                 var spoke = Path()
                 let rad = a * .pi / 180
-                spoke.move(to: CGPoint(x: c.x + cos(rad) * r * 0.1, y: c.y + sin(rad) * r * 0.1))
+                spoke.move(to: CGPoint(x: c.x + cos(rad) * r * 0.16, y: c.y + sin(rad) * r * 0.16))
                 spoke.addLine(to: CGPoint(x: c.x + cos(rad) * r, y: c.y + sin(rad) * r))
-                context.stroke(spoke, with: .color(color.opacity(0.6)), lineWidth: line)
-
-                if numbers {
-                    let mid = (a + 9) * .pi / 180
-                    let point = CGPoint(x: c.x + cos(mid) * r * 1.1, y: c.y + sin(mid) * r * 1.1)
-                    context.draw(
-                        Text("\(Self.order[i])").font(.system(size: r * 0.09, weight: .heavy, design: .rounded)).foregroundStyle(color),
-                        at: point
-                    )
-                }
+                context.stroke(spoke, with: .color(color.opacity(0.45)), lineWidth: line)
             }
-            for radius in [1, 0.93, 0.62, 0.56, 0.1] {
-                context.stroke(ring(radius), with: .color(color), lineWidth: line * 1.4)
+            for radius in [1.0, 0.93, 0.62, 0.56, 0.16] {
+                context.stroke(ring(radius), with: .color(color.opacity(radius == 1 ? 0.85 : 0.6)), lineWidth: line * 1.3)
             }
-            context.fill(ring(0.04), with: .color(color))
+            context.stroke(ring(0.07), with: .color(color), lineWidth: line * 1.1)
         }
-        .accessibilityHidden(true)
+    }
+}
+
+/// Šipka ve stejném sklonu jako kresba ve značce.
+private struct LaunchDart: View {
+    var body: some View {
+        Canvas { context, size in
+            let mid = size.height / 2
+            let paint = GraphicsContext.Shading.color(Theme.brand)
+
+            var flights = Path()
+            flights.move(to: CGPoint(x: size.width * 0.22, y: mid))
+            flights.addLine(to: CGPoint(x: size.width * 0.02, y: mid - size.height * 0.46))
+            flights.addLine(to: CGPoint(x: size.width * 0.30, y: mid))
+            flights.addLine(to: CGPoint(x: size.width * 0.02, y: mid + size.height * 0.46))
+            flights.closeSubpath()
+            context.fill(flights, with: paint)
+
+            var shaft = Path()
+            shaft.addRoundedRect(
+                in: CGRect(x: size.width * 0.20, y: mid - 1.1, width: size.width * 0.50, height: 2.2),
+                cornerSize: CGSize(width: 1, height: 1)
+            )
+            context.fill(shaft, with: paint)
+
+            var barrel = Path()
+            barrel.addRoundedRect(
+                in: CGRect(x: size.width * 0.66, y: mid - 2.6, width: size.width * 0.16, height: 5.2),
+                cornerSize: CGSize(width: 2, height: 2)
+            )
+            context.fill(barrel, with: paint)
+
+            var point = Path()
+            point.move(to: CGPoint(x: size.width * 0.98, y: mid))
+            point.addLine(to: CGPoint(x: size.width * 0.82, y: mid - 2.4))
+            point.addLine(to: CGPoint(x: size.width * 0.82, y: mid + 2.4))
+            point.closeSubpath()
+            context.fill(point, with: paint)
+        }
+        .frame(width: 78, height: 30)
+        .rotationEffect(.degrees(138))
+        .shadow(color: Theme.brand.opacity(0.55), radius: 10)
     }
 }
 
@@ -140,9 +211,9 @@ struct BoardLines: View {
     LaunchView()
 }
 #Preview("Terč") {
-    BoardLines()
+    LaunchBoard()
         .frame(width: 320, height: 320)
         .padding()
-        .background(Theme.brand)
+        .background(.black)
 }
 #endif
