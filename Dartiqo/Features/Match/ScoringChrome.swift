@@ -36,6 +36,8 @@ enum ScoringChrome {
         opened: Bool = true,
         enabled: Bool = true
     ) -> CheckoutGuide {
+        // Sehrávka se počítá dopředu. Klepnutí na číslo pak nečeká na hledání cesty.
+        Checkout.prepare()
         guard enabled else { return CheckoutGuide() }
         let dartsLeft = max(0, 3 - thrown)
         if !opened { return CheckoutGuide(note: "double in") }
@@ -587,6 +589,29 @@ struct ManualScorePad: View {
         .glassEffect(.regular.tint(tint.opacity(selected ? 1 : 0.62)).interactive(), in: Capsule())
         .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityLabel(title)
+    }
+}
+
+/// Číselník se při nové sehrávce neskládá znovu. Překreslení slotů by jinak spolklo klepnutí.
+struct StableManualScorePad: View, Equatable {
+    @Binding var multiplier: Int
+    var focus: Int? = nil
+    var numbers: [Int]? = nil
+    var onSelect: () -> Void
+    var onHit: (Dart) -> Void
+
+    static func == (lhs: StableManualScorePad, rhs: StableManualScorePad) -> Bool {
+        lhs.multiplier == rhs.multiplier && lhs.focus == rhs.focus && lhs.numbers == rhs.numbers
+    }
+
+    var body: some View {
+        ManualScorePad(
+            multiplier: $multiplier,
+            focus: focus,
+            numbers: numbers,
+            onSelect: onSelect,
+            onHit: onHit
+        )
     }
 }
 

@@ -31,14 +31,16 @@ struct AccountUser: Codable, Equatable {
     var profileRevision: Int
     /// Bilance dokončených zápasů z tabulky matches na serveru.
     var matchCompletion: MatchCompletionSnapshot?
+    /// Zápasové XP spočítané na webu. Trénink v telefonu se k tomu přičítá zvlášť.
+    var xp: AccountXP?
 
     var fullName: String { "\(first) \(last)".trimmingCharacters(in: .whitespaces) }
 
     enum CodingKeys: String, CodingKey {
-        case id, username, email, first, last, photo, profileRevision, matchCompletion
+        case id, username, email, first, last, photo, profileRevision, matchCompletion, xp
     }
 
-    init(id: Int, username: String, email: String, first: String, last: String, photo: String? = nil, profileRevision: Int = 1, matchCompletion: MatchCompletionSnapshot? = nil) {
+    init(id: Int, username: String, email: String, first: String, last: String, photo: String? = nil, profileRevision: Int = 1, matchCompletion: MatchCompletionSnapshot? = nil, xp: AccountXP? = nil) {
         self.id = id
         self.username = username
         self.email = email
@@ -47,6 +49,7 @@ struct AccountUser: Codable, Equatable {
         self.photo = photo
         self.profileRevision = profileRevision
         self.matchCompletion = matchCompletion
+        self.xp = xp
     }
 
     init(from decoder: Decoder) throws {
@@ -59,7 +62,16 @@ struct AccountUser: Codable, Equatable {
         photo = try c.decodeIfPresent(String.self, forKey: .photo)
         profileRevision = try c.decodeIfPresent(Int.self, forKey: .profileRevision) ?? 1
         matchCompletion = try c.decodeIfPresent(MatchCompletionSnapshot.self, forKey: .matchCompletion)
+        xp = try c.decodeIfPresent(AccountXP.self, forKey: .xp)
     }
+}
+
+/// Level a XP z webu. Křivka je stejná jako `PlayerLevel` v aplikaci.
+struct AccountXP: Codable, Equatable {
+    var total: Int
+    var level: Int
+    var intoLevel: Int
+    var needed: Int
 }
 
 /// Hráč z hledání na serveru. E-mail se do aplikace neposílá.

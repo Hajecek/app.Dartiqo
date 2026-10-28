@@ -67,6 +67,7 @@ struct OnlineMatch: Codable, Equatable, Identifiable {
 struct OnlineRuleChip: Identifiable, Equatable {
     var title: String
     var value: String
+    var icon: String
     var id: String { title }
 }
 
@@ -121,25 +122,25 @@ struct OnlineRules: Codable, Equatable {
         switch gameMode {
         case .x01:
             return [
-                OnlineRuleChip(title: "Start", value: "\(startingScore)"),
-                OnlineRuleChip(title: "Zavření", value: outLabel),
-                OnlineRuleChip(title: "Délka", value: lengthLabel),
+                OnlineRuleChip(title: "Start", value: "\(startingScore)", icon: "flag.fill"),
+                OnlineRuleChip(title: "Zavření", value: outLabel, icon: "checkmark.seal.fill"),
+                OnlineRuleChip(title: "Délka", value: lengthLabel, icon: "trophy.fill"),
             ]
         case .cricket:
             return [
-                OnlineRuleChip(title: "Body", value: cricketNoScore == true ? "Bez bodů" : "S body"),
-                OnlineRuleChip(title: "Čísla", value: MatchOptions.cricketNumbersLine(cricketNumbers ?? MatchOptions.standardCricketNumbers)),
-                OnlineRuleChip(title: "Délka", value: lengthLabel),
+                OnlineRuleChip(title: "Body", value: cricketNoScore == true ? "Bez bodů" : "S body", icon: "plus.forwardslash.minus"),
+                OnlineRuleChip(title: "Čísla", value: MatchOptions.cricketNumbersLine(cricketNumbers ?? MatchOptions.standardCricketNumbers), icon: "number"),
+                OnlineRuleChip(title: "Délka", value: lengthLabel, icon: "trophy.fill"),
             ]
         case .countUp:
             let rounds = countUpRounds ?? 10
             return [
-                OnlineRuleChip(title: "Kola", value: "\(rounds)"),
-                OnlineRuleChip(title: "Šipky", value: "\(rounds * 3)"),
+                OnlineRuleChip(title: "Kola", value: "\(rounds)", icon: "chart.bar.fill"),
+                OnlineRuleChip(title: "Šipky", value: "\(rounds * 3)", icon: "target"),
             ]
         case .aroundClock:
             let style = ClockStyle(rawValue: clockStyle ?? "") ?? .any
-            return [OnlineRuleChip(title: "Zásah", value: style.title)]
+            return [OnlineRuleChip(title: "Zásah", value: style.title, icon: "clock.fill")]
         }
     }
 }
@@ -156,6 +157,8 @@ struct OnlinePlayer: Codable, Equatable, Identifiable {
     var remaining: Int
     var legs: Int
     var sets: Int?
+    /// Bilance ze serveru. Starší odpověď klíč nemá.
+    var matchCompletion: MatchCompletionSnapshot?
 }
 
 struct OnlineBoard: Codable, Equatable {

@@ -222,6 +222,7 @@ private extension Array {
                     // Zápas, který server odmítl nebo nejde zakódovat, by frontu blokoval napořád.
                 }
             }
+            await account.refresh(into: store)
         } catch APIError.unauthorized {
             account.handleUnauthorized()
         } catch {

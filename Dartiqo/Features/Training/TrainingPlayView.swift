@@ -416,9 +416,13 @@ struct TrainingPlayView: View {
                     onTap: { store.tapHaptic(.light) }
                 )
             case .grid, .voice:
-                ManualScorePad(multiplier: $multiplier, numbers: scorePadNumbers, onSelect: { store.selectionHaptic() }) { dart in
-                    _ = throwDart(dart)
-                }
+                StableManualScorePad(
+                    multiplier: $multiplier,
+                    numbers: scorePadNumbers,
+                    onSelect: { store.selectionHaptic() },
+                    onHit: { dart in _ = throwDart(dart) }
+                )
+                .equatable()
                 .allowsHitTesting(!isHoldingVisit)
             }
         }
@@ -713,6 +717,7 @@ struct TrainingPlayView: View {
     }
 
     private func prepare() {
+        Checkout.prepare()
         guard session == nil, let owner = store.profile?.id else { return }
         previousBest = store.bestTrainingResult(for: definition.id)
         if let resume {

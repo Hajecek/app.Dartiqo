@@ -172,7 +172,7 @@ import Combine
         }
     }
 
-    /// Po opuštění online zápasu znovu načte % dokončených z tabulky matches.
+    /// Po opuštění online zápasu znovu načte % dokončených a zápasové XP z webu.
     func refreshMatchCompletion(into appStore: AppStore) async {
         guard let api else { return }
         do {
@@ -180,6 +180,9 @@ import Combine
             persistUser(remote)
             if let completion = remote.matchCompletion {
                 appStore.applyServerMatchCompletion(completion, accountID: remote.id)
+            }
+            if let xp = remote.xp {
+                appStore.applyServerXP(xp.total, accountID: remote.id)
             }
         } catch APIError.unauthorized {
             clear()
@@ -192,6 +195,9 @@ import Combine
         guard let appStore else { return }
         if let completion = remote.matchCompletion {
             appStore.applyServerMatchCompletion(completion, accountID: remote.id)
+        }
+        if let xp = remote.xp {
+            appStore.applyServerXP(xp.total, accountID: remote.id)
         }
         if !revisionChanged && forcePhoto == nil && !cleared { return }
 

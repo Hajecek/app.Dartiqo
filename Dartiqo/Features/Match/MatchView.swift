@@ -410,6 +410,7 @@ struct MatchView: View {
         scheduleVisitHold(darts: holdDarts, celebrate180: oneEightyFlash != nil)
     }
     private func prepareMatch() {
+        Checkout.prepare()
         if let game = activeMatch {
             seedSurface(for: game)
             UIApplication.shared.isIdleTimerDisabled = game.config.settings.keepAwake
@@ -2625,13 +2626,14 @@ struct MatchView: View {
         )
     }
     private func dartGrid(_ game: Match, shown: Match) -> some View {
-        ManualScorePad(
+        StableManualScorePad(
             multiplier: $multiplier,
             focus: padFocus(game, shown: shown),
             numbers: scorePadNumbers(game),
             onSelect: { store.selectionHaptic() },
             onHit: hit
         )
+        .equatable()
     }
 
     /// Cricket ukáže jen zvolená pole. Ostatní režimy nechají celou klávesnici.

@@ -16,8 +16,22 @@ struct OnlineMatchDecodeTests {
         #expect(snapshot.match?.rules.summary == "501 · Double out · First to 1 leg")
         #expect(snapshot.match?.isPublic == false)
         #expect(snapshot.match?.players.first?.photo == "/uploads/avatars/a.jpg?v=2")
+        #expect(snapshot.match?.players.first?.matchCompletion == nil)
         #expect(snapshot.lobbyInvites.first?.status == "pending")
         #expect(snapshot.match?.state.currentDarts.isEmpty == true)
+    }
+
+    @Test func playerCompletion() throws {
+        let json = """
+        {"ok":true,"match":{"id":"0123456789abcdef01234567","code":"K7NP2Q","visibility":"public","status":"lobby","seq":1,"yourSlot":0,"activeSlot":0,"yourTurn":false,"member":true,"winner":null,
+        "rules":{"startingScore":501,"outRule":"double","legsToWin":1,"setsToWin":1,"format":"firstTo"},
+        "players":[{"slot":0,"id":"abc","name":"Host","username":"host","ready":false,"you":true,"remaining":501,"legs":0,"sets":0,"matchCompletion":{"completed":9,"abandoned":1,"percent":90}},{"slot":1,"id":"def","name":"Guest","username":"guest","ready":true,"you":false,"remaining":501,"legs":0,"sets":0,"matchCompletion":{"completed":0,"abandoned":0,"percent":null}}],
+        "state":{"leg":1,"set":1,"winner":null,"currentDarts":[]}}}
+        """.data(using: .utf8)!
+        let players = try #require(try JSONDecoder().decode(OnlineSnapshot.self, from: json).match).players
+        #expect(players[0].matchCompletion == MatchCompletionSnapshot(completed: 9, abandoned: 1, percent: 90))
+        #expect(players[1].matchCompletion?.percent == nil)
+        #expect(players[1].matchCompletion?.completed == 0)
     }
 
     @Test func setsBoard() throws {

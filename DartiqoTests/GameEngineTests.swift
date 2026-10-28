@@ -386,6 +386,26 @@ final class GameEngineTests: XCTestCase {
         XCTAssertEqual(ontoBull?.leaveLabel, "Bull")
         XCTAssertNil(Checkout.setup(for: 40, darts: 1))
     }
+
+    func testSetupAdviceDoesNotStallNumberEntry() {
+        func sweep() {
+            for rule in OutRule.allCases {
+                for darts in 1...3 {
+                    for score in 2...180 {
+                        _ = Checkout.setup(for: score, rule: rule, darts: darts)
+                    }
+                }
+            }
+        }
+        let first = Date()
+        sweep()
+        let cold = Date().timeIntervalSince(first)
+        XCTAssertLessThan(cold, 0.8, "Sehrávka se počítá moc dlouho (\(cold) s)")
+        let second = Date()
+        sweep()
+        let warm = Date().timeIntervalSince(second)
+        XCTAssertLessThan(warm, 0.08, "Opakovaná sehrávka má být jen čtení z tabulky (\(warm) s)")
+    }
     func testBotDartsAreLegalAndStrengthIncreases() {
         var averages: [Double] = []
         for level in [1,5,10] {

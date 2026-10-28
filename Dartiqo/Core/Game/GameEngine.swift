@@ -187,11 +187,33 @@ public enum Checkout {
         return power + bull + singles + rareTrebles + setupDoubles
     }()
 
+    /// První nahrávka pro daný součet. Stejné pořadí jako `preferredSetups`, jen bez lineárního hledání.
+    private static let setupByScore: [Int: Dart] = {
+        var map: [Int: Dart] = [:]
+        for dart in preferredSetups where map[dart.score] == nil {
+            map[dart.score] = dart
+        }
+        return map
+    }()
+
+    /// Dopočítá zavření a sehrávky mimo klepnutí. Číselník pak jen sáhne do hotové tabulky.
+    public static func prepare() {
+        AdviceCache.shared.warmIfNeeded()
+    }
+
     /// Legal checkout using routes players recognise — popular doubles and natural setups.
     /// U tří šipek preferuje první ránu, po které single (špatný zásah do stejného pole) stále nechá zavření.
     /// Např. 123 jde přes T19 (S19 → 104), ne T20 (S20 → 103, dvěma šipkami nejde).
     public static func route(for score: Int, rule: OutRule = .double, darts: Int = 3) -> [Dart]? {
         guard score > 0, darts > 0, score <= 180 else { return nil }
+        let key = CacheKey(score: score, rule: rule, darts: darts)
+        if let stored = AdviceCache.shared.route(for: key) { return stored.path }
+        let value = computeRoute(score: score, rule: rule, darts: darts)
+        AdviceCache.shared.storeRoute(value, for: key)
+        return value
+    }
+
+    private static func computeRoute(score: Int, rule: OutRule, darts: Int) -> [Dart]? {
         let ends = finishingDarts(rule: rule)
 
         for end in ends where end.score == score { return [end] }
@@ -263,7 +285,7 @@ public enum Checkout {
     /// Prefer leaving a popular double; pick the most natural setup that scores the remainder.
     /// Když by první šipka byla taky double (72 → D16 D20), vezme se trojka na normální číslo (T16 D12).
     private static func twoDart(score: Int, ends: [Dart]) -> [Dart]? {
-        let straight = paired(score: score, ends: ends, setups: preferredSetups)
+        let straight = paired(score: score, ends: ends)
         if let straight, isSetupDouble(straight[0]),
            let normal = trebleOntoFavouriteDouble(score: score, ends: ends) {
             return normal
@@ -271,13 +293,11 @@ public enum Checkout {
         return straight
     }
 
-    private static func paired(score: Int, ends: [Dart], setups: [Dart]) -> [Dart]? {
+    private static func paired(score: Int, ends: [Dart]) -> [Dart]? {
         for end in ends {
             let need = score - end.score
-            guard need > 0 else { continue }
-            if let setup = setups.first(where: { $0.score == need }) {
-                return [setup, end]
-            }
+            guard need > 0, let setup = setupByScore[need] else { continue }
+            return [setup, end]
         }
         return nil
     }
@@ -361,6 +381,15 @@ public enum Checkout {
         return aims
     }()
 
+    /// První přirozená rána pro daný součet. Pořadí je stejné jako u `setupAims`.
+    private static let aimByScore: [Int: Dart] = {
+        var map: [Int: Dart] = [:]
+        for dart in setupAims where map[dart.score] == nil {
+            map[dart.score] = dart
+        }
+        return map
+    }()
+
     private static let checkoutableLeaves: [OutRule: [Int]] = {
         Dictionary(uniqueKeysWithValues: OutRule.allCases.map { rule in
             (rule, (1...170).filter { route(for: $0, rule: rule, darts: 3) != nil })
@@ -377,14 +406,21 @@ public enum Checkout {
     /// When a finish is impossible, the most natural way to leave a score you can close later.
     public static func setup(for score: Int, rule: OutRule = .double, darts: Int = 3) -> SetupHint? {
         guard (1...3).contains(darts), (2...180).contains(score) else { return nil }
+        let key = CacheKey(score: score, rule: rule, darts: darts)
+        if let stored = AdviceCache.shared.setup(for: key) { return stored.hint }
+        let value = computeSetup(score: score, rule: rule, darts: darts)
+        AdviceCache.shared.storeSetup(value, for: key)
+        return value
+    }
+
+    private static func computeSetup(score: Int, rule: OutRule, darts: Int) -> SetupHint? {
         guard route(for: score, rule: rule, darts: darts) == nil else { return nil }
         let floor = rule == .straight ? 1 : 2
         guard score > floor else { return nil }
 
-        var cache = PathCache()
         var best: (path: [Dart], leave: Int, quality: Int)?
         for leave in checkoutableLeaves[rule] ?? [] where leave >= floor && leave < score {
-            guard let path = scoringPath(need: score - leave, darts: darts, cache: &cache), !path.isEmpty else { continue }
+            guard let path = scoringPath(need: score - leave, darts: darts), !path.isEmpty else { continue }
             let quality = setupQuality(path: path, leave: leave, from: score, rule: rule, floor: floor)
             if best == nil || quality < best!.quality {
                 best = (path, leave, quality)
@@ -443,32 +479,107 @@ public enum Checkout {
         return bonus
     }
 
-    private struct PathCache {
-        var found: [Int: [Dart]] = [:]
-        var absent = Set<Int>()
-        func key(_ need: Int, _ darts: Int) -> Int { (need << 2) | darts }
-    }
-
     /// Fewest, most natural darts that score exactly `need`.
-    private static func scoringPath(need: Int, darts: Int, cache: inout PathCache) -> [Dart]? {
+    private static func scoringPath(need: Int, darts: Int) -> [Dart]? {
         if need == 0 { return [] }
-        let key = cache.key(need, darts)
-        if let hit = cache.found[key] { return hit }
-        if cache.absent.contains(key) { return nil }
-        let path = findScoringPath(need: need, darts: darts, cache: &cache)
-        if let path { cache.found[key] = path } else { cache.absent.insert(key) }
+        let key = (need << 2) | darts
+        if let stored = AdviceCache.shared.path(for: key) { return stored.path }
+        let path = findScoringPath(need: need, darts: darts)
+        AdviceCache.shared.storePath(path, for: key)
         return path
     }
 
-    private static func findScoringPath(need: Int, darts: Int, cache: inout PathCache) -> [Dart]? {
+    private static func findScoringPath(need: Int, darts: Int) -> [Dart]? {
         guard darts > 0, need > 0, need <= 60 * darts else { return nil }
-        if let single = setupAims.first(where: { $0.score == need }) { return [single] }
+        if let single = aimByScore[need] { return [single] }
         guard darts > 1 else { return nil }
         for first in setupAims where first.score < need {
-            if let rest = scoringPath(need: need - first.score, darts: darts - 1, cache: &cache) {
+            if let rest = scoringPath(need: need - first.score, darts: darts - 1) {
                 return [first] + rest
             }
         }
         return nil
+    }
+
+    private struct CacheKey: Hashable {
+        var score: Int
+        var rule: OutRule
+        var darts: Int
+    }
+
+    private struct RouteBox { var path: [Dart]? }
+    private struct SetupBox { var hint: SetupHint? }
+    private struct PathBox { var path: [Dart]? }
+
+    /// Hotové cesty. Hledání běží jednou, další klepnutí na číselník už jen čte.
+    private final class AdviceCache {
+        static let shared = AdviceCache()
+        private let lock = NSLock()
+        private var routes: [CacheKey: RouteBox] = [:]
+        private var setups: [CacheKey: SetupBox] = [:]
+        private var paths: [Int: PathBox] = [:]
+        private var started = false
+
+        func route(for key: CacheKey) -> RouteBox? {
+            lock.lock()
+            defer { lock.unlock() }
+            return routes[key]
+        }
+
+        func storeRoute(_ path: [Dart]?, for key: CacheKey) {
+            lock.lock()
+            routes[key] = RouteBox(path: path)
+            lock.unlock()
+        }
+
+        func setup(for key: CacheKey) -> SetupBox? {
+            lock.lock()
+            defer { lock.unlock() }
+            return setups[key]
+        }
+
+        func storeSetup(_ hint: SetupHint?, for key: CacheKey) {
+            lock.lock()
+            setups[key] = SetupBox(hint: hint)
+            lock.unlock()
+        }
+
+        func path(for key: Int) -> PathBox? {
+            lock.lock()
+            defer { lock.unlock() }
+            return paths[key]
+        }
+
+        func storePath(_ path: [Dart]?, for key: Int) {
+            lock.lock()
+            paths[key] = PathBox(path: path)
+            lock.unlock()
+        }
+
+        func warmIfNeeded() {
+            lock.lock()
+            if started {
+                lock.unlock()
+                return
+            }
+            started = true
+            lock.unlock()
+            DispatchQueue.global(qos: .userInitiated).async {
+                for rule in OutRule.allCases {
+                    for darts in 1...3 {
+                        for score in 1...180 {
+                            _ = Checkout.route(for: score, rule: rule, darts: darts)
+                        }
+                    }
+                }
+                for rule in OutRule.allCases {
+                    for darts in 1...3 {
+                        for score in 2...180 {
+                            _ = Checkout.setup(for: score, rule: rule, darts: darts)
+                        }
+                    }
+                }
+            }
+        }
     }
 }

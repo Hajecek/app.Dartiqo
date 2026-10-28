@@ -45,6 +45,8 @@ struct Profile: Codable, Identifiable {
     var matchCompletion: MatchCompletionLedger?
     /// Webový účet Dartiqo, ke kterému profil patří.
     var accountID: Int?
+    /// Poslední zápasové XP z webu. Chybí, dokud účet XP nepošle.
+    var serverMatchXP: Int?
 }
 struct Friend: Codable, Identifiable, Equatable {
     var id = UUID()
@@ -602,9 +604,20 @@ enum InactivityLock {
     }
     var xp: Int {
         guard let id = profile?.id else { return 0 }
-        let played = (data.matchXPAwards ?? []).filter { $0.owner == id }.reduce(0) { $0 + $1.amount }
         let trained = (data.xpEvents ?? []).filter { $0.owner == id }.reduce(0) { $0 + $1.amount }
-        return max(0, played + trained)
+        return max(0, matchXPTotal(for: id) + trained)
+    }
+
+    /// Přihlášený účet bere zápasové XP z webu. Ještě neodeslaný zápas se přičte z telefonu, ať level neskočí dolů.
+    private func matchXPTotal(for id: UUID) -> Int {
+        let awards = data.matchXPAwards ?? []
+        let local = awards.filter { $0.owner == id }.reduce(0) { $0 + $1.amount }
+        guard profile?.accountID != nil,
+              profile?.accountID == DartiqoAccount.shared.user?.id,
+              let server = profile?.serverMatchXP else { return local }
+        let uploaded = Set(data.uploadedMatches ?? [])
+        let pending = awards.filter { $0.owner == id && !uploaded.contains($0.matchID) }.reduce(0) { $0 + $1.amount }
+        return server + pending
     }
 
     /// Rozklad XP za konkrétní zápas. Uložená odměna má přednost, ať se po čase nepřepočítá jinak.
@@ -833,6 +846,14 @@ enum InactivityLock {
             data.selectedProfile = data.profiles[index].id
         }
         flushSave()
+    }
+
+    /// Zápasové XP z webu. Stejné číslo se znovu nezapisuje.
+    func applyServerXP(_ total: Int, accountID: Int) {
+        guard let index = data.profiles.firstIndex(where: { $0.accountID == accountID }) else { return }
+        guard data.profiles[index].serverMatchXP != total else { return }
+        data.profiles[index].serverMatchXP = total
+        save()
     }
 
     /// Bilance z tabulky matches. Přepisuje lokální % u propojeného profilu.
