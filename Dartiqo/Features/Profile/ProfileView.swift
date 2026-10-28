@@ -604,6 +604,7 @@ private func playTimeTint(_ kind: PlayTime.Kind) -> Color {
     case .training: return Theme.positive
     case .bots: return .orange
     case .friends: return .blue
+    case .online: return .cyan
     }
 }
 

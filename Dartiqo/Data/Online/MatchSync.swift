@@ -212,7 +212,7 @@ private extension Array {
                 try await api.deleteMatch(id: match.id)
                 store.abandonedMatchSynced(match.id)
             }
-            let finished = store.matches.filter { $0.finished && !isKnown($0) }
+            let finished = store.matches.filter { $0.finished && !isKnown($0) && $0.playedOnline != true }
             for match in finished {
                 do {
                     let body = try encoder.encode(MatchUpload(match: match, owner: profile.id, friends: store.friends, profiles: store.data.profiles))
@@ -221,6 +221,9 @@ private extension Array {
                 } catch APIError.server, is EncodingError {
                     // Zápas, který server odmítl nebo nejde zakódovat, by frontu blokoval napořád.
                 }
+            }
+            if let records = try? await api.onlineHistory() {
+                store.importOnlineMatches(records.compactMap { $0.match(owner: profile.id) })
             }
             await account.refresh(into: store)
         } catch APIError.unauthorized {

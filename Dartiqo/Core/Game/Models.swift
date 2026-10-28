@@ -351,6 +351,10 @@ public struct Match: Codable, Identifiable {
     public var ghostPlayerIndex: Int?
     /// Plné XP jen pro zápas, který ověřil server. Rozhraní zápasu to nenastavuje.
     public var verifiedOnline: Bool?
+    /// Zápas se hrál přes internet. Jen kvůli označení a času u terče.
+    public var playedOnline: Bool?
+    /// Soupeř odešel, nebo hráč zápas vzdal. Šipky nepatří do kariérního průměru.
+    public var onlineForfeit: Bool?
 
     public mutating func addPlayTime(from start: Date, to end: Date) {
         let span = end.timeIntervalSince(start)
@@ -364,8 +368,10 @@ public struct Match: Codable, Identifiable {
         return min(max(0, completedAt.timeIntervalSince(createdAt)), 2 * 3600)
     }
     /// Sólo / sám proti sobě nepatří do bilance výher a proher.
+    /// Vzdání online zápasu bez vítěze taky ne — není to remíza.
     public var countsForCompetitiveRecord: Bool {
-        Set(players.map(\.id)).count >= 2
+        if playedOnline == true && onlineForfeit == true && winner == nil { return false }
+        return Set(players.map(\.id)).count >= 2
     }
     public init(config: GameConfig, players: [Player], firstPlayer: Int = 0) {
         precondition((1...4).contains(players.count))

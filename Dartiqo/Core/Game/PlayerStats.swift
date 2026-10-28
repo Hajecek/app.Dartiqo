@@ -49,13 +49,14 @@ public enum StatsPeriod: String, CaseIterable, Identifiable {
 /// Čas u terče přes všechny režimy, rozdělený podle toho, s kým se hrálo.
 public struct PlayTime {
     public enum Kind: String, CaseIterable, Identifiable {
-        case training, bots, friends
+        case training, bots, friends, online
         public var id: String { rawValue }
         public var title: String {
             switch self {
             case .training: return "Sám"
             case .bots: return "S botem"
             case .friends: return "S kamarády"
+            case .online: return "Online"
             }
         }
         public var detail: String {
@@ -63,6 +64,7 @@ public struct PlayTime {
             case .training: return "sólo zápasy a trénink"
             case .bots: return "aspoň jeden bot"
             case .friends: return "jen lidé"
+            case .online: return "zápasy přes internet"
             }
         }
         public var symbol: String {
@@ -70,9 +72,11 @@ public struct PlayTime {
             case .training: return "figure.mind.and.body"
             case .bots: return "cpu"
             case .friends: return "person.2.fill"
+            case .online: return "wifi"
             }
         }
         public static func of(_ match: Match) -> Kind {
+            if match.playedOnline == true { return .online }
             if match.players.count == 1 { return .training }
             return match.players.contains { $0.botLevel != nil } ? .bots : .friends
         }
@@ -371,6 +375,7 @@ public struct PlayerStats {
                 stats.competitiveMatches += 1
                 if match.winner == p { stats.wins += 1 }
             }
+            if match.onlineForfeit == true { continue }
             stats.legsPlayed += Set(match.visits.map(\.leg)).count
             stats.legsWon += match.states[p].legs
             stats.darts += mine.reduce(0) { $0 + $1.darts.count }

@@ -111,6 +111,8 @@ struct StoredData: Codable {
     var pendingMatchDeletes: [UUID]?
     /// Dohrané zápasy, které už jsou na webu. Když pak na webu chybí, hráč je tam smazal.
     var uploadedMatches: [UUID]?
+    /// Online zápasy smazané v telefonu. Další import je nesmí vrátit.
+    var hiddenOnlineMatchIDs: [UUID]?
 }
 struct JSONDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
@@ -660,7 +662,7 @@ enum InactivityLock {
     }
     func ghostMatchCandidates(startingScore: Int, outRule: OutRule) -> [GhostOffer] {
         guard let id = profile?.id else { return [] }
-        return GhostMode.matchCandidates(matches: matches, playerID: id, startingScore: startingScore, outRule: outRule)
+        return GhostMode.matchCandidates(matches: matches.filter { $0.onlineForfeit != true }, playerID: id, startingScore: startingScore, outRule: outRule)
     }
     func ghostStyleMemory(startingScore: Int, outRule: OutRule) -> GhostStyleMemory? {
         guard let id = profile?.id else { return nil }
@@ -675,7 +677,7 @@ enum InactivityLock {
         let key = GhostStyleMemory.key(owner: owner, startingScore: startingScore, outRule: outRule)
         guard data.ghostStyleMemories?[key] == nil else { return }
         let pool = matches.filter {
-            $0.finished && $0.config.mode == .x01
+            $0.finished && $0.onlineForfeit != true && $0.config.mode == .x01
                 && $0.config.startingScore == startingScore
                 && $0.config.outRule == outRule
                 && $0.players.contains { $0.id == owner }
@@ -694,7 +696,7 @@ enum InactivityLock {
 
     /// Po dohraném X01 aktualizuje učení Zrcadla stylu.
     func learnGhostStyle(from match: Match) {
-        guard match.finished, match.config.mode == .x01 else { return }
+        guard match.finished, match.onlineForfeit != true, match.config.mode == .x01 else { return }
         guard let owner = profile?.id,
               let index = match.players.firstIndex(where: { $0.id == owner })
         else { return }
@@ -713,7 +715,9 @@ enum InactivityLock {
         data.ghostStyleMemories?[key] = memory
         save()
     }
-    var ownVisits: [Visit] { x01Matches.flatMap { m in m.visits.filter { m.players[$0.player].id == profile?.id } } }
+    var ownVisits: [Visit] {
+        x01Matches.filter { $0.onlineForfeit != true }.flatMap { m in m.visits.filter { m.players[$0.player].id == profile?.id } }
+    }
     var average: Double {
         let darts = ownVisits.reduce(0) { $0 + $1.darts.count }
         return darts == 0 ? 0 : Double(ownVisits.reduce(0) { $0 + $1.credited }) * 3 / Double(darts)
@@ -900,14 +904,91 @@ enum InactivityLock {
         flushSave()
     }
     func deleteMatch(_ id: UUID) {
-        guard data.matches.contains(where: { $0.id == id }) else { return }
+        guard let match = data.matches.first(where: { $0.id == id }) else { return }
         data.matches.removeAll { $0.id == id }
         data.matchXPAwards?.removeAll { $0.matchID == id }
-        if profile?.accountID != nil {
+        if match.playedOnline == true {
+            var hidden = data.hiddenOnlineMatchIDs ?? []
+            if !hidden.contains(id) { hidden.append(id) }
+            data.hiddenOnlineMatchIDs = hidden
+        } else if profile?.accountID != nil {
             data.pendingMatchDeletes = (data.pendingMatchDeletes ?? []) + [id]
         }
         // Bilance dokončení zůstává. Smazání z historie ji nesmí vylepšit.
         flushSave()
+    }
+
+    /// Místní kopie online zápasu hned po odchodu ze hry. Čas z telefonu má přednost před hodinami serveru.
+    func archiveOnline(_ game: Match, publicID: String) {
+        let id = Self.stableID(forOnlineMatch: publicID)
+        guard data.hiddenOnlineMatchIDs?.contains(id) != true else { return }
+        var archived = game
+        archived.id = id
+        archived.playedOnline = true
+        archived.undoStack = []
+        archived.pendingDarts = nil
+        if !archived.finished {
+            archived.finished = true
+            archived.completedAt = Date()
+            archived.winner = nil
+            archived.onlineForfeit = true
+        } else if archived.onlineForfeit != true {
+            archived.onlineForfeit = Self.looksLikeOnlineForfeit(archived)
+        }
+        storeOnline(archived, fromPhone: true)
+    }
+
+    /// Serverová historie. Už uložený čas z telefonu se nepřepisuje zdí hodin serveru.
+    func importOnlineMatches(_ incoming: [Match]) {
+        let hidden = Set(data.hiddenOnlineMatchIDs ?? [])
+        var changed = false
+        for match in incoming where !hidden.contains(match.id) {
+            var next = match
+            next.playedOnline = true
+            next.undoStack = []
+            if storeOnline(next, fromPhone: false, saving: false) { changed = true }
+        }
+        if changed { flushSave() }
+    }
+
+    /// Telefonní kopie nahradí uložený zápas a vezme delší čas. Server jen doplní vítěze a čas, který v telefonu chybí.
+    @discardableResult
+    private func storeOnline(_ incoming: Match, fromPhone: Bool, saving: Bool = true) -> Bool {
+        if let index = data.matches.firstIndex(where: { $0.id == incoming.id }) {
+            var current = data.matches[index]
+            let localTime = current.playSeconds ?? 0
+            if fromPhone {
+                var next = incoming
+                next.playSeconds = max(localTime, incoming.playSeconds ?? 0)
+                if current.winner != nil, next.winner == nil {
+                    next.winner = current.winner
+                    next.onlineForfeit = current.onlineForfeit
+                }
+                data.matches[index] = next
+            } else if current.winner == nil, incoming.winner != nil {
+                var next = incoming
+                if localTime > 0 { next.playSeconds = current.playSeconds }
+                data.matches[index] = next
+            } else if localTime == 0, (incoming.playSeconds ?? 0) > 0 {
+                current.playSeconds = incoming.playSeconds
+                data.matches[index] = current
+            } else {
+                return false
+            }
+        } else {
+            data.matches.append(incoming)
+        }
+        if saving { flushSave() }
+        return true
+    }
+
+    /// Výhra po odchodu soupeře nemá checkout. Do průměru nepatří.
+    private static func looksLikeOnlineForfeit(_ match: Match) -> Bool {
+        if match.winner == nil { return true }
+        guard match.config.mode == .x01, match.config.settings.dartLimit == nil else { return false }
+        if match.visits.contains(where: \.checkout) { return false }
+        if match.bullOffLegs?.isEmpty == false { return false }
+        return true
     }
 
     /// Jednorázově započte už uložené dohrané zápasy. Zrušené z minula v historii nejsou.

@@ -182,6 +182,7 @@ struct DartiqoAPI {
         var user: AccountUser?
         var message: String?
         var ids: [String]?
+        var matches: [OnlineHistoryRecord]?
         var people: [DirectoryPerson]?
         var friends: [FriendLink]?
         var incoming: [FriendLink]?
@@ -251,6 +252,10 @@ struct DartiqoAPI {
 
     func matchIDs() async throws -> [String] {
         try await send("api/v1/matches", method: "GET").ids ?? []
+    }
+
+    func onlineHistory() async throws -> [OnlineHistoryRecord] {
+        try await send("api/v1/matches/online", method: "GET").matches ?? []
     }
 
     func uploadMatch(id: UUID, body: Data) async throws {

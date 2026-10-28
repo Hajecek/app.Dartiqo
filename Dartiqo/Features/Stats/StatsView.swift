@@ -510,6 +510,7 @@ private struct MatchTotals {
     init(_ matches: [Match], me: UUID?) {
         for match in matches {
             seconds += match.playedDuration
+            if match.onlineForfeit == true { continue }
             guard let index = match.players.firstIndex(where: { $0.id == me }) else { continue }
             let own = match.visits.filter { $0.player == index }
             let thrown = own.reduce(0) { $0 + $1.darts.count }
@@ -901,6 +902,7 @@ private struct HistoryRowCard<Leading: View, Score: View>: View {
     let status: String
     let title: String
     let detail: String
+    let badge: String?
     let leading: Leading
     let score: Score
 
@@ -909,6 +911,7 @@ private struct HistoryRowCard<Leading: View, Score: View>: View {
         status: String,
         title: String,
         detail: String,
+        badge: String? = nil,
         @ViewBuilder leading: () -> Leading,
         @ViewBuilder score: () -> Score
     ) {
@@ -916,6 +919,7 @@ private struct HistoryRowCard<Leading: View, Score: View>: View {
         self.status = status
         self.title = title
         self.detail = detail
+        self.badge = badge
         self.leading = leading()
         self.score = score()
     }
@@ -936,6 +940,15 @@ private struct HistoryRowCard<Leading: View, Score: View>: View {
                 }
 
             VStack(alignment: .leading, spacing: 3) {
+                if let badge {
+                    Text(badge)
+                        .font(.system(size: 9, weight: .heavy))
+                        .tracking(0.6)
+                        .foregroundStyle(.cyan)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.cyan.opacity(0.18), in: Capsule())
+                }
                 Text(title)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
@@ -1251,9 +1264,10 @@ private struct MatchHistoryRow: View {
     var body: some View {
         HistoryRowCard(
             outcome: outcome,
-            status: outcome == .practice ? "Sólo" : outcome.title,
+            status: rowStatus,
             title: title,
-            detail: detail
+            detail: detail,
+            badge: match.playedOnline == true ? "ONLINE" : nil
         ) {
             avatar(rivals.first ?? me ?? 0)
         } score: {
@@ -1268,6 +1282,11 @@ private struct MatchHistoryRow: View {
             }
         }
         .accessibilityHint("Otevře detail zápasu")
+    }
+
+    private var rowStatus: String {
+        if match.playedOnline == true, match.winner == nil { return "Vzdáno" }
+        return outcome == .practice ? "Sólo" : outcome.title
     }
 
     private var title: String {
@@ -1562,11 +1581,25 @@ struct MatchDetailView: View {
         }
     }
 
+    private func detailStatus(_ result: GameOutcome) -> String {
+        if match.playedOnline == true, match.winner == nil { return "Vzdáno" }
+        return result == .practice ? "Sólo" : result.title
+    }
+
     private var detailHero: some View {
         let result = outcome(match, profileID: profileID)
         return VStack(spacing: 16) {
             HStack {
-                StatusCapsule(outcome: result, title: result == .practice ? "Sólo" : result.title)
+                StatusCapsule(outcome: result, title: detailStatus(result))
+                if match.playedOnline == true {
+                    Text("ONLINE")
+                        .font(.system(size: 9, weight: .heavy))
+                        .tracking(0.6)
+                        .foregroundStyle(.cyan)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.cyan.opacity(0.18), in: Capsule())
+                }
                 Spacer(minLength: 8)
                 Text((match.completedAt ?? match.createdAt).formatted(date: .abbreviated, time: .shortened))
                     .font(.caption)
@@ -1784,6 +1817,10 @@ struct MatchDetailView: View {
         let start = match.resolvedOpeningStarter
         return VStack(spacing: 0) {
             infoRow("Režim", match.config.mode.title, symbol: match.config.mode.symbol)
+            if match.playedOnline == true {
+                Divider()
+                infoRow("Podoba", "Online", symbol: "wifi")
+            }
             Divider()
             infoRow("Pravidla", match.config.summary, symbol: "list.bullet.rectangle")
             Divider()

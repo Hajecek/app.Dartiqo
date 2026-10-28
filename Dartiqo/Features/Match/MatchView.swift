@@ -455,6 +455,12 @@ struct MatchView: View {
     private func leaveMatch() {
         voice.stop()
         flushClock()
+        if link.isOnline, link.publicMatchID.isEmpty == false, let game = link.game {
+            let played = (game.playSeconds ?? 0) > 0 || !game.visits.isEmpty || game.finished
+            if played {
+                store.archiveOnline(game, publicID: link.publicMatchID)
+            }
+        }
         store.flushSave()
         UIApplication.shared.isIdleTimerDisabled = false
     }
